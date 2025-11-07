@@ -1,0 +1,130 @@
+// Function tests
+
+declare test1(0);
+declare test2(1);
+declare test3(2);
+declare test4(3);
+declare test5(1);
+declare.s test6(4);
+declare.f test7(1);
+declare test8(1);
+
+func test8(maxv)
+{
+	a = random(maxv,1);
+	f.f = (0.01 + a) / 123456.1;
+	return f;
+}
+
+
+func test7(maxv)
+{
+	return random(maxv,1);
+}
+
+func test6(str1$, fl1.f, str2$, fl2.f)
+{
+	return concat(str1$, fl1.f, str2$, fl2.f);
+}
+
+func test2(n)
+{
+	var2 = 7;
+	print("in function2 ", var2 );
+	c$ = test3(n, var2);
+}
+
+/*
+ * Test code starts here
+ */
+ 
+var = 10;
+c$ = test2(5);
+
+func test4( a.f, b, c$ )
+{
+	b = 11;
+	print( "in function4 1) ", a, ", 2) ", b, " 3) ", c$ );
+	return a + 2;
+}
+
+a.f = 17.88;
+r = test4( a, 77.3, " Hello" );
+r = test4( 77.3, " Hello", a );
+r = test4( a, "World", "day" );
+
+
+a.f = 17.88;
+world.s = "world ";
+
+f.f = test4( a, 77.3, " Hello" );
+print( "return=", f, ", type=",typeof(f) );
+c$ = test4( "Hello ", world, "again" );
+print( "ret4=", c$, ", type=",typeof(c$) );
+
+// LJ
+n = 2;
+c$ = test4( n, world, "again" );
+print( "ret4=", c$, ", type=",typeof(c$) );
+
+dim fl.d(10);
+fl(4) = 11712.45 / 2.7816;
+
+n = test4( 6, "] +++ [", fl(4) );
+print( "ret4=", n , ", type=",typeof(c$) );
+
+var = 10;
+c$ = test1();
+c$ = test2(5);
+
+ret = test5( -1 );
+print( "ret5 = ", ret );
+
+ret = test5( random(12,3) );
+print( "ret5 = ", ret );
+
+print("1. ret6=", test6( "My", test8(80000)/test7(11), "string", 4.44445));
+print("2. ret6=", test6( "My", test8(2000)/test7(11), "string", 4.44445));
+print("3. ret6=", test6( "My", test8(3122)/test7(11), "string", 4.44445));
+
+dim aa(4);
+aa(1) = 8188;
+r = test2(aa(1));
+
+/*
+ *code end
+ */
+ 
+func test3( n, m )
+{
+	print("in function3 ", n, " , ", m );
+	//return 0;
+}
+
+func test1()
+{
+	var = 5;
+	print("in function1 ", var );
+}
+
+func test5(n)
+{
+	print("n is ", n );
+	if( n < 1 )
+	{
+		return -1;
+	}
+	else
+	{
+		n = random(n,1);
+	}
+	
+	if(n % 2){
+		print( " odd" );
+	}
+	else{
+		print( "even" );
+	}
+
+	return n;
+}

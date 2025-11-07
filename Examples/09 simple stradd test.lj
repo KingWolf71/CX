@@ -1,0 +1,13 @@
+#pragma console on
+#pragma appname "Simple String Add Test"
+#pragma consolesize "420x320"
+
+// Simplest possible test
+a.s = "Hello";
+b.s = "World";
+c.s = a + b;
+print(c);
+
+// String + Integer
+d.s = "Count: " + 42;
+print(d);

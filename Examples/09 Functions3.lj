@@ -1,0 +1,19 @@
+// Function tests
+
+
+
+func test8(var1, var2, var3)
+{
+	a = #pi;
+	
+	print("var1=", var1, " var2=", var2, " var3=", var3 );
+	f = (0.01 + a) / 123456.1;
+
+	return f;
+}
+
+a = 17.88;
+r = test8( a, 77.3, " Hello" );
+r = test8( 77.3, " Hello", a );
+r = test8( a, "World", "day" );
+print("r=", r );
