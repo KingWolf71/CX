@@ -178,6 +178,8 @@ Module C2VM
 
       *ptrJumpTable( #ljCALL )            = @C2CALL()
       *ptrJumpTable( #ljReturn )          = @C2Return()
+      *ptrJumpTable( #ljReturnF )         = @C2ReturnF()
+      *ptrJumpTable( #ljReturnS )         = @C2ReturnS()
       *ptrJumpTable( #ljPOP )             = @C2POP()
       *ptrJumpTable( #ljPOPS )            = @C2POPS()
       *ptrJumpTable( #ljPOPF )            = @C2POPF()
@@ -189,7 +191,26 @@ Module C2VM
    
    Procedure            vmClearRun()
       Protected         i
-      
+
+      ; Clear all variables to prevent state leakage between runs
+      For i = 0 To #C2MAXCONSTANTS
+         gVar(i)\name = ""
+         gVar(i)\ss = ""
+         gVar(i)\p = 0
+         gVar(i)\i = 0
+         gVar(i)\f = 0.0
+         gVar(i)\flags = 0
+         gVar(i)\paramOffset = 0
+      Next
+
+      ; Clear the call stack
+      ClearList(llStack())
+
+      ; Stop any running code by resetting pc and putting HALT at start
+      pc = 0
+      arCode(0)\code = #ljHALT
+      arCode(0)\i = 0
+      arCode(0)\j = 0
 
    EndProcedure
    
@@ -244,7 +265,8 @@ Module C2VM
          AddGadgetItem( #edConsole, -1, "==================================================" )
       CompilerEndIf
 
-      vmClearRun()
+      ; Don't clear code here - we want to allow multiple runs of the same compiled code
+      ; vmClearRun() is only called when loading a new file (in BtnLoad handler)
    EndProcedure
    
    ; Execute the code list
@@ -255,7 +277,9 @@ Module C2VM
       Protected.s       temp, name, filename
       Protected         win, Event
       Protected         thRun
-      
+
+      Debug "******** RunVM() called ********"
+
       vmInitVM()
       
       ;Execute #pragmas first
@@ -298,23 +322,27 @@ Module C2VM
                      If e = #BtnExit
                         gExitApplication = #True
                      ElseIf e = #BtnLoad
+                        Debug ">>>>>> BtnLoad clicked <<<<<<"
                         filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
-                        
+
+                        ; Always clear VM state before loading new file
+                        vmClearRun()
+
                         If IsThread( thRun )
-                           vmClearRun()
                            KillThread( thRun)
                         EndIf
-      
+
                         If filename > ""
                            If C2Lang::LoadLJ( filename )
                               Debug "Error: " + C2Lang::Error( @err )
                            Else
                               C2Lang::Compile()
-                              C2Lang::ListCode()
+                              ;C2Lang::ListCode()
                            EndIf
                         EndIf
                      
                      ElseIf e = #BtnRun
+                        Debug ">>>>>> BtnRun clicked <<<<<<"
                         CloseWindow( #MainWindow )
                         C2VM::RunVM()
                      EndIf
@@ -330,8 +358,8 @@ Module C2VM
 EndModule
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 107
-; FirstLine = 105
+; CursorPosition = 335
+; FirstLine = 307
 ; Folding = ---
 ; Markers = 17
 ; EnableAsm

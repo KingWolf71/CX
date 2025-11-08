@@ -62,17 +62,43 @@ EndProcedure
 ;- Jump Table Functions
 
 Procedure               C2FetchPush()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   ;CopyStructure( gVar( _AR()\i )\p, gVar( sp )\p, stVT )
-   gVar( sp ) = gVar( _AR()\i )
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And ListSize(llStack()) > 0
+      ; Read from stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( sp ) = gVar( callerSp + gVar(varSlot)\paramOffset )
+   Else
+      ; Regular global variable
+      gVar( sp ) = gVar( varSlot )
+   EndIf
 
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2FETCHS()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   gVar( sp ) = gVar( _AR()\i )
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And ListSize(llStack()) > 0
+      ; Read from stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( sp ) = gVar( callerSp + gVar(varSlot)\paramOffset )
+   Else
+      ; Regular global variable
+      gVar( sp ) = gVar( varSlot )
+   EndIf
+
    gVar( sp )\flags = #C2FLAG_IDENT | #C2FLAG_STR
 
    sp + 1
@@ -80,9 +106,27 @@ Procedure               C2FETCHS()
 EndProcedure
 
 Procedure               C2FETCHF()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   gVar( sp ) = gVar( _AR()\i )
+   varSlot = _AR()\i
+
+   ;Debug "FETCHF BEFORE: sp=" + Str(sp) + " fetching gVar(" + Str(varSlot) + ")[" + gVar(varSlot)\name + "] f=" + StrD(gVar(varSlot)\f, 6)
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And ListSize(llStack()) > 0
+      ; Read from stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( sp ) = gVar( callerSp + gVar(varSlot)\paramOffset )
+   Else
+      ; Regular global variable
+      gVar( sp ) = gVar( varSlot )
+   EndIf
+
    gVar( sp )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+
+   ;Debug "FETCHF AFTER: pushed to gVar(" + Str(sp) + "), now incrementing sp"
 
    sp + 1
    pc + 1
@@ -98,9 +142,9 @@ Procedure               C2POP()
    ; NEW CODE - copy only the data fields, not the name:
    sp - 1
    gVar( _AR()\i )\i = gVar( sp )\i
-   gVar( _AR()\i )\f = gVar( sp )\f
-   gVar( _AR()\i )\ss = gVar( sp )\ss
-   gVar( _AR()\i )\p = gVar( sp )\p
+   ;gVar( _AR()\i )\f = gVar( sp )\f
+   ;gVar( _AR()\i )\ss = gVar( sp )\ss
+   ;gVar( _AR()\i )\p = gVar( sp )\p
    ; Don't copy: name, flags (those are set by the compiler)
 
    pc + 1
@@ -147,9 +191,10 @@ Procedure               C2Store()
 
    ; NEW CODE - copy only data fields:
    gVar( _AR()\i )\i = gVar( sp )\i
-   gVar( _AR()\i )\f = gVar( sp )\f
-   gVar( _AR()\i )\ss = gVar( sp )\ss
-   gVar( _AR()\i )\p = gVar( sp )\p
+   gVar( _AR()\i )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+   ;gVar( _AR()\i )\f = gVar( sp )\f
+   ;gVar( _AR()\i )\ss = gVar( sp )\ss
+   ;gVar( _AR()\i )\p = gVar( sp )\p
 
    pc + 1
 EndProcedure
@@ -173,6 +218,8 @@ Procedure               C2STOREF()
    gVar( _AR()\i )\f = gVar( sp )\f
    gVar( _AR()\i )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
 
+   ;Debug "STOREF: Storing gVar(" + Str(sp) + ")\f=" + StrD(gVar(sp)\f, 6) + " to gVar(" + Str(_AR()\i) + ")[" + gVar(_AR()\i)\name + "]"
+
    pc + 1
 EndProcedure
 
@@ -184,9 +231,10 @@ Procedure               C2MOV()
 
    ; NEW CODE - copy only data fields:
    gVar( _AR()\i )\i = gVar( _AR()\j )\i
-   gVar( _AR()\i )\f = gVar( _AR()\j )\f
-   gVar( _AR()\i )\ss = gVar( _AR()\j )\ss
-   gVar( _AR()\i )\p = gVar( _AR()\j )\p
+   ;gVar( _AR()\i )\f = gVar( _AR()\j )\f
+   ;gVar( _AR()\i )\ss = gVar( _AR()\j )\ss
+   ;gVar( _AR()\i )\p = gVar( _AR()\j )\p
+   gVar( _AR()\i )\flags = #C2FLAG_IDENT | #C2FLAG_INT
 
    pc + 1
 EndProcedure
@@ -449,15 +497,20 @@ EndProcedure
 
 Procedure               C2CALL()
    vm_DebugFunctionName()
+   Protected nParams.i
+
+   nParams = _AR()\j  ; Get parameter count from instruction
+
    AddElement( llStack() )
    llStack()\pc = pc + 1
-   llStack()\sp = sp
+   llStack()\sp = sp - nParams  ; Save sp BEFORE params were pushed (FIX: prevents stack leak)
    pc = _AR()\i
-   
+
+   ;Debug "CALL pc=" + Str(pc) + " with " + Str(nParams) + " params, sp=" + Str(sp) + " saving callerSp=" + Str(llStack()\sp)
    ;Debug "s=" + gVar( sp - 3 )\ss + " d=" + Str( gVar( sp - 3 )\i ) + " f=" + StrD( gVar( sp - 3 )\f, 3 )
    ;Debug "s=" + gVar( sp - 2 )\ss + " d=" + Str( gVar( sp - 2 )\i ) + " f=" + StrD( gVar( sp - 2 )\f, 3 )
    ;Debug "s=" + gVar( sp - 1 )\ss + " d=" + Str( gVar( sp - 1 )\i ) + " f=" + StrD( gVar( sp - 1 )\f, 3 )
-   
+
 EndProcedure
 
 Procedure               C2Return()
@@ -472,18 +525,84 @@ Procedure               C2Return()
    ; The return value (if any) is at sp-1
    ; We need to copy it to the caller's stack position before restoring sp
    Protected returnValue.stVT
+   Protected callerSp.i
 
-   ; Save return value from top of stack (sp-1)
-   If sp > gnLastVariable
+   ; Initialize to default integer 0 (prevents uninitialized returns)
+   returnValue\i = 0
+   returnValue\flags = #C2FLAG_INT
+
+   ; Save caller's stack pointer
+   callerSp = llStack()\sp
+
+   ; Save return value from top of stack (sp-1) if there's anything on function's stack
+   If sp > callerSp
       returnValue = gVar(sp - 1)
    EndIf
 
    ; Restore caller's program counter and stack pointer
    pc = llStack()\pc
-   sp = llStack()\sp
+   sp = callerSp
    DeleteElement( llStack() )
 
    ; Push return value onto caller's stack
+   gVar(sp) = returnValue
+   sp + 1
+EndProcedure
+
+Procedure               C2ReturnF()
+   vm_DebugFunctionName()
+
+   ; Float return - preserves float return value from stack
+   Protected returnValue.stVT
+   Protected callerSp.i
+
+   ; Initialize to default float 0.0
+   returnValue\f = 0.0
+   returnValue\flags = #C2FLAG_FLOAT
+
+   ; Save caller's stack pointer
+   callerSp = llStack()\sp
+
+   ; Save float return value from top of stack (sp-1) if there's anything on function's stack
+   If sp > callerSp
+      returnValue = gVar(sp - 1)
+   EndIf
+
+   ; Restore caller's program counter and stack pointer
+   pc = llStack()\pc
+   sp = callerSp
+   DeleteElement( llStack() )
+
+   ; Push float return value onto caller's stack
+   gVar(sp) = returnValue
+   sp + 1
+EndProcedure
+
+Procedure               C2ReturnS()
+   vm_DebugFunctionName()
+
+   ; String return - preserves string return value from stack
+   Protected returnValue.stVT
+   Protected callerSp.i
+
+   ; Initialize to default empty string
+   returnValue\ss = ""
+   returnValue\flags = #C2FLAG_STR
+
+   ; Save caller's stack pointer
+   callerSp = llStack()\sp
+
+   ; Save string return value from top of stack (sp-1) if there's anything on function's stack
+   If sp > callerSp
+      returnValue = gVar(sp - 1)
+   EndIf
+
+   ; Restore caller's program counter and stack pointer
+   pc = llStack()\pc
+   sp = callerSp
+   DeleteElement( llStack() )
+
+   ; Push string return value onto caller's stack
    gVar(sp) = returnValue
    sp + 1
 EndProcedure
@@ -496,8 +615,8 @@ EndProcedure
 
 ;- End VM functions
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 151
-; FirstLine = 122
+; CursorPosition = 201
+; FirstLine = 164
 ; Folding = ----------
 ; EnableAsm
 ; EnableThread

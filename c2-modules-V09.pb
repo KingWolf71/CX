@@ -120,6 +120,7 @@ Module C2Lang
    
 Declare                 FetchVarOffset(text.s, *assignmentTree.stTree = 0, syntheticType.i = 0)
 Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )   
+Declare                 expand_params( op = #ljpop, nModule = -1 )
    
 ; ======================================================================================================
 ;- Globals
@@ -146,7 +147,13 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
    Global               gStrings
    Global               gNextFunction
    Global               gCurrFunction
-   
+   Global               gCodeGenFunction
+   Global               gCodeGenParamIndex
+   Global               gCodeGenRecursionDepth
+   Global               gIsNumberFlag
+   Global               gEmitIntCmd.i
+   Global               gEmitIntLastOp
+
    Global               gszFileText.s
    Global               gNextChar.s
    Global               gLastError
@@ -224,7 +231,6 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
       AddMapElement( mapMacros(), vname )
          mapMacros()\name  = vname
          mapMacros()\body  = value
-   
    EndMacro
    Macro                par_SetPre2( id, op )
       gPreTable( id )\bRightAssociation   = 0
@@ -293,7 +299,7 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
    Procedure            Init()
       Protected         temp.s
       Protected         i, n, m
-      
+
       For i = 0 To #C2MAXCONSTANTS
          gVar(i)\name   = ""
          gVar(i)\ss     = ""
@@ -301,6 +307,7 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
          gVar(i)\i      = 0
          gVar(i)\f      = 0.0
          gVar(i)\flags  = 0
+         gVar(i)\paramOffset = 0
       Next
       
       ;Read tokens
@@ -366,25 +373,42 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
       par_SetPre2( #ljSTRING, #ljSTRING )
       par_SetPre2( #ljFLOAT,    #ljFLOAT )
       
+      ; Reset list positions before clearing
+      ResetList( llObjects() )
       ClearList( llObjects() )
+      ResetList( llTokenList() )
       ClearList( llTokenList() )
+      ResetList( llSymbols() )
       ClearList( llSymbols() )
+      ResetList( llHoles() )
+      ClearList( llHoles() )
       ClearMap( mapPragmas() )
       ClearMap( mapMacros() )
       ClearMap( mapModules() )
       ReDim arCode(1)
-      
-      gLineNumber    = 1
-      gCol           = 1
-      gStack         = 0
-      gExit          = 0
-      gHoles         = 0
-      gnLastVariable = 0
-      gStrings       = 0
-      gFloats        = 0
-      gIntegers      = 0
-      gNextFunction  = #C2FUNCSTART
-      
+      ; Clear the code array by putting HALT at position 0
+      arCode(0)\code = #ljHALT
+      arCode(0)\i = 0
+      arCode(0)\j = 0
+
+      gLineNumber             = 1
+      gCol                    = 1
+      gPos                    = 1
+      gStack                  = 0
+      gExit                   = 0
+      gHoles                  = 0
+      gnLastVariable          = 0
+      gStrings                = 0
+      gFloats                 = 0
+      gIntegers               = 0
+      gNextFunction           = #C2FUNCSTART
+      gCodeGenFunction        = 0
+      gCodeGenParamIndex      = -1
+      gCodeGenRecursionDepth  = 0
+      gIsNumberFlag           = 0
+      gEmitIntCmd             = #LJUnknown
+      gEmitIntLastOp          = 0
+
       Install( "else", #ljElse )
       install( "if",    #ljIF )
       install( "print", #ljPRint )
@@ -402,16 +426,11 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
       par_AddMacro( "#False", "0" )
       par_AddMacro( "#PI", "3.14159265359" )
 
-      ; default function return cheat
-      ;par_AddToken( #ljIDENT, #ljIDENT, "",  "$ret" )
-      ;par_AddTokenSimple( #ljASSIGN )
-      
-      ;par_AddTokenSimple( #ljSEMI )
    EndProcedure
    
    Procedure            LoadLJ( filename.s )
       Protected         f, *mem
-   
+
       gMemSize = FileSize( filename )
       
       If gMemSize > 0
@@ -419,14 +438,14 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
          gFileFormat = ReadStringFormat( f )    
          
          If Not f
-            SetError( "Could not open file", -3 )
+            SetError( "Could not open file", #C2ERR_FILE_OPEN_FAILED )
          EndIf
          
          If gFileFormat <> #PB_Ascii And gFileFormat <> #PB_UTF8 And gFileFormat <> #PB_Unicode
             gFileFormat = #PB_Unicode
          EndIf
          
-         *Mem = AllocateMemory( gMemSize + 16, #PB_Memory_NoClear )
+         *Mem = AllocateMemory( gMemSize + 16 )
          ReadData( f, *Mem, gMemSize )
          CloseFile( f )
          
@@ -440,8 +459,8 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
          FreeMemory( *mem )
          ProcedureReturn 0
       EndIf
-      
-      SetError( "Invalid file", -2 )
+
+      SetError( "Invalid file", #C2ERR_INVALID_FILE )
    EndProcedure
    
    
@@ -468,7 +487,7 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
    Macro                par_AddModule( modname, mparams )
       
       If FindMapElement( mapModules(), modname )
-         SetError( "Function already declared", 16 )
+         SetError( "Function already declared", #C2ERR_FUNCTION_REDECLARED )
       Else
          AddMapElement( mapModules(), modname )
          mapModules()\function      = gNextFunction
@@ -476,8 +495,6 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
          mapModules()\params        = mparams
          mapModules()\nParams       = -1
          gNextFunction + 1
-         
-         Debug "New function: " + modname
       EndIf
    EndMacro
    ;-
@@ -856,8 +873,7 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
             ParseFunctions( line, i )
          EndIf
       ForEver
-      
-      ;Debug gszFileText
+
       gMemSize = Len( gszFileText )
    EndProcedure
    ;- =====================================
@@ -953,19 +969,17 @@ Declare.w               GetExprResultType( *x.stTree, depth.i = 0 )
 EndProcedure
    
    Procedure            IsNumber( init.i = 0 )
-      Static            flag
-      
       If init
-         flag = 0
+         gIsNumberFlag = 0
       Else
          If gNextChar >= "0" And gNextChar <= "9"
             ProcedureReturn 1
-         ElseIf Not flag And gNextChar = "."
-            flag + 1
+         ElseIf Not gIsNumberFlag And gNextChar = "."
+            gIsNumberFlag + 1
             ProcedureReturn 1
          EndIf
       EndIf
-   
+
       ProcedureReturn 0
    EndProcedure
    
@@ -984,8 +998,8 @@ EndProcedure
          par_AddToken( #ljOP, ifyes, "", "" )
       Else
          If ifno = -1
-            *err\i = 5
-            SetError( "follow unrecognized character", 5 )
+            *err\i = #C2ERR_UNRECOGNIZED_CHAR
+            SetError( "Unrecognized character sequence", #C2ERR_UNRECOGNIZED_CHAR )
          Else
             par_AddToken( #ljOP, ifno, "", ""  )
             gPos - 1
@@ -1000,10 +1014,14 @@ EndProcedure
       Protected.i       dots, bFloat, e
       Protected.i       braces
       Protected.s       text, temp
-      
+
+      Debug "=== Scanner() called ==="
+      Debug "gMemSize: " + Str(gMemSize)
+      Debug "gszFileText length: " + Str(Len(gszFileText))
+
       gpos           = 1
       gCurrFunction  = 1
-      
+
       While gPos <= gMemSize
          par_NextCharacter()
          
@@ -1049,15 +1067,16 @@ EndProcedure
                par_AddToken( #ljOP, #ljDIVIDE, "", "" )
             Case "'"
                par_NextCharacter()
-               
+
+
                If gNextChar = "'"
-                  SetError( "Empty character literal", 2 )
+                  SetError( "Empty character literal", #C2ERR_EMPTY_CHAR_LITERAL )
                ElseIf gNextChar = "\"
                   par_NextCharacter()
                   
                   Select gNextChar
                      Case "'"
-                        SetError( "Empty escape character literal", 2 )
+                        SetError( "Empty escape character literal", #C2ERR_EMPTY_CHAR_LITERAL )
                      Case "n"
                         first = 10
                      Case "r"
@@ -1065,16 +1084,16 @@ EndProcedure
                      Case "\"
                         first = 92
                      Default
-                        SetError( "Invalid escape character", 3 )
+                        SetError( "Invalid escape character", #C2ERR_INVALID_ESCAPE_CHAR )
                   EndSelect
                Else
                   first = Asc( gNextChar )
                EndIf
                
                par_NextCharacter()
-               
+
                If gNextChar <> "'"
-                  SetError( "Multi-Character literal", 4 )
+                  SetError( "Multi-character literal", #C2ERR_MULTI_CHAR_LITERAL )
                Else
                   par_AddToken( #ljINT, #ljINT, "", Str(first) )
                EndIf
@@ -1106,19 +1125,25 @@ EndProcedure
                      par_AddToken( e, e, "", text )
                      Break
                   ElseIf gNextChar = #CR$
-                     SetError( "EOL in string", 7 )
+                     SetError( "EOL in string", #C2ERR_EOL_IN_STRING )
                   Else
                      text + gNextChar
                   EndIf
                
                Until gPos >= gMemSize
-               
+
                If gPos >= gMemSize
-                  SetError( "EOF in string", 6 )
+                  SetError( "EOF in string", #C2ERR_EOF_IN_STRING )
                EndIf
             Default
+               ; Handle EOF character explicitly
+               If gNextChar = gszEOF Or Asc(gNextChar) = 255
+                  par_AddTokenSimple( #ljEOF )
+                  Break
+               EndIf
+
                IsNumber( 1 )        ; reset digit flag
-               
+
                first    = IsNumber()
                text     = ""
                dots     = 0
@@ -1132,13 +1157,13 @@ EndProcedure
                   text + gNextChar
                   par_NextCharacter()
                Wend
- 
+
                If gPos >= gMemSize
-                  SetError( "EOL in number or variable '" + text + "'", 8 )
+                  SetError( "EOL in identifier '" + text + "'", #C2ERR_EOL_IN_IDENTIFIER )
                EndIf
-               
+
                If Len( text ) < 1
-                  SetError( "Unknown sequence number or variable '" + text + "'", 9 )
+                  SetError( "Unknown sequence or identifier '" + text + "'", #C2ERR_UNKNOWN_SEQUENCE )
                EndIf
                
                gPos - 1
@@ -1252,8 +1277,8 @@ EndProcedure
          NextToken()
          ProcedureReturn 0
       EndIf
-      
-      SetError( "Expecting " + gszATR( TokenType )\s + " but found " + gszATR( TOKEN()\TokenExtra )\s + " for " + function, 11 )
+
+      SetError( "Expecting " + gszATR( TokenType )\s + " but found " + gszATR( TOKEN()\TokenExtra )\s + " for " + function, #C2ERR_SYNTAX_EXPECTED )
    
    EndProcedure
    
@@ -1294,6 +1319,7 @@ EndProcedure
    Procedure            expr( var )
       Protected.stTree  *p, *node, *r, *e, *trueExpr, *falseExpr, *branches
       Protected         op, q
+      Protected         moduleId.i
 
       ;Debug "expr>" + RSet(Str(TOKEN()\row),4," ") + RSet(Str(TOKEN()\col),4," ") + "   " + TOKEN()\name + " --> " + gszATR( llTokenList()\TokenType )\s
 
@@ -1333,12 +1359,21 @@ EndProcedure
          
          Case #ljSTRING
             *p = Makeleaf( #ljSTRING, TOKEN()\value )
-            *p\TypeHint = TOKEN()\typeHint 
+            *p\TypeHint = TOKEN()\typeHint
             NextToken()
-            
+
+         Case #ljCALL
+            ; Handle function calls in expressions
+            moduleId = Val(TOKEN()\value)
+            *node = Makeleaf( #ljCall, TOKEN()\value )
+            NextToken()
+            *e = expand_params( #ljPush, moduleId )
+            *p = MakeNode( #ljSEQ, *e, *node )
+
+
          Default
-            SetError( "Expecting a primary, found " + TOKEN()\name, 12 )
-      
+            SetError( "Expecting a primary, found " + TOKEN()\name, #C2ERR_EXPECTED_PRIMARY )
+
       EndSelect
       
       While gPreTable( TOKEN()\TokenExtra )\bBinary And gPreTable( TOKEN()\TokenExtra )\Precedence >= var
@@ -1372,7 +1407,7 @@ EndProcedure
 
                ; Validate the created node
                If Not *branches
-                  SetError( "Failed to allocate memory for ternary branches", 20 )
+                  SetError( "Failed to allocate memory for ternary branches", #C2ERR_MEMORY_ALLOCATION )
                   ProcedureReturn *p
                EndIf
 
@@ -1380,7 +1415,7 @@ EndProcedure
 
                ; Validate the final ternary node
                If Not *p
-                  SetError( "Failed to allocate memory for ternary node", 20 )
+                  SetError( "Failed to allocate memory for ternary node", #C2ERR_MEMORY_ALLOCATION )
                   ProcedureReturn 0
                EndIf
             EndIf
@@ -1497,6 +1532,7 @@ EndProcedure
       Protected.s       text, param
       Protected         printType.i
       Protected         varIdx.i
+      Protected         moduleId.i
 
       ; CRITICAL: Initialize all pointers to null (they contain garbage otherwise!)
       *p = 0 : *v = 0 : *e = 0 : *r = 0 : *s = 0 : *s2 = 0
@@ -1505,7 +1541,7 @@ EndProcedure
       
       If gStack > #MAX_RECURSESTACK
          NextToken()
-         SetError( "Stack overflow", 15 )
+         SetError( "Stack overflow", #C2ERR_STACK_OVERFLOW )
       EndIf
       
       ;Debug "stmt>" + RSet(Str(TOKEN()\row),4," ") + RSet(Str(TOKEN()\col),4," ") + "   " + TOKEN()\name + " --> " + gszATR( llTokenList()\TokenType )\s
@@ -1592,9 +1628,10 @@ EndProcedure
             If TOKEN()\TokenExtra = #ljCall
                ; Generate call code (pushes params, calls function)
                ; The function will leave return value on stack
-               *r = Makeleaf( #ljCALL, TOKEN()\value )
+               moduleId = Val(TOKEN()\value)
+               *r = Makeleaf( #ljCall, TOKEN()\value )
                NextToken()
-               *e = expand_params( #ljPush )
+               *e = expand_params( #ljPush, moduleId )
                ; Sequence: push params, call, store result
                *s = MakeNode( #ljSEQ, *e, *r )
                *p = MakeNode( #ljASSIGN, *v, *s )
@@ -1634,9 +1671,10 @@ EndProcedure
             *p = MakeNode( #ljSEQ, *v, *e )
          
          Case #ljCALL
-            *v = Makeleaf( #ljCALL, TOKEN()\value )
+            moduleId = Val(TOKEN()\value)
+            *v = Makeleaf( #ljCall, TOKEN()\value )
             NextToken()
-            *e = expand_params( #ljPush )
+            *e = expand_params( #ljPush, moduleId )
             *p = MakeNode( #ljSEQ, *e, *v )
             
          Case #ljReturn
@@ -1657,9 +1695,10 @@ EndProcedure
 
             *p = MakeNode( #ljSEQ, *p, *v )
 
+
          Default
-            SetError( "Expecting beginning of a statament, found " + TOKEN()\name, 14 )
-         
+            SetError( "Expecting beginning of a statement, found " + TOKEN()\name, #C2ERR_EXPECTED_STATEMENT )
+
       EndSelect
       
       ProcedureReturn *p
@@ -1709,10 +1748,7 @@ EndProcedure
    EndProcedure
     
    Procedure            EmitInt( op.i, nVar.i = -1 )
-      Static            cmd.i    = #LJUnknown
-      Static            llLastOp
-      
-      If cmd = #ljpush And op = #ljStore
+      If gEmitIntCmd = #ljpush And op = #ljStore
          ; Choose the appropriate MOV variant based on source variable type
          Protected sourceFlags.w = gVar( llObjects()\i )\flags
 
@@ -1728,7 +1764,7 @@ EndProcedure
          EndIf
 
          llObjects()\j = llObjects()\i
-      ElseIf cmd = #ljfetch And op = #ljstore
+      ElseIf gEmitIntCmd = #ljfetch And op = #ljstore
          ; Choose the appropriate MOV variant based on source variable type
          Protected sourceFlags2.w = gVar( llObjects()\i )\flags
 
@@ -1742,15 +1778,15 @@ EndProcedure
 
          llObjects()\j = llObjects()\i
       Else
-         llLastOp = AddElement( llObjects() )
+         gEmitIntLastOp = AddElement( llObjects() )
          llObjects()\code = op
       EndIf
-      
+
       If nVar > -1
          llObjects()\i     = nVar
       EndIf
-      
-      cmd = llObjects()\code
+
+      gEmitIntCmd = llObjects()\code
    EndProcedure
    
    Procedure            FetchVarOffset(text.s, *assignmentTree.stTree = 0, syntheticType.i = 0)
@@ -1769,25 +1805,41 @@ EndProcedure
          EndIf
       Next
 
-      ; New variable - find token
+      ; New variable - find token (unless it's a synthetic $ variable)
       i = -1
       savedIndex = ListIndex(TOKEN())
-      
-      ForEach TOKEN()
-         If TOKEN()\value = text
-            i = ListIndex( TOKEN() )
-            Break
-         EndIf
-      Next
 
-      If savedIndex >= 0
-         SelectElement(TOKEN(), savedIndex)
+      ; Don't look up synthetic variables (starting with $) in token list
+      If Left(text, 1) <> "$"
+         ForEach TOKEN()
+            If TOKEN()\value = text
+               i = ListIndex( TOKEN() )
+               Break
+            EndIf
+         Next
+
+         If savedIndex >= 0
+            SelectElement(TOKEN(), savedIndex)
+         EndIf
       EndIf
-      
+
       gVar(gnLastVariable)\name  = text
 
-      ; First check if this is a synthetic constant (NodeType passed in)
-      If syntheticType = #ljINT
+      ; Check if this is a synthetic temporary variable (starts with $)
+      If Left(text, 1) = "$"
+         ; Synthetic variable - determine type from suffix or syntheticType parameter
+         If syntheticType & #C2FLAG_FLOAT Or Right(text, 1) = "f"
+            gVar(gnLastVariable)\f = 0.0
+            gVar(gnLastVariable)\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+         ElseIf syntheticType & #C2FLAG_STR Or Right(text, 1) = "s"
+            gVar(gnLastVariable)\ss = ""
+            gVar(gnLastVariable)\flags = #C2FLAG_IDENT | #C2FLAG_STR
+         Else
+            gVar(gnLastVariable)\i = 0
+            gVar(gnLastVariable)\flags = #C2FLAG_IDENT | #C2FLAG_INT
+         EndIf
+      ; Check if this is a synthetic constant (syntheticType passed in)
+      ElseIf syntheticType = #ljINT
          gVar(gnLastVariable)\i = Val(text)
          gVar(gnLastVariable)\flags = #C2FLAG_CONST | #C2FLAG_INT
       ElseIf syntheticType = #ljFLOAT
@@ -1940,36 +1992,116 @@ EndProcedure
       EndSelect
    EndProcedure
 
+   ; Helper function to detect if an expression tree contains a function call
+   Procedure.b          ContainsFunctionCall(*node.stTree)
+      If Not *node
+         ProcedureReturn #False
+      EndIf
+
+      If *node\NodeType = #ljCall
+         ProcedureReturn #True
+      EndIf
+
+      ; Recursively check left and right subtrees
+      If ContainsFunctionCall(*node\left)
+         ProcedureReturn #True
+      EndIf
+
+      If ContainsFunctionCall(*node\right)
+         ProcedureReturn #True
+      EndIf
+
+      ProcedureReturn #False
+   EndProcedure
+
+   ; Helper function to collect all variable references in an expression tree
+   Procedure            CollectVariables(*node.stTree, List vars.s())
+      If Not *node
+         ProcedureReturn
+      EndIf
+
+      If *node\NodeType = #ljIDENT
+         ; Add variable to list if not already there
+         Protected found.b = #False
+         ForEach vars()
+            If vars() = *node\value
+               found = #True
+               Break
+            EndIf
+         Next
+         If Not found
+            AddElement(vars())
+            vars() = *node\value
+         EndIf
+      EndIf
+
+      CollectVariables(*node\left, vars())
+      CollectVariables(*node\right, vars())
+   EndProcedure
+
    Procedure            CodeGenerator( *x.stTree, *link.stTree = 0 )
       Protected         p1, p2, n
       Protected         temp.s
       Protected         leftType.w
-      Protected         rightType.w 
+      Protected         rightType.w
       Protected         opType.w = #C2FLAG_INT
       Protected         negType.w = #C2FLAG_INT
-      Static            gFunction = 0
-      
+      Protected         returnType.w
+      Protected         funcId.i
+      Protected         paramCount.i
+
+      ; Reset state on top-level call
+      If gCodeGenRecursionDepth = 0
+         gCodeGenParamIndex = -1
+      EndIf
+      gCodeGenRecursionDepth + 1
+
       ; If no node, return immediately
       If Not *x
+         gCodeGenRecursionDepth - 1
          ProcedureReturn
       EndIf
    
       ;Debug gszATR( *x\NodeType )\s + " --> " + *x\value
       
       Select *x\NodeType
-         Case #ljEOF : ProcedureReturn
+         Case #ljEOF
+            gCodeGenRecursionDepth - 1
+            ProcedureReturn
          Case #ljPOP
             n = FetchVarOffset(*x\value)
-            
-            If *x\typeHint = #ljFLOAT
-               EmitInt( #ljPOPF, n )
-               gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
-            ElseIf *x\typeHint = #ljSTRING
-               EmitInt( #ljPOPS, n )
-               gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_STR
+
+            ; Check if this is a function parameter
+            If gCodeGenParamIndex >= 0
+               ; This is a function parameter - mark it and don't emit POP
+               gVar( n )\flags = gVar( n )\flags | #C2FLAG_PARAM
+               gVar( n )\paramOffset = gCodeGenParamIndex
+
+               ; Set type flags
+               If *x\typeHint = #ljFLOAT
+                  gVar( n )\flags = gVar( n )\flags | #C2FLAG_FLOAT
+               ElseIf *x\typeHint = #ljSTRING
+                  gVar( n )\flags = gVar( n )\flags | #C2FLAG_STR
+               Else
+                  gVar( n )\flags = gVar( n )\flags | #C2FLAG_INT
+               EndIf
+
+               ; Decrement parameter index (parameters processed in reverse, last to first)
+               gCodeGenParamIndex - 1
+
+               ; Note: We DON'T emit POP - parameters stay on stack
             Else
-               EmitInt( #ljPOP, n )
-               gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+               ; Regular variable assignment - emit POP as usual
+               If *x\typeHint = #ljFLOAT
+                  EmitInt( #ljPOPF, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+               ElseIf *x\typeHint = #ljSTRING
+                  EmitInt( #ljPOPS, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_STR
+               Else
+                  EmitInt( #ljPOP, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+               EndIf
             EndIf
          
          Case #ljIDENT
@@ -2025,6 +2157,8 @@ EndProcedure
             EndIf
 
          Case #ljReturn
+            ; Note: The actual return type is determined at the SEQ level
+            ; This case handles fallback for direct return processing
             EmitInt( #ljReturn )
 
          Case #ljIF
@@ -2080,13 +2214,39 @@ EndProcedure
             fix( p2 )
             
          Case #ljSEQ
-            CodeGenerator( *x\left )
-            CodeGenerator( *x\right )
+            ; Check if this is a return statement (SEQ with return as right node)
+            If *x\right And *x\right\NodeType = #ljReturn
+               ; Evaluate the expression being returned
+               CodeGenerator( *x\left )
+
+               ; Determine the type of the return expression and emit appropriate return opcode
+               returnType = GetExprResultType(*x\left)
+
+               If returnType & #C2FLAG_STR
+                  EmitInt( #ljReturnS )
+               ElseIf returnType & #C2FLAG_FLOAT
+                  EmitInt( #ljReturnF )
+               Else
+                  EmitInt( #ljReturn )  ; Default to integer return
+               EndIf
+            Else
+               ; Normal SEQ processing
+               CodeGenerator( *x\left )
+               CodeGenerator( *x\right )
+
+               ; If left was ljFunction, we just finished processing parameters
+               If *x\left And *x\left\NodeType = #ljFunction
+                  gCodeGenParamIndex = -1  ; Reset parameter tracking
+               EndIf
+            EndIf
             
          Case #ljFunction
             ForEach mapModules()
                If mapModules()\function = Val( *x\value )
                   mapModules()\Index = ListIndex( llObjects() ) + 1
+                  ; Initialize parameter tracking
+                  ; Parameters processed in reverse, so start from (nParams - 1) and decrement
+                  gCodeGenParamIndex = mapModules()\nParams - 1
                   Break
                EndIf
             Next
@@ -2100,6 +2260,9 @@ EndProcedure
 
             leftType    = GetExprResultType(*x\left)
             rightType   = GetExprResultType(*x\right)
+
+            ; With proper stack frames, parameters are stack-local and won't be corrupted
+            ; No need for temp variables or special handling
             CodeGenerator( *x\left )
             CodeGenerator( *x\right )
 
@@ -2148,15 +2311,31 @@ EndProcedure
             EndIf
             
          Case #ljCall
-            EmitInt( *x\NodeType, Val( *x\value ) )
+            funcId = Val( *x\value )
+            paramCount = 0
+
+            ; Look up parameter count from function info
+            ForEach mapModules()
+               If mapModules()\function = funcId
+                  paramCount = mapModules()\nParams
+                  Break
+               EndIf
+            Next
+
+            EmitInt( *x\NodeType, funcId )
+            ; Store parameter count in j field for stack cleanup
+            llObjects()\j = paramCount
             
          Case #ljHalt
             EmitInt( *x\NodeType, 0 )
-            
+
+
          Default
-            SetError("Error in CodeGenerator at node " + Str(*x\NodeType) + " " + *x\value + " ---> " + gszATR(*x\NodeType)\s, 21)
-   
+            SetError("Error in CodeGenerator at node " + Str(*x\NodeType) + " " + *x\value + " ---> " + gszATR(*x\NodeType)\s, #C2ERR_CODEGEN_FAILED)
+
       EndSelect
+
+      gCodeGenRecursionDepth - 1
    EndProcedure
     
    Procedure            FixJMP()
@@ -2355,7 +2534,7 @@ EndProcedure
    ;- Compiler
    ;- =====================================
    Procedure         Compile()
-   Protected         i
+      Protected      i
       Protected      err
       Protected      *p.stTree
       Protected      total
@@ -2365,39 +2544,38 @@ EndProcedure
       Preprocessor()
 
       If Scanner()
-         Debug "Scanner failed."
+         Debug "Scanner failed with error: " + gszlastError
          ProcedureReturn 1
-      Else
-         par_DebugParser()
-         ReorderTokens()
-
-         FirstElement( TOKEN() )
-         total = ListSize( TOKEN() ) - 1
-
-         Repeat
-            gStack = 0
-            *p = MakeNode( #ljSEQ, *p, stmt() )
-
-            If gLastError
-               Debug gszlastError
-               Debug "AST Error"
-               gExit = -1
-               Break
-            EndIf
-
-         Until ListIndex( TOKEN() ) >= total Or gExit
-
-         If gExit >= 0
-            ;- DisplayNode( *p )
-            CodeGenerator( *p )
-
-            FixJMP()
-            PostProcessor()
-            vm_ListToArray( llObjects, arCode )
-         Else
-            Debug "gExit=" + Str(gExit)
-         EndIf
       EndIf
+
+      ;par_DebugParser()
+      ReorderTokens()
+      FirstElement( TOKEN() )
+      total = ListSize( TOKEN() ) - 1
+
+      Repeat
+         gStack = 0
+         *p = MakeNode( #ljSEQ, *p, stmt() )
+
+         If gLastError
+            Debug gszlastError
+            Debug "AST Error"
+            gExit = -1
+            Break
+         EndIf
+
+      Until ListIndex( TOKEN() ) >= total Or gExit
+
+      If gExit >= 0
+         ;- DisplayNode( *p )
+         CodeGenerator( *p )
+
+         FixJMP()
+         PostProcessor()
+         vm_ListToArray( llObjects, arCode )
+      Else
+         Debug "gExit=" + Str(gExit)
+      EndIf   
 
       ProcedureReturn gExit
    EndProcedure
@@ -2414,19 +2592,27 @@ CompilerIf #PB_Compiler_IsMainFile
    ;filename = ".\Examples\02 Simple while.lj"
    ;filename = ".\Examples\04 If Else.lj"
    ;filename = ".\Examples\06 Mandelbrot.lj"
-   filename = ".\Examples\07 Floats and macros.lj"
+   ;filename = ".\Examples\07 Floats and macros.lj"
    ;filename = ".\Examples\09 Functions2.lj"
-   ;filename = ".\Examples\07 test.lj"
    ;filename = ".\Examples\12 Floats and macros.lj"
-   ;filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
+   ;filename = ".\Examples\12 test functions.lj"
+   ;filename = ".\Examples\0 test.lj"   
+   ;filename = ".\Examples\12 test functions.lj"
+   
+   filename = ".\Examples\13 test functions more.lj"
+   filename = ".\Examples\02 Simple While.lj"
+   ;filename = ".\Examples\03 Complex while.lj"
+   
+   ;filename = ".\Examples\0 test.lj"   
+   filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
 
    If filename > ""
       If C2Lang::LoadLJ( filename )
          Debug "Error: " + C2Lang::Error( @err )
       Else
          C2Lang::Compile()
-         C2Lang::ListCode()
-         C2VM::RunVM()
+         ;C2Lang::ListCode()
+         C2VM::RunVM()  ; Auto-run after compilation
          
          ;If C2Lang::gExit
          ;   Debug "Failed...."
@@ -2444,14 +2630,15 @@ CompilerEndIf
 
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 754
-; FirstLine = 726
+; CursorPosition = 2551
+; FirstLine = 2518
 ; Folding = -----f----
-; Markers = 1075
+; Markers = 1070
 ; Optimizer
 ; EnableThread
 ; EnableXP
 ; CPU = 1
-; EnableCompileCount = 190
+; EnableCompileCount = 277
 ; EnableBuildCount = 0
 ; EnableExeConstant
+; IncludeVersionInfo

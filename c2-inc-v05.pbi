@@ -30,6 +30,7 @@
 #C2FLAG_FLOAT     = 8
 #C2FLAG_STR       = 16
 #C2FLAG_CHG       = 32
+#C2FLAG_PARAM     = 64
 
 
 Enumeration
@@ -103,6 +104,8 @@ Enumeration
    #ljComma   
    #ljfunction
    #ljreturn
+   #ljreturnF
+   #ljreturnS
    #ljCall
    
    #ljUNKNOWN
@@ -128,6 +131,29 @@ EndEnumeration
 ; Calculate total token count at compile time
 #C2TOKENCOUNT = #ljEOF + 1
 
+;- Error Codes
+Enumeration C2ErrorCodes
+   #C2ERR_INVALID_FILE = -2
+   #C2ERR_FILE_OPEN_FAILED = -3
+
+   #C2ERR_EMPTY_CHAR_LITERAL = 2
+   #C2ERR_INVALID_ESCAPE_CHAR = 3
+   #C2ERR_MULTI_CHAR_LITERAL = 4
+   #C2ERR_UNRECOGNIZED_CHAR = 5
+   #C2ERR_EOF_IN_STRING = 6
+   #C2ERR_EOL_IN_STRING = 7
+   #C2ERR_EOL_IN_IDENTIFIER = 8
+   #C2ERR_UNKNOWN_SEQUENCE = 9
+   #C2ERR_SYNTAX_EXPECTED = 10
+   #C2ERR_EXPECTED_PRIMARY = 11
+   #C2ERR_EXPECTED_STATEMENT = 12
+   #C2ERR_STACK_OVERFLOW = 14
+   #C2ERR_FUNCTION_REDECLARED = 15
+
+   #C2ERR_MEMORY_ALLOCATION = 16
+   #C2ERR_CODEGEN_FAILED = 17
+EndEnumeration
+
 ;- Structures
 Structure stType
    code.w
@@ -138,10 +164,11 @@ EndStructure
 Structure stVT  ; Variable Type
    name.s
    flags.w
-   ss.s 
+   ss.s
    *p
    i.i
    f.d
+   paramOffset.i  ; For PARAM variables: offset from callerSp (0=first param, 1=second, etc)
 EndStructure
 
 Structure stATR
@@ -419,6 +446,10 @@ c2tokens:
    Data.s   "function"
    Data.i   0, 0
    Data.s   "RET"
+   Data.i   #ljReturnF, #ljReturnS
+   Data.s   "RETF"
+   Data.i   0, 0
+   Data.s   "RETS"
    Data.i   0, 0
    Data.s   "CALL"
    Data.i   0, 0
@@ -461,8 +492,8 @@ c2tokens:
 EndDataSection
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 382
-; FirstLine = 345
+; CursorPosition = 145
+; FirstLine = 127
 ; Folding = --
 ; Optimizer
 ; EnableAsm
