@@ -29,13 +29,15 @@ EndMacro
 ; Macro for built-in functions: push integer result
 Macro                   vm_PushInt(value)
    gVar(sp)\i = value
-   gVar(sp)\flags = #C2FLAG_INT
+   ;gVar(sp)\flags = #C2FLAG_INT
    sp + 1
+   CompilerIf #DEBUG
+      ;If sp % 100 = 0
+      ;   Debug "Stack pointer at: " + Str(sp) + " / " + Str(#C2MAXCONSTANTS)
+      ;EndIf
+   CompilerEndIf
    pc + 1
 EndMacro
-
-;XIncludeFile            "C2-inc-v05.PBI"
-
 
 Procedure.s             Capitalize( sz.s, option.i = 0 )
    Protected            i, j, flag
@@ -84,7 +86,7 @@ Procedure               C2FetchPush()
 
    vm_DebugFunctionName()
    varSlot = _AR()\i
-
+    
    ; Check if this is a stack-local parameter AND we're in a function
    If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
       ; Read from stack at callerSp + paramOffset
@@ -96,6 +98,13 @@ Procedure               C2FetchPush()
    EndIf
 
    sp + 1
+
+   ;CompilerIf #DEBUG
+   ;   If sp % 100 = 0
+   ;      Debug "C2FetchPush: sp=" + Str(sp) + " / " + Str(#C2MAXCONSTANTS)
+   ;   EndIf
+   ;CompilerEndIf
+
    pc + 1
 EndProcedure
 
@@ -110,13 +119,11 @@ Procedure               C2FETCHS()
    If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
       ; Read from stack at callerSp + paramOffset
       callerSp = llStack()\sp
-      gVar( sp ) = gVar( callerSp + gVar(varSlot)\paramOffset )
+      gVar( sp )\ss = gVar( callerSp + gVar(varSlot)\paramOffset )\ss
    Else
       ; Regular global variable
-      gVar( sp ) = gVar( varSlot )
+      gVar( sp )\ss = gVar( varSlot )\ss
    EndIf
-
-   ; Flag already set at compile time by PostProcessor
 
    sp + 1
    pc + 1
@@ -135,144 +142,265 @@ Procedure               C2FETCHF()
    If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
       ; Read from stack at callerSp + paramOffset
       callerSp = llStack()\sp
-      gVar( sp ) = gVar( callerSp + gVar(varSlot)\paramOffset )
+      gVar( sp )\f = gVar( callerSp + gVar(varSlot)\paramOffset )\f
    Else
       ; Regular global variable
-      gVar( sp ) = gVar( varSlot )
+      gVar( sp )\f = gVar( varSlot )\f
    EndIf
 
    ; Flag already set at compile time by PostProcessor
-
-   ;Debug "FETCHF AFTER: pushed to gVar(" + Str(sp) + "), now incrementing sp"
 
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2POP()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-
-   ; OLD CODE - was reading from wrong position AND copying entire structure:
-   ; sp - 1
-   ; gVar( _AR()\i ) = gVar( sp )  // This overwrites the variable name!
-
-   ; NEW CODE - copy only the data fields, not the name:
    sp - 1
-   gVar( _AR()\i )\i = gVar( sp )\i
-   ;gVar( _AR()\i )\f = gVar( sp )\f
-   ;gVar( _AR()\i )\ss = gVar( sp )\ss
-   ;gVar( _AR()\i )\p = gVar( sp )\p
-   ; Don't copy: name, flags (those are set by the compiler)
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\i = gVar( sp )\i
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\i = gVar( sp )\i
+   EndIf
 
    pc + 1
 EndProcedure
 
 Procedure               C2POPS()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   ; Pop string value from stack
    sp - 1
-   gVar( _AR()\i )\ss = gVar( sp )\ss
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\ss = gVar( sp )\ss
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\ss = gVar( sp )\ss
+   EndIf
+
    pc + 1
 EndProcedure
 
 Procedure               C2POPF()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   ; Pop float value from stack
    sp - 1
-   gVar( _AR()\i )\f = gVar( sp )\f
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\f = gVar( sp )\f
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\f = gVar( sp )\f
+   EndIf
+
    pc + 1
 EndProcedure
 
 Procedure               C2PUSHS()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   ; Push string value onto stack
-   gVar( sp ) = gVar( _AR()\i )
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Read from stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( sp )\ss = gVar( callerSp + gVar(varSlot)\paramOffset )\ss
+   Else
+      ; Regular global variable
+      gVar( sp )\ss = gVar( varSlot )\ss
+   EndIf
+
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PUSHF()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
-   ; Push float value onto stack
-   gVar( sp ) = gVar( _AR()\i )
+   varSlot = _AR()\i
+
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Read from stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( sp )\f = gVar( callerSp + gVar(varSlot)\paramOffset )\f
+   Else
+      ; Regular global variable
+      gVar( sp )\f = gVar( varSlot )\f
+   EndIf
+
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2Store()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
    sp - 1
+   varSlot = _AR()\i
 
-   ; OLD CODE - copied entire structure, overwriting name:
-   ; gVar( _AR()\i ) = gVar( sp )
-
-   ; NEW CODE - copy only data fields:
-   gVar( _AR()\i )\i = gVar( sp )\i
-   ; Flag already set at compile time by PostProcessor
-   ;gVar( _AR()\i )\f = gVar( sp )\f
-   ;gVar( _AR()\i )\ss = gVar( sp )\ss
-   ;gVar( _AR()\i )\p = gVar( sp )\p
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\i = gVar( sp )\i
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\i = gVar( sp )\i
+   EndIf
 
    pc + 1
 EndProcedure
 
 Procedure               C2STORES()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
    sp - 1
+   varSlot = _AR()\i
 
-   ; Copy data fields for string store
-   gVar( _AR()\i )\ss = gVar( sp )\ss
-   ; Flag already set at compile time by PostProcessor
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\ss = gVar( sp )\ss
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\ss = gVar( sp )\ss
+   EndIf
 
    pc + 1
 EndProcedure
 
 Procedure               C2STOREF()
+   Protected varSlot.i
+   Protected callerSp.i
+
    vm_DebugFunctionName()
    sp - 1
+   varSlot = _AR()\i
 
-   ; Copy data fields for float store
-   gVar( _AR()\i )\f = gVar( sp )\f
-   ; Flag already set at compile time by PostProcessor
-
-   ;Debug "STOREF: Storing gVar(" + Str(sp) + ")\f=" + StrD(gVar(sp)\f, 6) + " to gVar(" + Str(_AR()\i) + ")[" + gVar(_AR()\i)\name + "]"
+   ; Check if this is a stack-local parameter AND we're in a function
+   If (gVar(varSlot)\flags & #C2FLAG_PARAM) And gFunctionDepth > 0
+      ; Write to stack at callerSp + paramOffset
+      callerSp = llStack()\sp
+      gVar( callerSp + gVar(varSlot)\paramOffset )\f = gVar( sp )\f
+   Else
+      ; Regular global variable - write to variable slot
+      gVar( varSlot )\f = gVar( sp )\f
+   EndIf
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOV()
    vm_DebugFunctionName()
-
-   ; OLD CODE - copied entire structure, overwriting name:
-   ; gVar( _AR()\i ) = gVar( _AR()\j )
-
-   ; NEW CODE - copy only data fields:
    gVar( _AR()\i )\i = gVar( _AR()\j )\i
-   ;gVar( _AR()\i )\f = gVar( _AR()\j )\f
-   ;gVar( _AR()\i )\ss = gVar( _AR()\j )\ss
-   ;gVar( _AR()\i )\p = gVar( _AR()\j )\p
-   ; Flag already set at compile time by PostProcessor
-
    pc + 1
 EndProcedure
 
 Procedure               C2MOVS()
    vm_DebugFunctionName()
-
-   ; Copy data fields for string move
    gVar( _AR()\i )\ss = gVar( _AR()\j )\ss
-   ; Flag already set at compile time by PostProcessor
-
    pc + 1
 EndProcedure
 
 Procedure               C2MOVF()
    vm_DebugFunctionName()
-
-   ; Copy data fields for float move
    gVar( _AR()\i )\f = gVar( _AR()\j )\f
-   ; Flag already set at compile time by PostProcessor
+   pc + 1
+EndProcedure
 
+;- Local Variable Opcodes (use LocalVars array, no flag checks)
+Procedure               C2LMOV()
+   vm_DebugFunctionName()
+   ; Direct array access: LocalVars(offset) = source
+   llStack()\LocalVars(_AR()\i)\i = gVar( _AR()\j )\i
+   pc + 1
+EndProcedure
+
+Procedure               C2LMOVS()
+   vm_DebugFunctionName()
+   llStack()\LocalVars(_AR()\i)\ss = gVar( _AR()\j )\ss
+   pc + 1
+EndProcedure
+
+Procedure               C2LMOVF()
+   vm_DebugFunctionName()
+   llStack()\LocalVars(_AR()\i)\f = gVar( _AR()\j )\f
+   pc + 1
+EndProcedure
+
+Procedure               C2LFETCH()
+   vm_DebugFunctionName()
+   ; Fetch local variable to stack
+   gVar( sp ) = llStack()\LocalVars(_AR()\i)
+   sp + 1
+   pc + 1
+EndProcedure
+
+Procedure               C2LFETCHS()
+   vm_DebugFunctionName()
+   gVar( sp )\ss = llStack()\LocalVars(_AR()\i)\ss
+   sp + 1
+   pc + 1
+EndProcedure
+
+Procedure               C2LFETCHF()
+   vm_DebugFunctionName()
+   gVar( sp )\f = llStack()\LocalVars(_AR()\i)\f
+   sp + 1
+   pc + 1
+EndProcedure
+
+Procedure               C2LSTORE()
+   vm_DebugFunctionName()
+   ; Store from stack to local variable
+   sp - 1
+   llStack()\LocalVars(_AR()\i) = gVar( sp )
+   pc + 1
+EndProcedure
+
+Procedure               C2LSTORES()
+   vm_DebugFunctionName()
+   sp - 1
+   llStack()\LocalVars(_AR()\i)\ss = gVar( sp )\ss
+   pc + 1
+EndProcedure
+
+Procedure               C2LSTOREF()
+   vm_DebugFunctionName()
+   sp - 1
+   llStack()\LocalVars(_AR()\i)\f = gVar( sp )\f
    pc + 1
 EndProcedure
 
@@ -534,34 +662,38 @@ EndProcedure
 
 Procedure               C2CALL()
    vm_DebugFunctionName()
-   Protected nParams.i
+   Protected nParams.l, nLocals.l, totalVars.l
+   Protected i.l, paramSp.l
 
-   nParams = _AR()\j  ; Get parameter count from instruction
+   ; Read nParams and nLocals from separate fields (no unpacking)
+   nParams = _AR()\j
+   nLocals = _AR()\n
+   totalVars = nParams + nLocals
 
    ; User-defined function - create stack frame and jump to bytecode address
    AddElement( llStack() )
    llStack()\pc = pc + 1
    llStack()\sp = sp - nParams  ; Save sp BEFORE params were pushed (FIX: prevents stack leak)
+
+   ; Allocate LocalVars array for this function call (params + locals)
+   If totalVars > 0
+      ReDim llStack()\LocalVars(totalVars - 1)
+
+      ; Copy parameters from stack into LocalVars array
+      paramSp = sp - nParams
+      For i = 0 To nParams - 1
+         llStack()\LocalVars(i) = gVar(paramSp + i)
+      Next
+      ; Note: Local variables (indices nParams to totalVars-1) are uninitialized
+   EndIf
+
    pc = _AR()\i
    gFunctionDepth + 1  ; Increment function depth counter
 
-   ;Debug "CALL pc=" + Str(pc) + " with " + Str(nParams) + " params, sp=" + Str(sp) + " saving callerSp=" + Str(llStack()\sp)
-   ;Debug "s=" + gVar( sp - 3 )\ss + " d=" + Str( gVar( sp - 3 )\i ) + " f=" + StrD( gVar( sp - 3 )\f, 3 )
-   ;Debug "s=" + gVar( sp - 2 )\ss + " d=" + Str( gVar( sp - 2 )\i ) + " f=" + StrD( gVar( sp - 2 )\f, 3 )
-   ;Debug "s=" + gVar( sp - 1 )\ss + " d=" + Str( gVar( sp - 1 )\i ) + " f=" + StrD( gVar( sp - 1 )\f, 3 )
 EndProcedure
 
 Procedure               C2Return()
    vm_DebugFunctionName()
-
-   ; OLD CODE - didn't preserve return value:
-   ; pc = llStack()\pc
-   ; sp = llStack()\sp
-   ; DeleteElement( llStack() )
-
-   ; NEW CODE - preserve return value on stack:
-   ; The return value (if any) is at sp-1
-   ; We need to copy it to the caller's stack position before restoring sp
    Protected returnValue.stVT
    Protected callerSp.i
 
@@ -569,7 +701,6 @@ Procedure               C2Return()
    returnValue\i = 0
    returnValue\flags = #C2FLAG_INT
 
-   ; Save caller's stack pointer
    callerSp = llStack()\sp
 
    ; Save return value from top of stack (sp-1) if there's anything on function's stack
@@ -745,6 +876,12 @@ Procedure C2BUILTIN_MAX()
    vm_PushInt(result)
 EndProcedure
 
+Procedure               C2NOOP()
+   vm_DebugFunctionName()
+   ; No operation - just advance program counter
+   pc + 1
+EndProcedure
+
 Procedure               C2HALT()
    vm_DebugFunctionName()
    ; Do nothing - the VM loop checks for HALT and exits
@@ -753,9 +890,9 @@ EndProcedure
 
 ;- End VM functions
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 463
-; FirstLine = 459
-; Folding = ------------
+; CursorPosition = 667
+; FirstLine = 656
+; Folding = --------------
 ; EnableAsm
 ; EnableThread
 ; EnableXP

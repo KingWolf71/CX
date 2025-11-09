@@ -21,12 +21,14 @@ DisableDebugger
 
 DeclareModule C2Common
 
+   #DEBUG = 1
    XIncludeFile         "c2-inc-v06.pbi"
    XIncludeFile         "c2-builtins.pbi"
 EndDeclareModule
 
 Module C2Common
    ;Empty by design
+   
 EndModule
 
 DeclareModule C2Lang
@@ -95,6 +97,7 @@ Module C2Lang
       function.l
       params.s
       nParams.i
+      nLocals.i       ; Number of local variables (non-parameters) in function
       Index.l
       row.l
       nCall.u
@@ -152,6 +155,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Global               gCurrFunction
    Global               gCodeGenFunction
    Global               gCodeGenParamIndex
+   Global               gCodeGenLocalIndex      ; Current local variable offset (nParams + local count)
    Global               gCodeGenRecursionDepth
    Global               gCurrentFunctionName.s  ; Current function being compiled (for local variable scoping)
    Global               gLastExpandParamsCount  ; Last actual parameter count from expand_params() for built-ins
@@ -190,14 +194,14 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Macro                SetError( text, err )
       If err > 0 And err < 10
          gszlastError   = text + " on line " + Str( gLineNumber ) + ", col = " + Str( gCol )
-      ElseIf err > 10
+      ElseIf err >= 10
          gszlastError   = text + " on line " + Str( llTokenList()\row ) + ", col = " + Str( llTokenList()\col )
       Else
          gszlastError   = text
       EndIf
-      
+
       gLastError     = err
-      
+
       ProcedureReturn err
    EndMacro
    
@@ -368,7 +372,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          gVar(i)\i      = 0
          gVar(i)\f      = 0.0
          gVar(i)\flags  = 0
-         gVar(i)\paramOffset = 0
+         gVar(i)\paramOffset = -1  ; -1 means unassigned
       Next
       
       ;Read tokens
@@ -480,6 +484,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       gNextFunction           = #C2FUNCSTART
       gCodeGenFunction        = 0
       gCodeGenParamIndex      = -1
+      gCodeGenLocalIndex      = 0
       gCodeGenRecursionDepth  = 0
       gCurrentFunctionName    = ""  ; Empty = global scope
       gLastExpandParamsCount  = 0
@@ -861,6 +866,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
             If char = #LF$ Or char = #CR$
                inLineComment = #False
                result + char  ; Preserve newline
+            Else
+               result + " "   ; Replace comment chars with space to preserve column position
             EndIf
             i + 1
             Continue
@@ -870,12 +877,15 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          If inBlockComment
             If char = "*" And nextChar = "/"
                inBlockComment = #False
+               result + "  "  ; Replace */ with spaces to preserve column position
                i + 2  ; Skip */
                Continue
             EndIf
-            ; Replace comment content with space to preserve some formatting
+            ; Replace comment content with space or newline to preserve positioning
             If char = #LF$ Or char = #CR$
                result + char  ; Preserve newlines for line numbering
+            Else
+               result + " "   ; Replace comment chars with space to preserve column position
             EndIf
             i + 1
             Continue
@@ -884,12 +894,14 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          ; Check for start of comments (only if not in string/char)
          If char = "/" And nextChar = "/"
             inLineComment = #True
+            result + "  "  ; Replace // with spaces to preserve column position
             i + 2  ; Skip //
             Continue
          EndIf
 
          If char = "/" And nextChar = "*"
             inBlockComment = #True
+            result + "  "  ; Replace /* with spaces to preserve column position
             i + 2  ; Skip /*
             Continue
          EndIf
@@ -907,10 +919,15 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       Protected         i
       Protected         bFlag
       Protected.s       line
-      Protected.s       szNewBody = ""
+      Protected.s       szNewBody
+      Protected.i       sizeBeforeStrip, sizeAfterStrip, sizeAfterMacros
+
+      sizeBeforeStrip = Len(gszFileText)
 
       ; Strip all comments from source before processing
       gszFileText = StripComments(gszFileText)
+      sizeAfterStrip = Len(gszFileText)
+      szNewBody = ""
 
       ; First we find and store our macros
       Repeat
@@ -931,20 +948,21 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       
       ; Macro Expansion
       i = 0 : gszFileText = ""
-      
+
       Repeat
          i + 1
          line = StringField( szNewBody, i, #LF$ )
          If line = "" : Break : EndIf
-         
+
+         ;- I don't know why the below line works - but it does
          Line = ExpandMacros( line) + #CRLF$
          ;Line = ExpandMacros( line) + #LF$
          gszFileText + line
       ForEver
-      
+
       szNewBody = gszFileText
       gszFileText = "" : i = 0
-      
+
       Repeat
          i + 1
          line = StringField( szNewBody, i, #LF$ )
@@ -957,6 +975,14 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       ForEver
 
       gMemSize = Len( gszFileText )
+      sizeAfterMacros = gMemSize
+
+      ; Display preprocessing statistics
+      Debug "=== Preprocessor Statistics ==="
+      Debug "Size before stripping:  " + Str(sizeBeforeStrip) + " chars"
+      Debug "Size after stripping:   " + Str(sizeAfterStrip) + " chars (removed " + Str(sizeBeforeStrip - sizeAfterStrip) + ")"
+      Debug "Size after macros:      " + Str(sizeAfterMacros) + " chars"
+      Debug "==============================="
    EndProcedure
    ;- =====================================
    ;- Parser 
@@ -1096,11 +1122,7 @@ EndProcedure
       Protected.i       dots, bFloat, e
       Protected.i       braces
       Protected.s       text, temp
-
-      Debug "=== Scanner() called ==="
-      Debug "gMemSize: " + Str(gMemSize)
-      Debug "gszFileText length: " + Str(Len(gszFileText))
-
+      
       gpos           = 1
       gCurrFunction  = 1
 
@@ -1145,7 +1167,6 @@ EndProcedure
             Case ":"
                par_AddTokenSimple( #ljCOLON )
             Case "/"
-               ; Comments are already stripped in preprocessor, so just handle division
                par_AddToken( #ljOP, #ljDIVIDE, "", "" )
             Case "'"
                par_NextCharacter()
@@ -1197,25 +1218,31 @@ EndProcedure
             
             Case #INV$
                par_NextCharacter()
-               text = gNextChar
-               
-               Repeat
-                  par_NextCharacter()
-                  
-                  If gNextChar = #INV$
-                     e = DetectType( text )
-                     par_AddToken( e, e, "", text )
-                     Break
-                  ElseIf gNextChar = #CR$
-                     SetError( "EOL in string", #C2ERR_EOL_IN_STRING )
-                  Else
-                     text + gNextChar
-                  EndIf
-               
-               Until gPos >= gMemSize
 
-               If gPos >= gMemSize
-                  SetError( "EOF in string", #C2ERR_EOF_IN_STRING )
+               ; Check for empty string
+               If gNextChar = #INV$
+                  par_AddToken( #ljSTRING, #ljSTRING, "", "" )
+               Else
+                  text = gNextChar
+
+                  Repeat
+                     par_NextCharacter()
+
+                     If gNextChar = #INV$
+                        e = DetectType( text )
+                        par_AddToken( e, e, "", text )
+                        Break
+                     ElseIf gNextChar = #CR$
+                        SetError( "EOL in string", #C2ERR_EOL_IN_STRING )
+                     Else
+                        text + gNextChar
+                     EndIf
+
+                  Until gPos >= gMemSize
+
+                  If gPos >= gMemSize
+                     SetError( "EOF in string", #C2ERR_EOF_IN_STRING )
+                  EndIf
                EndIf
             Default
                ; Handle EOF character explicitly
@@ -1425,9 +1452,33 @@ EndProcedure
             *p = MakeNode( #ljNOT, expr( gPreTable( #ljNOT )\Precedence ), 0 )
             
          Case #ljIDENT
-            *p = Makeleaf( #ljIDENT, TOKEN()\value )
-            *p\TypeHint = TOKEN()\typeHint
-            NextToken()
+            ; Check if this is a built-in function call (identifier followed by '(')
+            If FindMapElement(mapBuiltins(), LCase(TOKEN()\value))
+               ; Peek at next token to see if it's '('
+               ; Save current position in token list
+               Protected savedListIndex.i = ListIndex(llTokenList())
+               NextToken()
+
+               If TOKEN()\TokenExtra = #ljLeftParent
+                  ; It's a built-in function call
+                  Protected builtinOpcode.i = mapBuiltins()\opcode
+                  *e = expand_params(#ljPush, -1)  ; -1 for built-ins
+                  *node = Makeleaf(#ljCall, Str(builtinOpcode))  ; Use #ljCall with opcode as value
+                  *node\paramCount = gLastExpandParamsCount
+                  *p = MakeNode(#ljSEQ, *e, *node)
+               Else
+                  ; Not a function call, restore position and treat as variable
+                  SelectElement(llTokenList(), savedListIndex)
+                  *p = Makeleaf( #ljIDENT, TOKEN()\value )
+                  *p\TypeHint = TOKEN()\typeHint
+                  NextToken()
+               EndIf
+            Else
+               ; Regular identifier
+               *p = Makeleaf( #ljIDENT, TOKEN()\value )
+               *p\TypeHint = TOKEN()\typeHint
+               NextToken()
+            EndIf
 
          Case #ljINT
             *p = Makeleaf( #ljINT, TOKEN()\value )
@@ -1822,43 +1873,172 @@ EndProcedure
 
    EndProcedure
     
+   ; Helper: Check if variable should use local opcodes (LocalVars array)
+   ; Returns true for both parameters and local variables in functions
+   Procedure.b          IsLocalVar(varIndex.i)
+      If varIndex < 0 Or varIndex >= gnLastVariable
+         ProcedureReturn #False
+      EndIf
+
+      ; Parameters use LocalVars array
+      If gVar(varIndex)\flags & #C2FLAG_PARAM
+         ProcedureReturn #True
+      EndIf
+
+      ; Non-parameter locals: check if name is mangled with function name OR synthetic ($temp)
+      If gCurrentFunctionName <> ""
+         If LCase(Left(gVar(varIndex)\name, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_")
+            ProcedureReturn #True
+         EndIf
+         ; Synthetic temporaries (starting with $) are also local when inside a function
+         If Left(gVar(varIndex)\name, 1) = "$"
+            ProcedureReturn #True
+         EndIf
+      EndIf
+
+      ProcedureReturn #False
+   EndProcedure
+
    Procedure            EmitInt( op.i, nVar.i = -1 )
+      Protected sourceFlags.w, destFlags.w
+      Protected isSourceLocal.b, isDestLocal.b
+      Protected sourceFlags2.w, destFlags2.w
+
       If gEmitIntCmd = #ljpush And op = #ljStore
-         ; Choose the appropriate MOV variant based on source variable type
-         Protected sourceFlags.w = gVar( llObjects()\i )\flags
+         ; PUSH+STORE optimization
+         sourceFlags = gVar( llObjects()\i )\flags
+         destFlags = gVar( nVar )\flags
+         isSourceLocal = IsLocalVar(llObjects()\i)
+         isDestLocal = IsLocalVar(nVar)
 
-         If sourceFlags & #C2FLAG_STR
-            llObjects()\code = #ljMOVS
-            gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_STR
-         ElseIf sourceFlags & #C2FLAG_FLOAT
-            llObjects()\code = #ljMOVF
-            gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+         ; Only optimize to MOV if BOTH are not local (globals can use MOV)
+         ; Or if destination is local (use LMOV)
+         If Not ((sourceFlags & #C2FLAG_PARAM) Or (destFlags & #C2FLAG_PARAM))
+            ; Neither is parameter - can optimize to MOV
+            If isDestLocal
+               ; Destination is local - use LMOV
+               ; For LMOV: i = paramOffset (destination), j = source varIndex
+               Protected savedSource.i = llObjects()\i  ; Save source BEFORE overwriting
+               If sourceFlags & #C2FLAG_STR
+                  llObjects()\code = #ljLMOVS
+               ElseIf sourceFlags & #C2FLAG_FLOAT
+                  llObjects()\code = #ljLMOVF
+               Else
+                  llObjects()\code = #ljLMOV
+               EndIf
+               llObjects()\j = savedSource  ; j = source varIndex
+               llObjects()\i = gVar(nVar)\paramOffset  ; i = destination paramOffset
+            Else
+               ; Global destination - use regular MOV
+               If sourceFlags & #C2FLAG_STR
+                  llObjects()\code = #ljMOVS
+                  gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_STR
+               ElseIf sourceFlags & #C2FLAG_FLOAT
+                  llObjects()\code = #ljMOVF
+                  gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+               Else
+                  llObjects()\code = #ljMOV
+                  gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+               EndIf
+               llObjects()\j = llObjects()\i
+            EndIf
          Else
-            llObjects()\code = #ljMOV
-            gVar( nVar )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+            ; One is a parameter - keep as PUSH+STORE but use local version if dest is local
+            gEmitIntLastOp = AddElement( llObjects() )
+            If isDestLocal
+               If destFlags & #C2FLAG_STR
+                  llObjects()\code = #ljLSTORES
+               ElseIf destFlags & #C2FLAG_FLOAT
+                  llObjects()\code = #ljLSTOREF
+               Else
+                  llObjects()\code = #ljLSTORE
+               EndIf
+            Else
+               llObjects()\code = op
+            EndIf
          EndIf
-
-         llObjects()\j = llObjects()\i
       ElseIf gEmitIntCmd = #ljfetch And op = #ljstore
-         ; Choose the appropriate MOV variant based on source variable type
-         Protected sourceFlags2.w = gVar( llObjects()\i )\flags
+         ; FETCH+STORE optimization
+         sourceFlags2 = gVar( llObjects()\i )\flags
+         destFlags2 = gVar( nVar )\flags
+         isSourceLocal = IsLocalVar(llObjects()\i)
+         isDestLocal = IsLocalVar(nVar)
 
-         If sourceFlags2 & #C2FLAG_STR
-            llObjects()\code = #ljMOVS
-         ElseIf sourceFlags2 & #C2FLAG_FLOAT
-            llObjects()\code = #ljMOVF
+         If Not ((sourceFlags2 & #C2FLAG_PARAM) Or (destFlags2 & #C2FLAG_PARAM))
+            ; Can optimize to MOV or LMOV
+            If isDestLocal
+               ; Use LMOV for local destination
+               If sourceFlags2 & #C2FLAG_STR
+                  llObjects()\code = #ljLMOVS
+               ElseIf sourceFlags2 & #C2FLAG_FLOAT
+                  llObjects()\code = #ljLMOVF
+               Else
+                  llObjects()\code = #ljLMOV
+               EndIf
+               Protected savedSrc2.i = llObjects()\i
+               llObjects()\i = gVar(nVar)\paramOffset
+               llObjects()\j = savedSrc2
+            Else
+               ; Use regular MOV for global destination
+               If sourceFlags2 & #C2FLAG_STR
+                  llObjects()\code = #ljMOVS
+               ElseIf sourceFlags2 & #C2FLAG_FLOAT
+                  llObjects()\code = #ljMOVF
+               Else
+                  llObjects()\code = #ljMOV
+               EndIf
+               llObjects()\j = llObjects()\i
+            EndIf
          Else
-            llObjects()\code = #ljMOV
+            ; Keep as FETCH+STORE but use local version if appropriate
+            gEmitIntLastOp = AddElement( llObjects() )
+            If isDestLocal
+               If destFlags2 & #C2FLAG_STR
+                  llObjects()\code = #ljLSTORES
+               ElseIf destFlags2 & #C2FLAG_FLOAT
+                  llObjects()\code = #ljLSTOREF
+               Else
+                  llObjects()\code = #ljLSTORE
+               EndIf
+            Else
+               llObjects()\code = op
+            EndIf
          EndIf
-
-         llObjects()\j = llObjects()\i
       Else
+         ; Standard emission - check if we should use local opcode
          gEmitIntLastOp = AddElement( llObjects() )
-         llObjects()\code = op
+
+         If nVar >= 0 And IsLocalVar(nVar)
+            ; This is a local variable - convert to local opcode
+            Select op
+               Case #ljFetch
+                  llObjects()\code = #ljLFETCH
+               Case #ljFETCHS
+                  llObjects()\code = #ljLFETCHS
+               Case #ljFETCHF
+                  llObjects()\code = #ljLFETCHF
+               Case #ljStore
+                  llObjects()\code = #ljLSTORE
+               Case #ljSTORES
+                  llObjects()\code = #ljLSTORES
+               Case #ljSTOREF
+                  llObjects()\code = #ljLSTOREF
+               Default
+                  llObjects()\code = op
+            EndSelect
+         Else
+            llObjects()\code = op
+         EndIf
       EndIf
 
       If nVar > -1
-         llObjects()\i     = nVar
+         ; For local opcodes, store paramOffset; for globals, store varIndex
+         If IsLocalVar(nVar)
+            ; For local variables, store offset (not global variable index)
+            llObjects()\i = gVar(nVar)\paramOffset
+         Else
+            llObjects()\i = nVar
+         EndIf
       EndIf
 
       gEmitIntCmd = llObjects()\code
@@ -1890,26 +2070,48 @@ EndProcedure
          Next
 
          ; Not found as local - check if global exists
-         ; If global exists, use it (unless we're creating a parameter)
+         ; If global exists: use it for READ, but create local for WRITE
          ; If global doesn't exist, create as local
 
          If gCodeGenParamIndex < 0
             ; Not processing parameters - check if global exists
-            For i = 0 To gnLastVariable - 1
-               If gVar(i)\name = text
-                  ; Found as global - use it (for both read AND write)
-                  ProcedureReturn i
-               EndIf
-            Next
+            If Not *assignmentTree
+               ; Reading a variable - use global if it exists
+               For i = 0 To gnLastVariable - 1
+                  If gVar(i)\name = text
+                     ; Found as global - use it for READ
+                     ProcedureReturn i
+                  EndIf
+               Next
+            EndIf
+            ; Assigning to variable (*assignmentTree <> 0) - always create local
          EndIf
 
-         ; Global not found (or processing parameters) - create as local
+         ; Global not found (or assigning) - create as local
          text = mangledName
       EndIf
 
       ; Check if variable already exists (with final name after mangling)
       For i = 0 To gnLastVariable - 1
          If gVar(i)\name = text
+            ; Variable exists - check if it's a local variable that needs an offset assigned
+            If gCurrentFunctionName <> "" And gCodeGenParamIndex < 0 And gCodeGenFunction > 0
+               If gVar(i)\paramOffset < 0
+                  ; This is a local variable without an offset - assign one
+                  If LCase(Left(text, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_") Or Left(text, 1) = "$"
+                     gVar(i)\paramOffset = gCodeGenLocalIndex
+                     gCodeGenLocalIndex + 1
+
+                     ; Update nLocals in mapModules immediately
+                     ForEach mapModules()
+                        If mapModules()\function = gCodeGenFunction
+                           mapModules()\nLocals = gCodeGenLocalIndex - mapModules()\nParams
+                           Break
+                        EndIf
+                     Next
+                  EndIf
+               EndIf
+            EndIf
             ProcedureReturn i
          EndIf
       Next
@@ -1996,7 +2198,26 @@ EndProcedure
             ;ProcedureReturn -1
          EndIf
       EndIf
-      
+
+      ; If we're creating a local variable (inside a function, not a parameter),
+      ; assign it an offset and update nLocals count
+      ; This includes both mangled variables (funcname_varname) and synthetic variables ($temp)
+      If gCurrentFunctionName <> "" And gCodeGenParamIndex < 0 And gCodeGenFunction > 0
+         If LCase(Left(text, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_") Or Left(text, 1) = "$"
+            ; This is a new local variable (mangled name or synthetic temporary)
+            gVar(gnLastVariable)\paramOffset = gCodeGenLocalIndex
+            gCodeGenLocalIndex + 1
+
+            ; Update nLocals in mapModules immediately
+            ForEach mapModules()
+               If mapModules()\function = gCodeGenFunction
+                  mapModules()\nLocals = gCodeGenLocalIndex - mapModules()\nParams
+                  Break
+               EndIf
+            Next
+         EndIf
+      EndIf
+
       gnLastVariable + 1
       ProcedureReturn gnLastVariable - 1
    EndProcedure
@@ -2180,6 +2401,9 @@ EndProcedure
       ; Reset state on top-level call
       If gCodeGenRecursionDepth = 0
          gCodeGenParamIndex = -1
+         gCodeGenFunction = 0
+         gCodeGenLocalIndex = 0
+         gCurrentFunctionName = ""
       EndIf
       gCodeGenRecursionDepth + 1
 
@@ -2217,8 +2441,32 @@ EndProcedure
                gCodeGenParamIndex - 1
 
                ; Note: We DON'T emit POP - parameters stay on stack
+            ElseIf gCurrentFunctionName <> ""
+               ; Local variable inside a function - assign offset and emit POP
+               gVar( n )\paramOffset = gCodeGenLocalIndex
+               gCodeGenLocalIndex + 1  ; Increment for next local
+
+               ; Update nLocals in mapModules immediately
+               ForEach mapModules()
+                  If mapModules()\function = gCodeGenFunction
+                     mapModules()\nLocals = gCodeGenLocalIndex - mapModules()\nParams
+                     Break
+                  EndIf
+               Next
+
+               ; Set type flags
+               If *x\typeHint = #ljFLOAT
+                  EmitInt( #ljPOPF, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
+               ElseIf *x\typeHint = #ljSTRING
+                  EmitInt( #ljPOPS, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_STR
+               Else
+                  EmitInt( #ljPOP, n )
+                  gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_INT
+               EndIf
             Else
-               ; Regular variable assignment - emit POP as usual
+               ; Global variable - emit POP as usual
                If *x\typeHint = #ljFLOAT
                   EmitInt( #ljPOPF, n )
                   gVar( n )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
@@ -2278,7 +2526,8 @@ EndProcedure
             EndIf
 
             ; Type propagation: If assigning a typed value to an untyped var, update the var
-            If llObjects()\code <> #ljMOV And llObjects()\code <> #ljMOVS And llObjects()\code <> #ljMOVF
+            If llObjects()\code <> #ljMOV And llObjects()\code <> #ljMOVS And llObjects()\code <> #ljMOVF And
+               llObjects()\code <> #ljLMOV And llObjects()\code <> #ljLMOVS And llObjects()\code <> #ljLMOVF
                ; Keep the variable's declared type (don't change it)
                ; Type checking could be added here later
             EndIf
@@ -2361,24 +2610,28 @@ EndProcedure
                CodeGenerator( *x\left )
                CodeGenerator( *x\right )
 
-               ; If left was ljFunction, we've finished processing the function
-               If *x\left And *x\left\NodeType = #ljFunction
-                  gCodeGenParamIndex = -1  ; Reset parameter tracking
-                  ; Note: gCurrentFunctionName intentionally left set
-                  ; It will be overwritten when next function is processed
-                  ; Global code should be defined before functions to avoid scoping issues
-               EndIf
+               ; NOTE: Don't reset gCodeGenFunction here!
+               ; The AST has nested SEQ nodes, and resetting here happens too early.
+               ; Function body may continue in outer SEQ nodes.
+               ; Like gCurrentFunctionName, gCodeGenFunction will be overwritten when next function starts.
+               ; The nLocals count is updated incrementally in FetchVarOffset as variables are created.
             EndIf
             
          Case #ljFunction
             ForEach mapModules()
                If mapModules()\function = Val( *x\value )
+                  ; Store BOTH index and pointer to list element for post-optimization fixup
                   mapModules()\Index = ListIndex( llObjects() ) + 1
+                  mapModules()\NewPos = @llObjects()  ; Store pointer to element
                   ; Initialize parameter tracking
                   ; Parameters processed in reverse, so start from (nParams - 1) and decrement
                   gCodeGenParamIndex = mapModules()\nParams - 1
+                  ; Local variables start after parameters
+                  gCodeGenLocalIndex = mapModules()\nParams
                   ; Set current function name for local variable scoping
                   gCurrentFunctionName = MapKey(mapModules())
+                  ; Track current function ID for nLocals counting
+                  gCodeGenFunction = mapModules()\function
                   Break
                EndIf
             Next
@@ -2453,8 +2706,21 @@ EndProcedure
                llObjects()\j = paramCount
             Else
                ; User-defined function - emit CALL with function ID
+               ; Store nParams in j and nLocals in n (no packing)
+               Protected nLocals.l
                EmitInt( #ljCall, funcId )
+
+               ; Find nLocals for this function
+               ForEach mapModules()
+                  If mapModules()\function = funcId
+                     nLocals = mapModules()\nLocals
+                     Break
+                  EndIf
+               Next
+
+               ; Store separately: j = nParams, n = nLocals
                llObjects()\j = paramCount
+               llObjects()\n = nLocals
             EndIf
             
          Case #ljHalt
@@ -2467,11 +2733,20 @@ EndProcedure
       EndSelect
 
       gCodeGenRecursionDepth - 1
+
+      ; Reset code generation state when returning from root level
+      ; This ensures clean state for next compilation even if Init() isn't called
+      If gCodeGenRecursionDepth = 0
+         gCodeGenFunction = 0
+         gCodeGenParamIndex = -1
+         gCodeGenLocalIndex = 0
+         gCurrentFunctionName = ""
+      EndIf
    EndProcedure
     
    Procedure            FixJMP()
       Protected         i, pos, pair
-   
+
       ForEach llHoles()
          If llHoles()\mode = 1
             PushListPosition( llHoles() )
@@ -2499,16 +2774,41 @@ EndProcedure
             llObjects()\i = (pos - ListIndex( llObjects() ) ) + 1
          EndIf
       Next
-      
+
+      ; Recalculate function addresses after PostProcessor optimizations
+      ; This is critical because PostProcessor may add/remove/optimize instructions
+      ; Strategy: Use stored element pointers to find actual post-optimization positions
+
+      ; Recalculate function indexes using stored element pointers
+      ForEach mapModules()
+         If mapModules()\NewPos
+            ; Use stored pointer to find current position of function entry
+            If ChangeCurrentElement(llObjects(), mapModules()\NewPos)
+               ; Scan forward from this element to skip any NOOPs added by optimizer
+               While ListIndex(llObjects()) < ListSize(llObjects())
+                  If llObjects()\code <> #ljNOOP
+                     ; Found first non-NOOP instruction - this is the function entry
+                     mapModules()\Index = ListIndex(llObjects()) + 1
+                     Break
+                  EndIf
+                  If Not NextElement(llObjects())
+                     Break
+                  EndIf
+               Wend
+            EndIf
+         EndIf
+      Next
+
+      ; Now patch all CALL instructions with correct function addresses AND nLocals count
       ForEach llObjects()
          If llObjects()\code = #ljCall
             ForEach mapModules()
                If mapModules()\function = llObjects()\i
                   llObjects()\i = mapModules()\Index
-                  ;Debug "Adjusted to " + Str( mapModules()\Index )
+                  llObjects()\n = mapModules()\nLocals  ; Update nLocals from final count
                   Break
                EndIf
-            Next   
+            Next
          EndIf
       Next
    EndProcedure
@@ -2524,6 +2824,9 @@ EndProcedure
       Protected newConstIdx.i
       Protected strIdx.i, str2Idx.i, newStrIdx.i
       Protected str1.s, str2.s, combinedStr.s
+      Protected const1f.d, const2f.d, const2fIdx.i
+      Protected resultf.d
+      Protected newConstFIdx.i
 
       ; Fix up opcodes based on actual variable types
       ; This handles cases where types weren't known at parse time
@@ -2533,10 +2836,13 @@ EndProcedure
                ; Check if this push should be typed
                n = llObjects()\i
                If n >= 0 And n < gnLastVariable
-                  If gVar(n)\flags & #C2FLAG_FLOAT
-                     llObjects()\code = #ljPUSHF
-                  ElseIf gVar(n)\flags & #C2FLAG_STR
-                     llObjects()\code = #ljPUSHS
+                  ; Skip parameters - they're generic and handled at runtime
+                  If Not (gVar(n)\flags & #C2FLAG_PARAM)
+                     If gVar(n)\flags & #C2FLAG_FLOAT
+                        llObjects()\code = #ljPUSHF
+                     ElseIf gVar(n)\flags & #C2FLAG_STR
+                        llObjects()\code = #ljPUSHS
+                     EndIf
                   EndIf
                EndIf
                
@@ -2630,6 +2936,15 @@ EndProcedure
       ;- Enhanced Instruction Fusion Optimizations (backward compatible)
       ;- ==================================================================
 
+      ; Check if optimizations are enabled (default ON)
+      Protected optimizationsEnabled.i = #True
+      If FindMapElement(mapPragmas(), "optimizecode")
+         If LCase(mapPragmas()) = "off" Or mapPragmas() = "0"
+            optimizationsEnabled = #False
+         EndIf
+      EndIf
+
+      If optimizationsEnabled
       ; Pass 2: Redundant assignment elimination (x = x becomes NOP)
       ForEach llObjects()
          Select llObjects()\code
@@ -2685,11 +3000,11 @@ EndProcedure
                opCode = llObjects()\code
                ; Look back for two consecutive constant pushes
                If PreviousElement(llObjects())
-                  If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                  If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                      const2 = gVar(llObjects()\i)\i
                      const2Idx = llObjects()\i
                      If PreviousElement(llObjects())
-                        If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                        If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                            const1 = gVar(llObjects()\i)\i
                            canFold = #True
 
@@ -2718,13 +3033,86 @@ EndProcedure
                            If canFold
                               ; Create a new constant for the folded result
                               newConstIdx = gnLastVariable
+                              ; Clear all fields first
                               gVar(newConstIdx)\name = "$fold" + Str(newConstIdx)
                               gVar(newConstIdx)\i = result
+                              gVar(newConstIdx)\f = 0.0
+                              gVar(newConstIdx)\ss = ""
+                              gVar(newConstIdx)\p = #Null
                               gVar(newConstIdx)\flags = #C2FLAG_CONST | #C2FLAG_INT
+                              gVar(newConstIdx)\paramOffset = -1  ; Constants don't need frame offsets
                               gnLastVariable + 1
 
                               ; Replace first PUSH with new constant, eliminate second PUSH and operation
                               llObjects()\i = newConstIdx
+                              NextElement(llObjects())  ; Second PUSH
+                              llObjects()\code = #ljNOOP
+                              NextElement(llObjects())  ; Operation
+                              llObjects()\code = #ljNOOP
+                           Else
+                              NextElement(llObjects())
+                              NextElement(llObjects())
+                           EndIf
+                        Else
+                           NextElement(llObjects())
+                           NextElement(llObjects())
+                        EndIf
+                     Else
+                        NextElement(llObjects())
+                     EndIf
+                  Else
+                     NextElement(llObjects())
+                  EndIf
+               EndIf
+         EndSelect
+      Next
+
+      ; Pass 4b: Constant folding for float arithmetic
+      ForEach llObjects()
+         Select llObjects()\code
+            Case #ljFLOATADD, #ljFLOATSUB, #ljFLOATMUL, #ljFLOATDIV
+               opCode = llObjects()\code
+               ; Look back for two consecutive constant pushes
+               If PreviousElement(llObjects())
+                  If (llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPush) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                     const2f = gVar(llObjects()\i)\f
+                     const2fIdx = llObjects()\i
+                     If PreviousElement(llObjects())
+                        If (llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPush) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                           const1f = gVar(llObjects()\i)\f
+                           canFold = #True
+
+                           ; Compute the constant result
+                           Select opCode
+                              Case #ljFLOATADD
+                                 resultf = const1f + const2f
+                              Case #ljFLOATSUB
+                                 resultf = const1f - const2f
+                              Case #ljFLOATMUL
+                                 resultf = const1f * const2f
+                              Case #ljFLOATDIV
+                                 If const2f <> 0.0
+                                    resultf = const1f / const2f
+                                 Else
+                                    canFold = #False  ; Don't fold division by zero
+                                 EndIf
+                           EndSelect
+
+                           If canFold
+                              ; Create a new constant for the folded result
+                              newConstFIdx = gnLastVariable
+                              ; Clear all fields first
+                              gVar(newConstFIdx)\name = "$ffold" + Str(newConstFIdx)
+                              gVar(newConstFIdx)\i = 0
+                              gVar(newConstFIdx)\f = resultf
+                              gVar(newConstFIdx)\ss = ""
+                              gVar(newConstFIdx)\p = #Null
+                              gVar(newConstFIdx)\flags = #C2FLAG_CONST | #C2FLAG_FLOAT
+                              gVar(newConstFIdx)\paramOffset = -1  ; Constants don't need frame offsets
+                              gnLastVariable + 1
+
+                              ; Replace first PUSH with new constant, eliminate second PUSH and operation
+                              llObjects()\i = newConstFIdx
                               NextElement(llObjects())  ; Second PUSH
                               llObjects()\code = #ljNOOP
                               NextElement(llObjects())  ; Operation
@@ -2753,7 +3141,7 @@ EndProcedure
             Case #ljADD
                ; x + 0 = x, eliminate ADD and the constant 0 push
                If PreviousElement(llObjects())
-                  If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                  If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                      If gVar(llObjects()\i)\i = 0
                         llObjects()\code = #ljNOOP  ; Eliminate PUSH 0
                         NextElement(llObjects())     ; Back to ADD
@@ -2769,7 +3157,7 @@ EndProcedure
             Case #ljSUBTRACT
                ; x - 0 = x
                If PreviousElement(llObjects())
-                  If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                  If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                      If gVar(llObjects()\i)\i = 0
                         llObjects()\code = #ljNOOP
                         NextElement(llObjects())
@@ -2785,7 +3173,7 @@ EndProcedure
             Case #ljMULTIPLY
                ; x * 1 = x, x * 0 = 0
                If PreviousElement(llObjects())
-                  If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                  If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                      mulConst = gVar(llObjects()\i)\i
                      If mulConst = 1
                         ; x * 1 = x, eliminate multiply and the constant
@@ -2815,7 +3203,7 @@ EndProcedure
             Case #ljDIVIDE
                ; x / 1 = x
                If PreviousElement(llObjects())
-                  If llObjects()\code = #ljPush And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
+                  If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVar(llObjects()\i)\flags & #C2FLAG_CONST)
                      If gVar(llObjects()\i)\i = 1
                         llObjects()\code = #ljNOOP
                         NextElement(llObjects())
@@ -2867,9 +3255,14 @@ EndProcedure
 
                         ; Create new constant for combined string
                         newStrIdx = gnLastVariable
+                        ; Clear all fields first
                         gVar(newStrIdx)\name = "$strfold" + Str(newStrIdx)
+                        gVar(newStrIdx)\i = 0
+                        gVar(newStrIdx)\f = 0.0
                         gVar(newStrIdx)\ss = combinedStr
+                        gVar(newStrIdx)\p = #Null
                         gVar(newStrIdx)\flags = #C2FLAG_CONST | #C2FLAG_STR
+                        gVar(newStrIdx)\paramOffset = -1  ; Constants don't need frame offsets
                         gnLastVariable + 1
 
                         ; Replace first PUSH with combined string, eliminate second PUSH and STRADD
@@ -2898,6 +3291,7 @@ EndProcedure
             DeleteElement(llObjects())
          EndIf
       Next
+      EndIf  ; optimizationsEnabled
 
    EndProcedure
 
@@ -2983,18 +3377,13 @@ EndProcedure
          ;- DisplayNode( *p )
          CodeGenerator( *p )
 
-         FixJMP()
+         ; PostProcessor does type fixups AND optimizations
+         ; Type fixups are necessary, so we always run it
+         ; The pragma controls optimization passes within PostProcessor
+         PostProcessor()
 
-         ; Run optimizer passes (check pragma optimizecode - default ON)
-         If FindMapElement(mapPragmas(), "optimizecode")
-            ; Pragma found - check value
-            If LCase(mapPragmas()) <> "off" And mapPragmas() <> "0"
-               PostProcessor()
-            EndIf
-         Else
-            ; No pragma - default is ON
-            PostProcessor()
-         EndIf
+         ; IMPORTANT: FixJMP must run AFTER PostProcessor to account for optimizations
+         FixJMP()
 
          vm_ListToArray( llObjects, arCode )
 
@@ -3022,7 +3411,6 @@ CompilerIf #PB_Compiler_IsMainFile
    Define         err
    Define.s       filename
 
-
    ;filename = ".\Examples\02 Simple while.lj"
    ;filename = ".\Examples\04 If Else.lj"
    ;filename = ".\Examples\06 Mandelbrot.lj"
@@ -3033,19 +3421,20 @@ CompilerIf #PB_Compiler_IsMainFile
    ;filename = ".\Examples\0 test.lj"   
    ;filename = ".\Examples\12 test functions.lj"
    
-   filename = ".\Examples\13 test functions more.lj"
-   filename = ".\Examples\02 Simple While.lj"
+   ;filename = ".\Examples\13 test functions more.lj"
+   ;filename = ".\Examples\02 Simple While.lj"
    ;filename = ".\Examples\03 Complex while.lj"
    
-   ;filename = ".\Examples\0 test.lj"   
-   filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
+   ;filename = ".\Examples\00 comprehensive test.lj"
+   
+   filename = ".\Examples\01 test.lj"
+   ;filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
 
    If filename > ""
       If C2Lang::LoadLJ( filename )
          Debug "Error: " + C2Lang::Error( @err )
       Else
          C2Lang::Compile()
-         ;C2Lang::ListCode()
          C2VM::RunVM()  ; Auto-run after compilation
          
          ;If C2Lang::gExit
@@ -3064,14 +3453,15 @@ CompilerEndIf
 
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 16
+; CursorPosition = 3422
+; FirstLine = 3403
 ; Folding = -----f-----
-; Markers = 1071
+; Markers = 1075
 ; Optimizer
 ; EnableThread
 ; EnableXP
 ; CPU = 1
-; EnableCompileCount = 347
+; EnableCompileCount = 488
 ; EnableBuildCount = 0
 ; EnableExeConstant
 ; IncludeVersionInfo

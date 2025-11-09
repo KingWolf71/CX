@@ -266,7 +266,7 @@ Procedure RunTest(filepath.s, filename.s)
   gTests()\timestamp = FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date())
   gTests()\sourceHash = ComputeFileHash(filepath)
 
-  Print("Running: " + filename + " (hash=" + gTests()\sourceHash + ") ... ")
+  Print("Running: " + filename + " ... ")
 
   ; Clear VM state before each test
   C2VM::vmClearRun()
@@ -490,13 +490,13 @@ Main()
 ; ExecutableFormat = Console
 ; IDE Options = PureBasic 6.21 (Windows - x64)
 ; ExecutableFormat = Console
-; CursorPosition = 362
+; CursorPosition = 353
 ; FirstLine = 340
 ; Folding = --
 ; Optimizer
 ; EnableAsm
 ; EnableThread
 ; CPU = 1
-; EnableCompileCount = 34
+; EnableCompileCount = 37
 ; EnableBuildCount = 0
 ; EnableExeConstant

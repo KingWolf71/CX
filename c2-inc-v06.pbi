@@ -124,6 +124,17 @@ Enumeration
    #ljSTORES
    #ljSTOREF
 
+   ;- Local Variable Opcodes (frame-relative access, no flag checks)
+   #ljLMOV       ; Move constant/global to local variable
+   #ljLMOVS      ; Move string to local variable
+   #ljLMOVF      ; Move float to local variable
+   #ljLFETCH     ; Fetch local variable to stack
+   #ljLFETCHS    ; Fetch local string to stack
+   #ljLFETCHF    ; Fetch local float to stack
+   #ljLSTORE     ; Store from stack to local variable
+   #ljLSTORES    ; Store string from stack to local
+   #ljLSTOREF    ; Store float from stack to local
+
    ;- Built-in Function Opcodes
    #ljBUILTIN_RANDOM      ; random() or random(max) or random(min, max)
    #ljBUILTIN_ABS         ; abs(x) - absolute value
@@ -164,9 +175,10 @@ EndEnumeration
 
 ;- Structures
 Structure stType
-   code.w
+   code.l
    i.l
    j.l
+   n.l
 EndStructure
 
 Structure stVT  ; Variable Type
@@ -226,6 +238,7 @@ Macro                   _VarExpand(vr)
    If gVar( vr )\flags & #C2FLAG_FLOAT : temp + " FLT "   : EndIf
    If gVar( vr )\flags & #C2FLAG_STR   : temp + " STR "   : EndIf
    If gVar( vr )\flags & #C2FLAG_CONST : temp + " CONST " : EndIf
+   If gVar( vr )\flags & #C2FLAG_PARAM : temp + " PARAM " : EndIf
    If gVar( vr )\flags & #C2FLAG_IDENT : temp + " VAR"    : EndIf
 EndMacro
 
@@ -241,11 +254,17 @@ Macro          ASMLine(obj,show)
    CompilerIf show
       line + "[" + RSet(Str(sp),5," ") + "] " 
    CompilerEndIf
-   If obj\code = #ljJMP Or obj\code = #ljJZ Or obj\code = #ljCALL
+   If obj\code = #ljJMP Or obj\code = #ljJZ
       CompilerIf show
          line + "  (" +Str(obj\i) + ") " + Str(pc+obj\i)
       CompilerElse
          line + "  (" +Str(obj\i) + ") " + Str(ListIndex(obj)+obj\i)
+      CompilerEndIf
+   ElseIf obj\code = #ljCall
+      CompilerIf show
+         line + "  (" +Str(obj\i) + ") " + Str(pc+obj\i) + " [nParams=" + Str(obj\j) + " nLocals=" + Str(obj\n) + "]"
+      CompilerElse
+         line + "  (" +Str(obj\i) + ") " + Str(ListIndex(obj)+obj\i) + " [nParams=" + Str(obj\j) + " nLocals=" + Str(obj\n) + "]"
       CompilerEndIf
    ElseIf obj\code = #ljMOV
       _ASMLineHelper1( show, obj\j )
@@ -494,6 +513,26 @@ c2tokens:
    Data.s   "STOREF"
    Data.i   0, 0
 
+   ; Local variable opcodes (frame-relative, no flag checks)
+   Data.s   "LMOV"
+   Data.i   #ljLMOVF, #ljLMOVS
+   Data.s   "LMOVS"
+   Data.i   0, 0
+   Data.s   "LMOVF"
+   Data.i   0, 0
+   Data.s   "LFETCH"
+   Data.i   #ljLFETCHF, #ljLFETCHS
+   Data.s   "LFETCHS"
+   Data.i   0, 0
+   Data.s   "LFETCHF"
+   Data.i   0, 0
+   Data.s   "LSTORE"
+   Data.i   #ljLSTOREF, #ljLSTORES
+   Data.s   "LSTORES"
+   Data.i   0, 0
+   Data.s   "LSTOREF"
+   Data.i   0, 0
+
    ; Built-in functions
    Data.s   "RANDOM"
    Data.i   0, 0
@@ -510,8 +549,8 @@ c2tokens:
 EndDataSection
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 18
-; FirstLine = 7
+; CursorPosition = 180
+; FirstLine = 166
 ; Folding = --
 ; Optimizer
 ; EnableAsm

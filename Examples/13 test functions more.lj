@@ -4,7 +4,8 @@
 
 #pragma appname "LJ2 Function Test Suite"
 #pragma console on
-
+#pragma optimizecode on
+#pragma version
 //--------------------------------------
 // Test 1: Simple integer functions
 //--------------------------------------

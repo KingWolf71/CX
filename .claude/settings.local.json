@@ -3,7 +3,10 @@
     "allow": [
       "Bash(tac:*)",
       "Bash(powershell -Command \"Get-Content ''d:\\OneDrive\\WIP\\Sources\\Intense.2020\\lj2\\c2-modules-V10.pb'' | Select-Object -Last 50\")",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(del \"D:\\OneDrive\\WIP\\Sources\\Intense.2020\\lj2\\Examples\\19 test quicksort.lj\")",
+      "Bash(cat:*)",
+      "Bash(nul)"
     ],
     "deny": [],
     "ask": []

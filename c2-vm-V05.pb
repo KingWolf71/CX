@@ -47,6 +47,7 @@ Module C2VM
    Structure stStack
       sp.l
       pc.l
+      Array LocalVars.stVT(0)  ; Dynamic array for function's local variables (params + locals)
    EndStructure
 
    ;- Globals
@@ -149,6 +150,16 @@ Module C2VM
       *ptrJumpTable( #ljFETCHF )          = @C2FETCHF()
       *ptrJumpTable( #ljSTORES )          = @C2STORES()
       *ptrJumpTable( #ljSTOREF )          = @C2STOREF()
+      ; Local variable opcodes (frame-relative)
+      *ptrJumpTable( #ljLMOV )            = @C2LMOV()
+      *ptrJumpTable( #ljLMOVS )           = @C2LMOVS()
+      *ptrJumpTable( #ljLMOVF )           = @C2LMOVF()
+      *ptrJumpTable( #ljLFETCH )          = @C2LFETCH()
+      *ptrJumpTable( #ljLFETCHS )         = @C2LFETCHS()
+      *ptrJumpTable( #ljLFETCHF )         = @C2LFETCHF()
+      *ptrJumpTable( #ljLSTORE )          = @C2LSTORE()
+      *ptrJumpTable( #ljLSTORES )         = @C2LSTORES()
+      *ptrJumpTable( #ljLSTOREF )         = @C2LSTOREF()
       *ptrJumpTable( #ljJMP )             = @C2JMP()
       *ptrJumpTable( #ljJZ )              = @C2JZ()
       *ptrJumpTable( #ljADD )             = @C2ADD()
@@ -189,7 +200,7 @@ Module C2VM
       *ptrJumpTable( #ljFTOS )            = @C2FTOS()
       *ptrJumpTable( #ljITOS )            = @C2ITOS()
 
-      *ptrJumpTable( #ljCALL )            = @C2CALL()
+      *ptrJumpTable( #ljCall )            = @C2CALL()
       *ptrJumpTable( #ljReturn )          = @C2Return()
       *ptrJumpTable( #ljReturnF )         = @C2ReturnF()
       *ptrJumpTable( #ljReturnS )         = @C2ReturnS()
@@ -205,6 +216,7 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_MIN )     = @C2BUILTIN_MIN()
       *ptrJumpTable( #ljBUILTIN_MAX )     = @C2BUILTIN_MAX()
 
+      *ptrJumpTable( #ljNOOP )            = @C2NOOP()
       *ptrJumpTable( #ljHALT )            = @C2HALT()
 
    EndProcedure
@@ -212,15 +224,17 @@ Module C2VM
    Procedure            vmClearRun()
       Protected         i
 
-      ; Clear all variables to prevent state leakage between runs
+      ; Clear runtime values but preserve compilation metadata
+      ; IMPORTANT: Don't clear flags or paramOffset - they're set during compilation!
       For i = 0 To #C2MAXCONSTANTS
-         gVar(i)\name = ""
+         ; Only clear runtime data values, not metadata
+         ; Keep: name, flags, paramOffset (set during compilation)
+         ; Clear: runtime values (i, f, ss, p)
          gVar(i)\ss = ""
          gVar(i)\p = 0
          gVar(i)\i = 0
          gVar(i)\f = 0.0
-         gVar(i)\flags = 0
-         gVar(i)\paramOffset = 0
+         ; Do NOT clear: gVar(i)\name, gVar(i)\flags, gVar(i)\paramOffset
       Next
 
       ; Clear the call stack
@@ -399,8 +413,16 @@ Module C2VM
                   Delay( 64)
                EndIf
             Until gExitApplication
+
+            ; Wait for vmExecute thread to finish before destroying window
+            If IsThread(thRun)
+               Debug "Waiting for VM thread to complete..."
+               WaitThread(thRun)
+               Debug "VM thread completed"
+            EndIf
          Else
-            vmExecute()
+            ; Window creation failed - can't execute without console gadget
+            Debug "ERROR: Failed to create console window. Cannot execute program."
          EndIf
       CompilerEndIf
    EndProcedure
