@@ -135,10 +135,31 @@
             NextToken()
             *p = MakeNode( #ljNOT, expr( gPreTable( #ljNOT )\Precedence ), 0 )
 
-         Case #ljGETADDR  ; Address-of operator: &variable
+         Case #ljGETADDR  ; Address-of operator: &variable or &function
             NextToken()
-            *node = expr( gPreTable( #ljNOT )\Precedence )  ; Parse variable at high precedence
-            *p = MakeNode( #ljGETADDR, *node, 0 )
+
+            ; V1.020.099: Check if operand is a function name (marked as CALL by scanner)
+            If TOKEN()\TokenType = #ljCALL Or TOKEN()\TokenExtra = #ljCALL
+               ; This is &function - create identifier leaf without calling expr()
+               ; expr() would try to parse it as function call with expand_params()
+               *node = Makeleaf( #ljIDENT, TOKEN()\value )
+               ; V1.020.100: Validate node creation succeeded
+               If Not *node Or *node < 4096
+                  SetError( "Failed to create identifier node for function address", #C2ERR_MEMORY_ALLOCATION )
+                  ProcedureReturn 0
+               EndIf
+               *p = MakeNode( #ljGETADDR, *node, 0 )
+               ; V1.020.100: Validate node creation succeeded
+               If Not *p Or *p < 4096
+                  SetError( "Failed to create GETADDR node for function pointer", #C2ERR_MEMORY_ALLOCATION )
+                  ProcedureReturn 0
+               EndIf
+               NextToken()
+            Else
+               ; Regular address-of variable/array
+               *node = expr( gPreTable( #ljNOT )\Precedence )  ; Parse variable at high precedence
+               *p = MakeNode( #ljGETADDR, *node, 0 )
+            EndIf
 
          Case #ljMULTIPLY  ; Could be dereference operator: *ptr (when in unary position)
             ; In unary context, this is pointer dereference
@@ -183,9 +204,13 @@
                NextToken()
 
                If TOKEN()\TokenExtra = #ljLeftParent
-                  ; Identifier followed by '(' but not a built-in or defined function - this is an error
-                  SetError( "Undefined function '" + identName + "'", #C2ERR_UNDEFINED_FUNCTION )
-                  ProcedureReturn 0
+                  ; V1.020.100: Identifier followed by '(' - could be function pointer call
+                  ; Create a Call node with identifier name (value = "0" for function pointer)
+                  ; Codegen will check if it's a variable (function pointer) or error
+                  *e = expand_params(#ljPush, 0)  ; 0 for potential function pointer
+                  *node = Makeleaf(#ljCall, identName)  ; Use identifier name as value
+                  *node\paramCount = gLastExpandParamsCount
+                  *p = MakeNode(#ljSEQ, *e, *node)
                ElseIf TOKEN()\TokenType = #ljLeftBracket
                   ; Array indexing: identifier[index]
                   NextToken()  ; Skip '['
@@ -202,6 +227,20 @@
                   Protected *arrayVar.stTree = Makeleaf( #ljIDENT, identName )
                   *arrayVar\TypeHint = identTypeHint
                   *p = MakeNode( #ljLeftBracket, *arrayVar, *indexExpr )  ; Use LeftBracket as array index operator
+
+                  ; V1.020.101: Check for function call on array element: arr[i](args)
+                  If TOKEN()\TokenExtra = #ljLeftParent
+                     ; Array element is a function pointer being called
+                     ; *p currently holds the array access node
+                     ; We need to create a Call node that calls this expression
+                     Protected *arrayAccessNode.stTree = *p
+                     *e = expand_params(#ljPush, 0)  ; 0 for function pointer
+                     *node = Makeleaf(#ljCall, "_arrayFuncPtr_")  ; Placeholder name
+                     *node\paramCount = gLastExpandParamsCount
+                     ; Store array access in left child of Call node for codegen to handle
+                     *node\left = *arrayAccessNode
+                     *p = MakeNode(#ljSEQ, *e, *node)
+                  EndIf
 
                   ; V1.20.22: Check for pointer field access on array element: arr[i]\i, arr[i]\f, arr[i]\s
                   If TOKEN()\TokenType = #ljBackslash
@@ -1089,10 +1128,16 @@
                ; V1.18.13: Type inference - if variable has no explicit type suffix, infer from RHS
                ; V1.020.033: Only store type inference for variables assigned from KNOWN sources
                ; Don't store type for variables assigned from unknown identifiers (could be pointers)
-               If *v\TypeHint = 0 And *e And assignOp = #ljASSIGN
-                  inferredType = GetExprResultType(*e)
-                  inferredHint = 0
-                  inferredKey = *v\value
+               ; V1.020.100: Skip type inference for pointer operations (GETADDR, PTRFETCH, etc.)
+               ; V1.020.100: Validate *e is a proper heap pointer (> 4096) before accessing fields
+               If *v\TypeHint = 0 And *e And *e > 4096 And assignOp = #ljASSIGN
+                  ; V1.020.100: Skip type inference for pointer/address operations
+                  If *e\NodeType = #ljGETADDR Or *e\NodeType = #ljGETADDRF Or *e\NodeType = #ljGETADDRS Or *e\NodeType = #ljGETARRAYADDR Or *e\NodeType = #ljGETARRAYADDRF Or *e\NodeType = #ljGETARRAYADDRS Or *e\NodeType = #ljPTRFETCH Or *e\NodeType = #ljPTRFIELD_I Or *e\NodeType = #ljPTRFIELD_F Or *e\NodeType = #ljPTRFIELD_S
+                     ; Skip type inference - these are pointer operations
+                  Else
+                     inferredType = GetExprResultType(*e)
+                     inferredHint = 0
+                     inferredKey = *v\value
 
                   ; Convert type flags to typeHint
                   If inferredType & #C2FLAG_FLOAT
@@ -1153,6 +1198,7 @@
                      ; type suffixes from source code (.f, .s, .i), not inferred types.
                      ; Type conversion logic uses gVarMeta flags, not TypeHint.
                   EndIf
+                  EndIf  ; V1.020.100: End of Else block for pointer operations check
                EndIf
 
                ; For compound assignments, expand to: var = var OP rhs

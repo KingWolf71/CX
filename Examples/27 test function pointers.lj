@@ -7,6 +7,20 @@
 #pragma optimizecode on
 #pragma ListASM on
 #pragma version
+#pragma stackdepth 1024
+#pragma stackspace 2048
+#pragma decimals 3
+#pragma console on
+#pragma consolesize "560x590"
+#pragma optimizecode on
+#pragma ListASM on
+#pragma FastPrint on
+#pragma RunThreaded on
+#pragma ftoi "truncate"
+#pragma "version" on
+#pragma modulename on
+#pragma PasteToClipboard on
+#pragma floattolerance 0.001
 
 // Math operation functions
 func add(a, b) {
@@ -77,8 +91,7 @@ i = 0;
 
 while i < 4 {
     result = operations[i](x, y);
-    print(opNames[i], "(", x, ", ", y, ") = ", result, "");
-    i = i + 1;
+    print(opNames[i++], "(", x, ", ", y, ") = ", result, "");
 }
 
 // Test 3: Function pointer as parameter

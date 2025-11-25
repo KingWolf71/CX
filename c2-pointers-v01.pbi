@@ -800,10 +800,10 @@ Procedure               C2CALLFUNCPTR()
    ; Top of stack contains function PC address (before parameters)
    ; Stack layout: [param1] [param2] ... [paramN] [funcPtr]
 
-   Protected nParams.l, nLocals.l, totalVars.l, nLocalArrays.l
-   Protected i.l, paramSp.l, funcPc.l
-   Protected prevStackDepth.i
-
+   Protected      nParams.l, nLocals.l, totalVars.l, nLocalArrays.l
+   Protected      i.l, paramSp.l, funcPc.l
+   Protected      prevStackDepth.i
+   Protected      localSlotStart.l
    vm_DebugFunctionName()
 
    ; Read parameters from instruction
@@ -829,18 +829,20 @@ Procedure               C2CALLFUNCPTR()
    prevStackDepth = gStackDepth
    gStackDepth = gStackDepth + 1
 
-   If gStackDepth >= gMaxStackDepth
-      Debug "*** FATAL ERROR: Stack overflow in function pointer call - max depth " + Str(gMaxStackDepth) + " exceeded at pc=" + Str(pc)
-      End
+   ; V1.020.105: Check against actual gStack() array size, not gMaxStackDepth
+   If gStackDepth >= ArraySize(gStack())
+      gExitApplication = #True
+      ProcedureReturn
    EndIf
 
+   ; V1.020.108: CRITICAL FIX - Use C2CALL's allocation strategy
+   ; localSlotStart must be calculated from sp, not gCurrentMaxLocal
+   localSlotStart = sp - nParams
+   gCurrentMaxLocal = localSlotStart + totalVars  ; Reserve slots for this call
+
+   ; Save stack frame info
    gStack(gStackDepth)\pc = pc + 1
    gStack(gStackDepth)\sp = sp - nParams
-
-   ; V1.18.0: Allocate local variable slots in unified gVar[] array
-   Protected localSlotStart.l
-   localSlotStart = gCurrentMaxLocal
-   gCurrentMaxLocal + totalVars
 
    gStack(gStackDepth)\localSlotStart = localSlotStart
    gStack(gStackDepth)\localSlotCount = totalVars
@@ -848,6 +850,16 @@ Procedure               C2CALLFUNCPTR()
    ; Copy parameters from stack to allocated gVar[] slots
    If nParams > 0
       paramSp = sp - nParams
+
+      ; V1.020.103: Bounds check for parameter copy (always active)
+      If paramSp < 0 Or paramSp + nParams > ArraySize(gVar())
+         Debug "*** FATAL ERROR: Invalid parameter stack range in function pointer call"
+         Debug "    paramSp=" + Str(paramSp) + " nParams=" + Str(nParams)
+         Debug "    sp=" + Str(sp) + " gVar size=" + Str(ArraySize(gVar()))
+         gExitApplication = #True
+         ProcedureReturn
+      EndIf
+
       For i = 0 To nParams - 1
          gVar(localSlotStart + i)\i = gVar(paramSp + i)\i
          gVar(localSlotStart + i)\f = gVar(paramSp + i)\f
@@ -861,8 +873,12 @@ Procedure               C2CALLFUNCPTR()
       Debug "*** WARNING: Function pointer calls do not support local arrays at pc=" + Str(pc)
    EndIf
 
-   ; Jump to function
+   ; V1.020.107: CRITICAL FIX - Reset sp to start of evaluation stack
+   ; This prevents overlap between caller's evaluation stack and callee's local variables
+   ; Per UNIFIED_VARIABLE_SYSTEM.md: evaluation stack starts at gCurrentMaxLocal
+   sp = gCurrentMaxLocal
    pc = funcPc
+   
    gFunctionDepth = gFunctionDepth + 1
 EndProcedure
 
@@ -1065,9 +1081,9 @@ EndProcedure
 ;- End Pointer Operations
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 595
-; FirstLine = 561
-; Folding = --------
+; CursorPosition = 878
+; FirstLine = 863
+; Folding = ----------
 ; Markers = 14
 ; EnableAsm
 ; EnableThread

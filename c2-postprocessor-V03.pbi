@@ -269,6 +269,20 @@ Procedure            FixJMP()
          EndIf
       Next
 
+      ; V1.020.110: Patch GETFUNCADDR instructions with correct function PC addresses
+      ; Similar to CALL patching above, but only updates the PC address (stored in i field)
+      Debug " -- Patching GETFUNCADDR instructions..."
+      ForEach llObjects()
+         If llObjects()\code = #ljGETFUNCADDR
+            ForEach mapModules()
+               If mapModules()\function = llObjects()\i
+                  llObjects()\i = mapModules()\Index  ; Update to actual PC address after NOOP removal
+                  Break
+               EndIf
+            Next
+         EndIf
+      Next
+
       ; NO REMAPPING NEEDED - gFuncLocalArraySlots stays indexed by function ID
       ; VM will use funcid field to get function ID for array lookup
 
@@ -2414,9 +2428,9 @@ Procedure            PostProcessor()
    EndProcedure
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 26
-; FirstLine = 21
-; Folding = -------------
+; CursorPosition = 268
+; FirstLine = 316
+; Folding = --------------
 ; EnableAsm
 ; EnableThread
 ; EnableXP

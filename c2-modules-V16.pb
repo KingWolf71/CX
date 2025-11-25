@@ -1224,12 +1224,9 @@ CompilerIf #PB_Compiler_IsMainFile
    Define         err
    Define.s       filename
    
-   
    ;filename = ".\Examples\07 floats and macros.lj"
-   
-   
    ;filename = ".\Examples\00 comprehensive test.lj"
-   filename = ".\Examples\20 array sort stress test.lj"
+   ;filename = ".\Examples\20 array sort stress test.lj"
    
    ;filename = ".\Examples\22 array comprehensive.lj"
    ;filename = ".\Examples\23 test increment operators.lj"
@@ -1238,6 +1235,7 @@ CompilerIf #PB_Compiler_IsMainFile
    ;filename = ".\Examples\32 test advanced pointers working.lj"
    ;filename = ".\Examples\33 test mixed type pointers.lj"
    ;filename = ".\Examples\28 test pointers comprehensive.lj"
+   filename = ".\Examples\27 test function pointers.lj"
    
    ;filename = ".\Examples\bug fix2.lj"
    ;filename = OpenFileRequester( "Please choose source", ".\Examples\", "LJ Files|*.lj", 0 )
@@ -1261,15 +1259,15 @@ CompilerEndIf
 
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 1231
-; FirstLine = 1225
+; CursorPosition = 1257
+; FirstLine = 1222
 ; Folding = ------
 ; Markers = 570,719
 ; Optimizer
 ; EnableThread
 ; EnableXP
 ; CPU = 1
-; EnableCompileCount = 1452
+; EnableCompileCount = 1481
 ; EnableBuildCount = 0
 ; EnableExeConstant
 ; IncludeVersionInfo

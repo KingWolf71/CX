@@ -1,4 +1,5 @@
 ; -- lexical parser to VM for a simplified C Language
+; -- lexical parser to VM for a simplified C Language
 ; Tested in UTF8
 ; PBx64 v6.20
 ;
@@ -872,7 +873,7 @@
    EndProcedure
 
    Procedure            CodeGenerator( *x.stTree, *link.stTree = 0 )
-      Protected         p1, p2, n
+      Protected         p1, p2, n, i
       Protected         *pJmp                 ; V1.18.54: Pointer to JMP instruction for while loops
       Protected         temp.s
       Protected         leftType.w
@@ -891,6 +892,10 @@
       Protected         hasExplicitTypeSuffix.i, explicitTypeFlag.w, varNameLower.s  ; V1.20.3: For PTRFETCH explicit typing
       Protected         explicitType.w  ; V1.20.6: Explicit type from variable suffix
       Protected         hasReturnType.b, callReturnType.w  ; V1.020.053: For unused return value handling
+      Protected         funcPtrSlot.i = -1
+      Protected         searchName.s = *x\value
+      Protected         searchFuncId.i
+      Protected         foundFunc.i = #False
 
       ; Reset state on top-level call
       If gCodeGenRecursionDepth = 0
@@ -1878,7 +1883,31 @@
                EmitInt( #ljNEGATE )
             EndIf
 
-         Case #ljGETADDR  ; Address-of operator: &variable or &arr[index]
+         Case #ljGETADDR  ; Address-of operator: &variable or &arr[index] or &function
+            ; V1.020.098: Check if this is a function pointer: &function
+            If *x\left And *x\left\NodeType = #ljIDENT
+               ; V1.020.114: The identifier value contains function ID (as string), not name
+               ; Scanner stores Str(gCurrFunction) in TOKEN()\value for function calls
+               ; We need to search mapModules() for matching function ID
+               searchFuncId.i = Val(*x\left\value)
+               foundFunc.i = #False
+
+               ; Search mapModules() for this function ID
+               ForEach mapModules()
+                  If mapModules()\function = searchFuncId
+                     ; This is a function! Emit GETFUNCADDR with function ID
+                     ; The function PC will be patched later by postprocessor (like CALL)
+                     EmitInt( #ljGETFUNCADDR, mapModules()\function )
+                     foundFunc = #True
+                     ProcedureReturn
+                  EndIf
+               Next
+
+               ;If Not foundFunc
+               ;   Debug "    -> Not a function (funcId=" + Str(searchFuncId) + " not found in mapModules())"
+               ;EndIf
+            EndIf
+
             ; Check if this is an array element: &arr[index]
             If *x\left And *x\left\NodeType = #ljLeftBracket
                ; Array element pointer: &arr[index]
@@ -1924,7 +1953,7 @@
 
                EmitInt( opcode, n )
             Else
-               SetError( "Address-of operator requires a variable or array element", #C2ERR_EXPECTED_PRIMARY )
+               SetError( "Address-of operator requires a variable, array element, or function", #C2ERR_EXPECTED_PRIMARY )
             EndIf
 
          Case #ljPTRFETCH  ; Pointer dereference: *ptr
@@ -1949,6 +1978,62 @@
          Case #ljCall
             funcId = Val( *x\value )
             paramCount = *x\paramCount  ; Get actual param count from tree node
+
+            ; V1.020.102: Check if Call has a left child (expression to evaluate for function pointer)
+            ; This handles cases like: operations[i](x, y) where operations[i] is in left child
+            If *x\left
+               ; Evaluate the expression to get function pointer on stack
+               CodeGenerator(*x\left)
+               ; Emit function pointer call
+               EmitInt( #ljCALLFUNCPTR, 0 )
+               llObjects()\j = paramCount     ; nParams
+               llObjects()\n = 0              ; nLocals (unknown)
+               llObjects()\ndx = 0            ; nLocalArrays (unknown)
+               ProcedureReturn
+            EndIf
+
+            ; V1.020.098: Check if this is actually a function pointer call
+            ; If funcId is 0 and the name doesn't exist as a function, it might be a variable
+            If funcId = 0
+               ; Try to find the name as a variable instead of a function
+               funcPtrSlot.i = -1
+               searchName.s = *x\value
+
+               ; Try local variable first (if in a function)
+               If gCurrentFunctionName <> ""
+                  searchName = gCurrentFunctionName + "_" + *x\value
+                  For i = 0 To gnLastVariable
+                     If gVarMeta(i)\name = searchName
+                        funcPtrSlot = i
+                        Break
+                     EndIf
+                  Next
+               EndIf
+
+               ; Try global variable if not found as local
+               If funcPtrSlot = -1
+                  For i = 0 To gnLastVariable
+                     If gVarMeta(i)\name = *x\value
+                        funcPtrSlot = i
+                        Break
+                     EndIf
+                  Next
+               EndIf
+
+               ; If found as a variable, emit function pointer call
+               If funcPtrSlot >= 0
+                  ; This is a function pointer call!
+                  ; Emit: FETCH funcPtrSlot, then CALLFUNCPTR
+                  ; Note: CALLFUNCPTR needs nParams, nLocals, nLocalArrays but we don't know them
+                  ; For now, we'll set defaults and let runtime handle it
+                  EmitInt( #ljFetch, funcPtrSlot )
+                  EmitInt( #ljCALLFUNCPTR, 0 )  ; Function PC on stack
+                  llObjects()\j = paramCount     ; nParams
+                  llObjects()\n = 0              ; nLocals (unknown for function pointers)
+                  llObjects()\ndx = 0            ; nLocalArrays (unknown)
+                  ProcedureReturn
+               EndIf
+            EndIf
 
             ; Check if this is a built-in function (opcode >= #ljBUILTIN_RANDOM)
             If funcId >= #ljBUILTIN_RANDOM
@@ -2084,9 +2169,10 @@
    EndProcedure
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 1587
-; FirstLine = 1632
+; CursorPosition = 1907
+; FirstLine = 1897
 ; Folding = ---
+; Markers = 1892,1970
 ; EnableAsm
 ; EnableThread
 ; EnableXP
