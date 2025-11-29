@@ -4,17 +4,21 @@
 */
 
 #pragma appname "Array-Pointer-Arithmetic-Test"
+#pragma decimals 3
 #pragma console on
+#pragma consolesize "640x480"
+#pragma consoleposition "30,50"
 #pragma optimizecode on
 #pragma ListASM on
-#pragma version on
+#pragma FastPrint on
 #pragma RunThreaded on
-#pragma consolesize "640x480"
-#pragma stackspace 512
-#pragma stackdepth 1024
-#pragma PasteToClipboard on
+#pragma ftoi "truncate"
+#pragma version on
 #pragma modulename on
-#pragma floattolerance 0.00001
+#pragma PasteToClipboard on
+#pragma floattolerance 0.0001
+#pragma stackspace 2048
+#pragma stackdepth 1024
 
 print("=== Array Pointer Arithmetic Tests ===");
 

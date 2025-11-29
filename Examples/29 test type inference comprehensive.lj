@@ -10,9 +10,21 @@
 */
 
 #pragma appname "Type Inference Comprehensive Test"
-#pragma console on
 #pragma decimals 3
-#pragma floattolerance 0.001
+#pragma console on
+#pragma consolesize "560x590"
+#pragma consoleposition "30,50"
+#pragma optimizecode on
+#pragma ListASM on
+#pragma FastPrint on
+#pragma RunThreaded on
+#pragma ftoi "truncate"
+#pragma version on
+#pragma modulename on
+#pragma PasteToClipboard on
+#pragma floattolerance 0.0001
+#pragma stackspace 2048
+#pragma stackdepth 1024
 
 print("==========================================================================");
 print("COMPREHENSIVE TYPE INFERENCE TEST - V1.18.13");

@@ -1,11 +1,10 @@
-// === LJ2 Array Sort Stress Test ===
-// Tests sorting 5000 float elements using quicksort
-// Prints every 100th element to verify sorted order
+/* Bug Fix Test
+*/
 
-#pragma appname "Quicksort test"
+#pragma appname "Bug Fix"
 #pragma decimals 3
 #pragma console on
-#pragma consolesize "420x320"
+#pragma consolesize "560x590"
 #pragma consoleposition "30,50"
 #pragma optimizecode on
 #pragma ListASM on
@@ -15,12 +14,95 @@
 #pragma version on
 #pragma modulename on
 #pragma PasteToClipboard on
-#pragma floattolerance 0.0001
+#pragma floattolerance 0.001
 #pragma stackspace 64000
 #pragma stackdepth 64000
+#pragma DumpASM on
 
-#define		ELEMENTS 50000
+#define		ELEMENTS 100
 //#define		ELEMENTS 200
+
+// === Test 10: Functions Returning Array Values ===
+print("Test 10: Functions Returning Array Values");
+
+function getArraySum() {
+    array nums.i[3];
+    nums[0] = 5;
+    nums[1] = 10;
+    nums[2] = 15;
+
+    total = nums[0] + nums[1] + nums[2];
+    print("  Array sum in function = ", total);
+    return total;
+}
+
+returnedSum = getArraySum();
+print("  Returned sum = ", returnedSum);
+assertEqual(30, returnedSum);
+
+function getArrayElement() {
+    array data.i[4];
+    data[0] = 100;
+    data[1] = 200;
+    data[2] = 300;
+    data[3] = 400;
+
+    return data[2];
+}
+
+element = getArrayElement();
+print("  Returned element = ", element);
+assertEqual(300, element);
+
+function computeWithArrays() {
+    array a.i[2];
+    array b.i[2];
+
+    a[0] = 10;
+    a[1] = 20;
+    b[0] = 5;
+    b[1] = 3;
+
+    result = (a[0] + a[1]) * (b[0] - b[1]);
+    print("  Computed result = ", result);
+    return result;
+}
+
+computed = computeWithArrays();
+print("  Final computed value = ", computed);
+assertEqual(60, computed);
+print("  PASS: Functions returning array values");
+print("");
+
+
+// === Test 11: Nested Function Calls ===
+print("Test 11: Nested Function Calls");
+
+function helper1() {
+    array h1_array.i[2];
+    h1_array[0] = 10;
+    h1_array[1] = 20;
+    result = h1_array[0] + h1_array[1];
+    print("  helper1 result = ", result);
+    return result;
+}
+
+function helper2() {
+    array h2_array.i[2];
+    h2_array[0] = 5;
+    h2_array[1] = 15;
+    val = helper1();
+    result = h2_array[0] + h2_array[1] + val;
+    print("  helper2 result = ", result);
+    return result;
+}
+
+final = helper2();
+print("  Final result = ", final);
+assertEqual(50, final);
+print("  PASS: Nested function calls with local arrays");
+print("");
+
 
 print("=================================");
 print("Array Sort Stress Test");
@@ -29,7 +111,6 @@ print("=================================");
 print("");
 
 // Declare array of ELEMENTS floats
-
 
 array data.f[ELEMENTS];
 

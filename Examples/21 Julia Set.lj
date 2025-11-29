@@ -6,15 +6,22 @@
  This example uses a random c value to generate different fractal patterns each run.
  */
 
-#pragma console on
 #pragma appname "Julia Set Fractal"
+#pragma decimals 3
+#pragma console on
 #pragma consolesize "760x690"
+#pragma consoleposition "30,50"
 #pragma optimizecode on
-#pragma version
+#pragma ListASM on
 #pragma FastPrint on
 #pragma RunThreaded on
-#pragma stackspace 1024
-#pragma stackdepth 2048
+#pragma ftoi "truncate"
+#pragma version on
+#pragma modulename on
+#pragma PasteToClipboard on
+#pragma floattolerance 0.0001
+#pragma stackspace 2048
+#pragma stackdepth 1024
 
     /* Julia set parameters - random c value for variety */
     c_real = random(400) - 200;   /* Random real part: -2.0 to 2.0 (scaled by 100) */
