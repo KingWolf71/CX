@@ -201,7 +201,9 @@ EndProcedure
 Procedure               C2FETCHS()
    vm_DebugFunctionName()
    ; V1.034.14: Unified FETCHS using _SLOT(j, offset)
+   ; V1.035.13: Cache string length in \i for O(1) access
    gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+   gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
 EndProcedure
@@ -241,7 +243,9 @@ EndProcedure
 Procedure               C2PUSHS()
    vm_DebugFunctionName()
    ; V1.034.14: Unified PUSHS using _SLOT(j, offset) - same as FETCHS
+   ; V1.035.13: Cache string length in \i for O(1) access
    gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+   gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
 EndProcedure
@@ -438,7 +442,9 @@ EndProcedure
 Procedure               C2LFETCHS()
    vm_DebugFunctionName()
    ; V1.31.0: Fetch string from gLocal[gFrameBase + offset] to gStorage[]
+   ; V1.035.13: Cache string length in \i for O(1) access
    gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(_AR()\i)\ss
+   gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
 EndProcedure
@@ -739,7 +745,9 @@ EndProcedure
 
 Procedure               C2DUP_S()
    vm_DebugFunctionName()
+   ; V1.035.13: Copy both string and cached length
    gEvalStack(sp)\ss = gEvalStack(sp - 1)\ss
+   gEvalStack(sp)\i = gEvalStack(sp - 1)\i
    sp + 1
    pc + 1
 EndProcedure
@@ -771,21 +779,27 @@ Procedure               C2ADDSTR()
    vm_DebugFunctionName()
    sp - 1
    ; V1.31.0: String concatenation on gStorage[]
+   ; V1.035.13: Update cached length (sum of both lengths)
    gEvalStack(sp - 1)\ss = gEvalStack(sp - 1)\ss + gEvalStack(sp)\ss
+   gEvalStack(sp - 1)\i = gEvalStack(sp - 1)\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2FTOS()
    vm_DebugFunctionName()
    ; V1.31.0: Convert float to string at gStorage[] top
+   ; V1.035.13: Cache string length in \i
    gEvalStack(sp - 1)\ss = StrD(gEvalStack(sp - 1)\f, gDecs)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)
    pc + 1
 EndProcedure
 
 Procedure               C2ITOS()
    vm_DebugFunctionName()
    ; V1.31.0: Convert integer to string at gStorage[] top
+   ; V1.035.13: Cache string length in \i
    gEvalStack(sp - 1)\ss = Str(gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)
    pc + 1
 EndProcedure
 
@@ -1810,16 +1824,16 @@ EndProcedure
 ;- ============================================================================
 
 ;- Include Built-in Functions Module
-XIncludeFile "c2-builtins-v06.pbi"
+XIncludeFile "c2-builtins-v07.pbi"
 
 ;- Include Array Operations Module
-XIncludeFile "c2-arrays-v06.pbi"
+XIncludeFile "c2-arrays-v07.pbi"
 
 ;- Include Pointer Operations Module
-XIncludeFile "c2-pointers-v05.pbi"
+XIncludeFile "c2-pointers-v06.pbi"
 
 ;- Include Collections Module (V1.028.0 - Unified in gVar)
-XIncludeFile "c2-collections-v03.pbi"
+XIncludeFile "c2-collections-v04.pbi"
 
 ;- End VM functions
 

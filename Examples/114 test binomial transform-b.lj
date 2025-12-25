@@ -40,8 +40,8 @@ gSize = 8;
 function factorial(num) {
     if (num < 2) { return 1; }
     result = 1;
-    for (idx = 2; idx <= num; idx++) {
-        result = result * idx;
+    for (fi = 2; fi <= num; fi++) {  // Use 'fi' to avoid collision with global 'idx'
+        result = result * fi;
     }
     return result;
 }

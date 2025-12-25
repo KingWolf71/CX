@@ -34,14 +34,14 @@ print(pi_msg);
 
 // Test 4: Mixed concatenation from original test
 bstr2.s = bstr + " " + 231.9961123;
-print("Result: ", bstr2);
+printf("Result: %s\n", bstr2);
 
 // Test 5: Expression result
 calc.s = "22/7 = " + 22.0/7.0;
 print(calc);
 
 s1.s = "W";
-print("s1 = ", s1);
+printf("s1 = %s\n", s1);
 s2.s = "W" + "X";
-print("s2 = ", s2);
+printf("s2 = %s\n", s2);
 print("Done");

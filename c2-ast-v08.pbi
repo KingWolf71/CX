@@ -376,15 +376,16 @@
                   If FindMapElement(mapVariableTypes(), searchKey)
                      If mapVariableTypes() & #C2FLAG_POINTER
                         isPointer = #True
+                     ElseIf mapVariableTypes() & #C2FLAG_EXPLICIT  ; V1.035.14: Explicit type suffix means known non-pointer
+                        isKnownNonPointer = #True
                      EndIf
-                     ; V1.20.34: Don't mark as "known non-pointer" based on inferred types
-                     ; The postprocessor will properly track pointer types after parsing
                   ElseIf searchKey <> identName And FindMapElement(mapVariableTypes(), identName)
                      ; Try global name if mangled name not found
                      If mapVariableTypes() & #C2FLAG_POINTER
                         isPointer = #True
+                     ElseIf mapVariableTypes() & #C2FLAG_EXPLICIT  ; V1.035.14: Explicit type suffix
+                        isKnownNonPointer = #True
                      EndIf
-                     ; V1.20.34: Don't mark as "known non-pointer" based on inferred types
                   EndIf
 
                   ; V1.20.28: Check if variable is a function parameter (if not found in mapVariableTypes)
@@ -2370,16 +2371,16 @@
 
                ; Track variable type for later lookups in GetExprResultType()
                If *v\TypeHint <> 0
-                  Protected varTypeFlags.w = #C2FLAG_INT  ; Default
+                  Protected varTypeFlags.l = #C2FLAG_INT | #C2FLAG_EXPLICIT  ; V1.035.14: Mark as explicit
                   Protected varKey.s = *v\value
 
-                  ; Convert typeHint to type flags
+                  ; Convert typeHint to type flags (include EXPLICIT flag)
                   If *v\TypeHint = #ljINT
-                     varTypeFlags = #C2FLAG_INT
+                     varTypeFlags = #C2FLAG_INT | #C2FLAG_EXPLICIT
                   ElseIf *v\TypeHint = #ljFLOAT
-                     varTypeFlags = #C2FLAG_FLOAT
+                     varTypeFlags = #C2FLAG_FLOAT | #C2FLAG_EXPLICIT
                   ElseIf *v\TypeHint = #ljSTRING
-                     varTypeFlags = #C2FLAG_STR
+                     varTypeFlags = #C2FLAG_STR | #C2FLAG_EXPLICIT
                   EndIf
 
                   ; Store both global name and mangled name (if in function)
@@ -2430,14 +2431,16 @@
                      If FindMapElement(mapVariableTypes(), ptrSearchKey)
                         If mapVariableTypes() & #C2FLAG_POINTER
                            ptrIsPointer = #True
+                        ElseIf mapVariableTypes() & #C2FLAG_EXPLICIT  ; V1.035.14: Explicit type suffix
+                           ptrIsKnownNonPointer = #True
                         EndIf
-                        ; V1.20.34: Don't mark as "known non-pointer" based on inferred types
                      ElseIf ptrSearchKey <> *v\value And FindMapElement(mapVariableTypes(), *v\value)
                         ; Try global name if mangled name not found
                         If mapVariableTypes() & #C2FLAG_POINTER
                            ptrIsPointer = #True
+                        ElseIf mapVariableTypes() & #C2FLAG_EXPLICIT  ; V1.035.14: Explicit type suffix
+                           ptrIsKnownNonPointer = #True
                         EndIf
-                        ; V1.20.34: Don't mark as "known non-pointer" based on inferred types
                      EndIf
 
                      ; V1.20.28: Check if variable is a function parameter

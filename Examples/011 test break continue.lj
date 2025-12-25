@@ -21,15 +21,14 @@
 #pragma ThreadKillWait 1800
 #pragma DumpASM on
 
-print("=== Break/Continue Tests ===");
-print("");
+print("=== Break/Continue Tests ===\n");
 
 // While with break
 print("Test 1: While loop with break at 5");
 i.i = 0;
 while (i < 10) {
     if (i == 5) break;
-    print(i, " ");
+    printf("%d ", i);
     i++;
 }
 print("");
@@ -40,17 +39,17 @@ i = 0;
 while (i < 10) {
     i++;
     if (i % 2 == 0) continue;
-    print(i, " ");
+    printf("%d ", i);
 }
 print("");
 
 // Nested loops with break using inline for declarations
 print("Test 3: Nested loops - inner break");
 for (i.i = 0; i < 3; i++) {
-    print("Outer: ", i, " Inner: ");
+    printf("Outer: %d Inner: ", i);
     for (j.i = 0; j < 10; j++) {
         if (j == 3) break;
-        print(j, " ");
+        printf("%d ", j);
     }
     print("");
 }
@@ -63,10 +62,9 @@ while (i < 20) {
     i++;
     if (i % 2 == 0) continue;
     if (i % 5 == 0) continue;
-    print(i, " ");
+    printf("%d ", i);
     count++;
 }
-print("");
-print("Count: ", count);
+printf("\nCount: %d\n", count);
 
 print("=== All break/continue tests complete ===");

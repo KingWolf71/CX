@@ -39,10 +39,10 @@ gSize = 8;
 function factorial(num) {
     if (num < 2) { return 1; }
     result = 1;
-    idx = 2;
-    while (idx <= num) {
-        result = result * idx;
-        idx = idx + 1;
+    fi = 2;  // Use 'fi' to avoid collision with global 'idx'
+    while (fi <= num) {
+        result = result * fi;
+        fi = fi + 1;
     }
     return result;
 }

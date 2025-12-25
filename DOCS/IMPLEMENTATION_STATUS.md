@@ -1,26 +1,32 @@
 # LJ2 Implementation Status
-Version: 1.034.80
+Version: 1.035.15
 Date: December 2025
+
+**See also:** [LJ2_Compiler_Report.html](LJ2_Compiler_Report.html) - Comprehensive technical report with ratings
 
 ## Current File Versions
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Main compiler | `c2-modules-V22.pb` | Scanner, preprocessor, main entry |
-| Definitions | `c2-inc-v17.pbi` | Constants, opcodes, structures |
-| AST parser | `c2-ast-v07.pbi` | Recursive descent parser |
-| Code generator | `c2-codegen-v07.pbi` | AST to bytecode (includes FOREACH) |
-| Scanner | `c2-scanner-v05.pbi` | Tokenizer |
-| Type inference | `c2-typeinfer-V02.pbi` | Unified type resolution |
-| Postprocessor | `c2-postprocessor-V11.pbi` | Correctness passes only |
-| Optimizer | `c2-optimizer-V02.pbi` | Consolidated peephole/fusion (5 passes) |
-| VM core | `c2-vm-V16.pb` | Virtual machine execution |
-| VM commands | `c2-vm-commands-v14.pb` | Opcode implementations |
-| Arrays | `c2-arrays-v06.pbi` | Array operations (Pointer Array Arch) |
-| Pointers | `c2-pointers-v05.pbi` | Pointer operations |
-| Collections | `c2-collections-v03.pbi` | Lists and Maps |
-| Built-ins | `c2-builtins-v06.pbi` | Built-in functions |
-| Test runner | `run-tests-win.ps1` | Windows PowerShell test runner |
+| Main compiler | `c2-modules-V23.pb` | Scanner, preprocessor, main entry |
+| Definitions | `c2-inc-v19.pbi` | Constants, opcodes, structures |
+| AST parser | `c2-ast-v08.pbi` | Recursive descent parser |
+| Code generator | `c2-codegen-v08.pbi` | AST to bytecode (main CodeGenerator) |
+| Codegen emit | `c2-codegen-emit.pbi` | EmitInt procedure (instruction emission) |
+| Codegen vars | `c2-codegen-vars.pbi` | FetchVarOffset (variable resolution) |
+| Codegen types | `c2-codegen-types.pbi` | GetExprResultType, GetExprSlotOrTemp |
+| Codegen rules | `c2-codegen-rules.pbi` | Rule-based type dispatch tables |
+| Scanner | `c2-scanner-v06.pbi` | Tokenizer |
+| Type inference | `c2-typeinfer-V03.pbi` | Unified type resolution |
+| Postprocessor | `c2-postprocessor-V12.pbi` | Correctness passes only |
+| Optimizer | `c2-optimizer-V03.pbi` | Rule-based peephole/fusion (5 passes) |
+| VM core | `c2-vm-V17.pb` | Virtual machine execution |
+| VM commands | `c2-vm-commands-v15.pb` | Opcode implementations |
+| Arrays | `c2-arrays-v07.pbi` | Array operations (Pointer Array Arch) |
+| Pointers | `c2-pointers-v06.pbi` | Pointer operations |
+| Collections | `c2-collections-v04.pbi` | Lists and Maps |
+| Built-ins | `c2-builtins-v07.pbi` | Built-in functions |
+| Test runner | `tests/run-tests-win.ps1` | Windows PowerShell test runner (71 examples: 69 run + 2 error tests) |
 | Quick test | `quick-test.ps1` | Fast test runner (excludes long tests) |
 
 ## Implemented Features
@@ -78,6 +84,7 @@ Date: December 2025
 - [x] floor(), ceil(), round()
 - [x] strlen(), left(), right(), mid()
 - [x] str(), val(), chr(), asc()
+- [x] printf() - C-style formatted output (%d, %f, %s, %.Nf, %%)
 - [x] assertEqual(), assertFloatEqual(), assertStringEqual()
 
 ### Pragmas
@@ -130,7 +137,115 @@ Located in `Examples/`:
 - Mandelbrot set renderer (19)
 - Julia set renderer (21)
 
-## Recent Changes (v1.031.x - v1.034.x)
+## Recent Changes (v1.031.x - v1.035.x)
+
+### v1.035.14-15
+- **Post-increment in Function Arguments**: Fixed crash when using `x++` inside function calls
+  - Added `gInFuncArgs` context flag to track when parsing function arguments
+  - SEQ handler now skips DROP when in function argument context
+  - Prevents stack imbalance that caused Linux runtime crashes
+  - Example: `printf("x = %d\n", x++)` now works correctly
+- **mapVariableTypes Type Fix**: Fixed 16-bit overflow bug
+  - Changed `mapVariableTypes` from `.w` (16-bit) to `.l` (32-bit)
+  - `#C2FLAG_EXPLICIT = 65536` requires 17 bits (was being truncated to 0)
+  - Test 130 now correctly fails at compile time with pointer type error
+- **Test Infrastructure**: Added test runner scripts to `test/` folder
+  - `run_all_tests.ps1`: PowerShell test runner with colored output
+  - `run_all_tests.cmd`: Batch file test runner for CMD
+- All 71 tests pass on Windows and Linux (69 run + 2 error tests)
+
+### v1.035.13
+- **printf() Built-in Function**: C-style formatted output with single VM call
+  - Format specifiers: `%d` (int), `%f` (float), `%s` (string), `%.Nf` (precision), `%%` (literal %)
+  - Escape sequences processed at compile-time in scanner: `\n`, `\t`, `\r`, `\\`, `\"`, `\0`
+  - Single VM call for entire format string (performance: one call vs multiple PRTS/PRTI/PRTF)
+  - Example: `printf("Name: %s, Age: %d, Score: %.2f\n", name, age, score)`
+- **String Length Caching**: O(1) length access optimization
+  - String values now cache their length in the `\i` field of gEvalStack entries
+  - Eliminates repeated `Len()` calls in string operations
+  - Affected operations: FETCHS, PUSHS, LFETCHS, DUP_S, ADDSTR, FTOS, ITOS
+  - printf uses cached length for format string processing
+- All 69 tests pass (+ 2 error test files)
+
+### v1.035.12
+- **Lookup Function Consolidation**: Moved O(1) lookup functions to dedicated file
+  - Moved from c2-codegen-v08.pbi to c2-codegen-lookup.pbi:
+    - `GetCodeElement()`: Core O(1) map lookup, returns stCodeElement pointer
+    - `FindVariableSlot()`: O(1) variable slot lookup
+    - `FindVariableSlotCompat()`: O(1) with O(N) fallback for migration
+    - `RegisterCodeElement()`: Registers gVarMeta entry in MapCodeElements
+  - c2-codegen-lookup.pbi grew from 220 to 358 lines
+  - c2-codegen-v08.pbi reduced from 3842 to 3712 lines (~130 lines removed)
+  - All 70 tests pass
+
+### v1.035.10
+- **GetExprResultType File Extraction**: Continued codegen modularization
+  - Created `c2-codegen-types.pbi` (~760 lines) containing:
+    - `GetExprResultType()` procedure for expression type resolution
+    - `GetExprSlotOrTemp()` for slot optimization (reuses existing slots vs temp)
+    - `ContainsFunctionCall()` helper for recursive function call detection
+    - `CollectVariables()` helper for variable reference collection
+  - Added forward declaration for CodeGenerator (circular dependency)
+  - Reduced c2-codegen-v08.pbi from ~4200 to ~3430 lines (~770 lines removed)
+  - Include order: types.pbi must be after emit.pbi, before v08.pbi
+  - All 70 tests pass
+
+### v1.035.9
+- **FetchVarOffset File Extraction**: Continued codegen modularization
+  - Created `c2-codegen-vars.pbi` (~740 lines) containing:
+    - `FetchVarOffset()` procedure for variable slot lookup and creation
+    - Handles name mangling for local variables
+    - DOT notation struct field access (e.g., "r.bottomRight.x")
+    - Backslash notation struct field access (e.g., "c1\id")
+    - Constant map lookups (fast path)
+    - Local variable offset assignment
+  - Reduced c2-codegen-v08.pbi from ~4935 to ~4200 lines (~735 lines removed)
+  - Include order: vars.pbi must be before ast.pbi (FetchVarOffset called from AST)
+  - All 70 tests pass
+
+### v1.035.8
+- **EmitInt File Extraction**: Split c2-codegen-v08.pbi into modular files
+  - Created `c2-codegen-emit.pbi` (~500 lines) containing:
+    - `EmitInt()` procedure for bytecode instruction emission
+    - `IsLocalVar()` helper for local variable detection
+    - `MarkPreloadable()` helper for constant preloading
+    - `OSDebug()` macro for debug output
+  - Reduced c2-codegen-v08.pbi from 5305 to ~4935 lines (~370 lines removed)
+  - First phase of codegen file split (per plan: emit.pbi, vars.pbi, types.pbi)
+  - All 70 tests pass
+
+### v1.035.7
+- Made CALL/CALL0 function call statistics DEBUG-only in runtime output
+
+### v1.035.6
+- **EmitInt Rule-Based Refactoring**: Replaced duplicate type-dispatch patterns with rule-based lookups
+  - Reduced c2-codegen-v08.pbi from 5463 to 5305 lines (~158 lines, ~3% reduction)
+  - New helper functions in c2-codegen-rules.pbi:
+    - `GetStoreOpcodeByFlags()`: Returns STORE/STOREF/STORES/PSTORE based on type flags
+    - `GetMovOpcodeByFlags()`: Returns MOV/MOVF/MOVS/PMOV based on source/dest flags
+    - `ComputeMovLocality()`: Computes n/j/i fields for MOV optimization (GG/LG/GL/LL)
+  - Replaced 10+ duplicate if/elseif type-dispatch blocks in EmitInt
+  - All 70 tests pass
+
+### v1.035.5
+- **DUP Optimization**: FETCH x + FETCH x → FETCH x + DUP for x*x squared patterns
+  - Saves memory reads in tight loops (Mandelbrot x*x, y*y)
+  - Implemented for INT, FLOAT, STRING types (DUP_I, DUP_F, DUP_S)
+- **Negate Constant Folding**: PUSH const + NEGATE → PUSH -const at compile time
+  - Eliminates runtime NEGATE instruction
+  - Creates new constant slot with negated value
+- Added helper functions: GetDupOpcodeForFetch(), AreSameFetchTarget(), IsGlobalFetchOpcode()
+
+### v1.035.3-4
+- **Rule-Based Optimizer**: Refactored peephole optimization to use lookup tables
+- New rule maps in c2-codegen-rules.pbi:
+  - `mapCompareFlip`: Comparison inversion (LESS+NOT → GREATER_EQUAL)
+  - `mapDeadCodeOpcodes`: Dead code patterns (PUSH+POP elimination)
+  - `mapIdentityOps`: Identity operations (+0, *1, /1)
+  - `mapCompoundAssignInt/Float`: Compound assignment opcodes
+  - `mapFetchStoreFusion`: FETCH→STORE to MOV fusion
+- New lookup functions: IsDeadCodeOpcode(), GetFlippedCompare(), IsIdentityOp(), GetCompoundAssignOpcode()
+- All 70 tests pass
 
 ### v1.034.80
 - **Optimizer V02**: Consolidated optimization passes from 8+ to 5 clean passes

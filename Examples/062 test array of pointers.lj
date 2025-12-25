@@ -45,7 +45,7 @@ ptrs[3] = &d;
 print("Values via pointer array:");
 i = 0;
 while i < 4 {
-    print("ptrs[", i, "]\\i = ", ptrs[i]\i);
+    printf("ptrs[%d]\\i = %d\n", i, ptrs[i]\i);
     i = i + 1;
 }
 
@@ -64,7 +64,7 @@ ptrs[2]\i = 300;
 ptrs[3]\i = 400;
 
 print("After modification:");
-print("a = ", a, ", b = ", b, ", c = ", c, ", d = ", d);
+printf("a = %d, b = %d, c = %d, d = %d\n", a, b, c, d);
 
 assertEqual(100, a);
 assertEqual(200, b);
@@ -88,7 +88,7 @@ ptrs[2] = temp;
 print("After swapping pointers:");
 i = 0;
 while i < 4 {
-    print("ptrs[", i, "]\\i = ", ptrs[i]\i);
+    printf("ptrs[%d]\\i = %d\n", i, ptrs[i]\i);
     i = i + 1;
 }
 
@@ -125,7 +125,7 @@ assertStringEqual("Pointer", strs[2]\s);
 strs[1]\s = "Universe";
 
 print("After strs[1]\\s = 'Universe':");
-print("s1 = ", s1, ", s2 = ", s2, ", s3 = ", s3);
+printf("s1 = %s, s2 = %s, s3 = %s\n", s1, s2, s3);
 
 assertStringEqual("Hello", s1);
 assertStringEqual("Universe", s2);
@@ -150,7 +150,7 @@ elemPtrs[2] = &values[3];   // Point to values[3]
 print("Array element pointers:");
 i = -1;
 while( ++i < 3 ){
-    print("elemPtrs[", i, "]\\i = ", elemPtrs[i]\i);
+    printf("elemPtrs[%d]\\i = %d\n", i, elemPtrs[i]\i);
 }
 
 // Verify original values
@@ -166,7 +166,7 @@ elemPtrs[2]\i = 333;
 print("After modification via pointers:");
 i = -1;
 while( ++i < 5) {
-    print("values[", i, "] = ", values[i]);
+    printf("values[%d] = %d\n", i, values[i]);
 }
 
 // Verify modified values

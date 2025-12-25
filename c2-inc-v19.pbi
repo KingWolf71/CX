@@ -75,6 +75,7 @@
 #C2FLAG_ARRAYPTR  = 8192 ; V1.027.0: Pointer points to array element (vs simple variable)
 #C2FLAG_ASSIGNED  = 16384 ; V1.027.9: Variable has been assigned (prevents late PRELOAD marking)
 #C2FLAG_VOID      = 32768 ; V1.033.11: Void type (no value, for functions/placeholders)
+#C2FLAG_EXPLICIT  = 65536 ; V1.035.14: Variable has explicit type suffix (.i/.f/.s) - known non-pointer
 
 ; V1.026.0: Default max maps - can be changed via #pragma maxmaps
 #C2_DEFAULT_MAX_MAPS = 64
@@ -323,6 +324,7 @@ Enumeration
    #ljBUILTIN_LEN          ; len(s) - string length (returns int)
    #ljBUILTIN_STRCMP       ; strcmp(a, b) - string compare, returns -1/0/1
    #ljBUILTIN_GETC         ; getc(s, idx) - get character code at index
+   #ljBUILTIN_PRINTF       ; V1.035.13: printf(format, args...) - C-style formatted output
 
    ;- Array Opcodes
    #ljARRAYINDEX          ; Compute array element index (base + index * elementSize)
@@ -1753,6 +1755,7 @@ Macro _INIT_OPCODE_NAMES
    gszATR(#ljBUILTIN_LEN)\s = "BUILTIN_LEN"
    gszATR(#ljBUILTIN_STRCMP)\s = "BUILTIN_STRCMP"
    gszATR(#ljBUILTIN_GETC)\s = "BUILTIN_GETC"
+   gszATR(#ljBUILTIN_PRINTF)\s = "BUILTIN_PRINTF"
    gszATR(#ljARRAYINDEX)\s = "ARRAYINDEX"
    gszATR(#ljARRAYFETCH)\s = "ARRAYFETCH"
    gszATR(#ljARRAYFETCH_INT)\s = "ARRAYFETCH_INT"

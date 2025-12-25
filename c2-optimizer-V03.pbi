@@ -22,6 +22,14 @@
 ;            - Pass 3: Compound assignment optimization
 ;            - Pass 4: Preload optimization
 ;            - Pass 5: PUSH_IMM conversion (must be last)
+; V1.035.3: Rule-based peephole optimization
+;            - Uses lookup tables from c2-codegen-rules.pbi
+;            - IsDeadCodeOpcode(), GetFlippedCompare(), IsIdentityOp()
+;            - GetFetchStoreFusion(), GetCompoundAssignOpcode()
+; V1.035.5: New optimizations
+;            - FETCH x + FETCH x → FETCH x + DUP (for x*x squared patterns)
+;            - PUSH_IMM + NEGATE → negative constant folding at compile time
+;            - Saves memory reads and instruction count in tight loops
 
 ; Helper to adjust jump offsets when NOOP is created
 Procedure AdjustJumpsForNOOP(noopPos.i)
@@ -84,8 +92,11 @@ Procedure Optimizer()
       ProcedureReturn
    EndIf
 
+   ; V1.035.3: Initialize rule-based optimization tables
+   InitAllOptimizationRules()
+
    CompilerIf #DEBUG
-      Debug "=== Optimizer V02 Starting ==="
+      Debug "=== Optimizer V03 Starting (rule-based) ==="
       Debug "    Pass 1: Array Instruction Fusion"
    CompilerEndIf
 
@@ -178,11 +189,10 @@ Procedure Optimizer()
       Select llObjects()\code
 
          ;- ====== DEAD CODE: PUSH/FETCH + POP ======
+         ; V1.035.3: Use rule-based lookup for dead code patterns
          Case #ljPOP, #ljPOPS, #ljPOPF
             If PreviousElement(llObjects())
-               If (llObjects()\code = #ljFetch Or llObjects()\code = #ljFETCHS Or
-                   llObjects()\code = #ljFETCHF Or llObjects()\code = #ljPush Or
-                   llObjects()\code = #ljPUSHS Or llObjects()\code = #ljPUSHF)
+               If IsDeadCodeOpcode(llObjects()\code)
                   llObjects()\code = #ljNOOP
                   NextElement(llObjects())
                   llObjects()\code = #ljNOOP
@@ -192,7 +202,7 @@ Procedure Optimizer()
                EndIf
             EndIf
 
-         ;- ====== FETCH+STORE FUSION → MOV ======
+         ;- ====== FETCH+STORE FUSION → MOV or FETCH+FETCH → FETCH+DUP ======
          Case #ljFetch
             fetchSlot = llObjects()\i
             fetchJ = llObjects()\j
@@ -221,6 +231,14 @@ Procedure Optimizer()
                      llObjects()\code = #ljNOOP
                      ChangeCurrentElement(llObjects(), *fetchInstr)
                      llObjects()\code = #ljNOOP
+                     peepholeCount + 1
+                  EndIf
+               ElseIf llObjects()\code = #ljFetch
+                  ; V1.035.5: FETCH x + FETCH x → FETCH x + DUP (for x*x patterns)
+                  If llObjects()\i = fetchSlot And llObjects()\j = fetchJ
+                     llObjects()\code = #ljDUP_I
+                     llObjects()\i = 0
+                     llObjects()\j = 0
                      peepholeCount + 1
                   EndIf
                EndIf
@@ -254,6 +272,14 @@ Procedure Optimizer()
                      llObjects()\code = #ljNOOP
                      peepholeCount + 1
                   EndIf
+               ElseIf llObjects()\code = #ljFETCHS
+                  ; V1.035.5: FETCHS x + FETCHS x → FETCHS x + DUP_S
+                  If llObjects()\i = fetchSlot And llObjects()\j = fetchJ
+                     llObjects()\code = #ljDUP_S
+                     llObjects()\i = 0
+                     llObjects()\j = 0
+                     peepholeCount + 1
+                  EndIf
                EndIf
                SelectElement(llObjects(), savedIdx)
             EndIf
@@ -283,6 +309,14 @@ Procedure Optimizer()
                      llObjects()\code = #ljNOOP
                      ChangeCurrentElement(llObjects(), *fetchInstr)
                      llObjects()\code = #ljNOOP
+                     peepholeCount + 1
+                  EndIf
+               ElseIf llObjects()\code = #ljFETCHF
+                  ; V1.035.5: FETCHF x + FETCHF x → FETCHF x + DUP_F (for x*x patterns with floats)
+                  If llObjects()\i = fetchSlot And llObjects()\j = fetchJ
+                     llObjects()\code = #ljDUP_F
+                     llObjects()\i = 0
+                     llObjects()\j = 0
                      peepholeCount + 1
                   EndIf
                EndIf
@@ -358,50 +392,30 @@ Procedure Optimizer()
                      NextElement(llObjects())
                   EndIf
                Else
+                  ; V1.035.3: Use rule-based identity optimization lookup
                   ; Check for identity optimizations: +0, -0, *1, /1, *0
                   If (llObjects()\code = #ljPush Or llObjects()\code = #ljPUSHF Or llObjects()\code = #ljPUSHS) And (gVarMeta(llObjects()\i)\flags & #C2FLAG_CONST)
                      mulConst = gVarMeta(llObjects()\i)\valueInt
-                     Select opCode
-                        Case #ljADD, #ljSUBTRACT
-                           If mulConst = 0  ; x + 0 = x, x - 0 = x
-                              llObjects()\code = #ljNOOP
-                              NextElement(llObjects())
-                              llObjects()\code = #ljNOOP
-                              peepholeCount + 1
-                           Else
-                              NextElement(llObjects())
-                           EndIf
-                        Case #ljMULTIPLY
-                           If mulConst = 1  ; x * 1 = x
-                              llObjects()\code = #ljNOOP
-                              NextElement(llObjects())
-                              llObjects()\code = #ljNOOP
-                              peepholeCount + 1
-                           ElseIf mulConst = 0  ; x * 0 = 0
-                              If PreviousElement(llObjects())
-                                 llObjects()\code = #ljNOOP
-                                 NextElement(llObjects())
-                                 NextElement(llObjects())
-                                 llObjects()\code = #ljNOOP
-                                 peepholeCount + 1
-                              Else
-                                 NextElement(llObjects())
-                              EndIf
-                           Else
-                              NextElement(llObjects())
-                           EndIf
-                        Case #ljDIVIDE
-                           If mulConst = 1  ; x / 1 = x
-                              llObjects()\code = #ljNOOP
-                              NextElement(llObjects())
-                              llObjects()\code = #ljNOOP
-                              peepholeCount + 1
-                           Else
-                              NextElement(llObjects())
-                           EndIf
-                        Default
+                     If IsIdentityOp(opCode, mulConst)
+                        ; Identity operation: x op identity = x (e.g., x+0, x*1, x/1)
+                        llObjects()\code = #ljNOOP
+                        NextElement(llObjects())
+                        llObjects()\code = #ljNOOP
+                        peepholeCount + 1
+                     ElseIf opCode = #ljMULTIPLY And mulConst = 0
+                        ; Special case: x * 0 = 0 (replace with just the constant)
+                        If PreviousElement(llObjects())
+                           llObjects()\code = #ljNOOP
                            NextElement(llObjects())
-                     EndSelect
+                           NextElement(llObjects())
+                           llObjects()\code = #ljNOOP
+                           peepholeCount + 1
+                        Else
+                           NextElement(llObjects())
+                        EndIf
+                     Else
+                        NextElement(llObjects())
+                     EndIf
                   Else
                      NextElement(llObjects())
                   EndIf
@@ -502,50 +516,18 @@ Procedure Optimizer()
             EndIf
 
          ;- ====== INCREMENT/DECREMENT + POP/DROP → SIMPLE INC/DEC ======
-         Case #ljINC_VAR_PRE, #ljINC_VAR_POST
+         ; V1.035.3: Use rule-based opcode lookup
+         Case #ljINC_VAR_PRE, #ljINC_VAR_POST, #ljDEC_VAR_PRE, #ljDEC_VAR_POST,
+              #ljLINC_VAR_PRE, #ljLINC_VAR_POST, #ljLDEC_VAR_PRE, #ljLDEC_VAR_POST
+            Protected incDecOp.i = llObjects()\code
             If NextElement(llObjects())
-               If llObjects()\code = #ljPOP Or llObjects()\code = #ljDROP
+               If IsPopOpcode(llObjects()\code)
                   PreviousElement(llObjects())
-                  llObjects()\code = #ljINC_VAR
-                  NextElement(llObjects())
-                  llObjects()\code = #ljNOOP
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljDEC_VAR_PRE, #ljDEC_VAR_POST
-            If NextElement(llObjects())
-               If llObjects()\code = #ljPOP Or llObjects()\code = #ljDROP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljDEC_VAR
-                  NextElement(llObjects())
-                  llObjects()\code = #ljNOOP
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljLINC_VAR_PRE, #ljLINC_VAR_POST
-            If NextElement(llObjects())
-               If llObjects()\code = #ljPOP Or llObjects()\code = #ljDROP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljLINC_VAR
-                  NextElement(llObjects())
-                  llObjects()\code = #ljNOOP
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljLDEC_VAR_PRE, #ljLDEC_VAR_POST
-            If NextElement(llObjects())
-               If llObjects()\code = #ljPOP Or llObjects()\code = #ljDROP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljLDEC_VAR
+                  If IsIncrementOpcode(incDecOp)
+                     llObjects()\code = GetSimpleIncrementOpcode(incDecOp)
+                  Else
+                     llObjects()\code = GetSimpleDecrementOpcode(incDecOp)
+                  EndIf
                   NextElement(llObjects())
                   llObjects()\code = #ljNOOP
                   peepholeCount + 1
@@ -610,14 +592,67 @@ Procedure Optimizer()
             EndIf
 
          Case #ljNEGATE
-            If NextElement(llObjects())
-               If llObjects()\code = #ljNEGATE
-                  llObjects()\code = #ljNOOP
-                  PreviousElement(llObjects())
+            ; V1.035.5: PUSH constant + NEGATE → fold negative constant at compile time
+            If PreviousElement(llObjects())
+               Protected negateOpt.b = #False
+               If llObjects()\code = #ljPUSH_IMM
+                  ; Already converted to PUSH_IMM - fold directly
+                  Protected negatedValue.i = -llObjects()\i
+                  llObjects()\i = negatedValue
+                  NextElement(llObjects())
                   llObjects()\code = #ljNOOP
                   peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
+                  negateOpt = #True
+               ElseIf llObjects()\code = #ljPush
+                  ; PUSH with slot reference - check if it's an integer constant
+                  Protected pushConstSlot.i = llObjects()\i
+                  If pushConstSlot >= 0 And pushConstSlot < gnLastVariable
+                     If (gVarMeta(pushConstSlot)\flags & #C2FLAG_CONST) And (gVarMeta(pushConstSlot)\flags & #C2FLAG_INT)
+                        ; Create new constant with negated value
+                        Protected negValue.i = -gVarMeta(pushConstSlot)\valueInt
+                        Protected newNegConstIdx.i = gnLastVariable
+                        gVarMeta(newNegConstIdx)\name = "$neg" + Str(newNegConstIdx)
+                        gVarMeta(newNegConstIdx)\valueInt = negValue
+                        gVarMeta(newNegConstIdx)\valueFloat = 0.0
+                        gVarMeta(newNegConstIdx)\valueString = ""
+                        gVarMeta(newNegConstIdx)\flags = #C2FLAG_CONST | #C2FLAG_INT
+                        gVarMeta(newNegConstIdx)\paramOffset = -1
+                        gnLastVariable + 1
+                        ; Update PUSH to reference new constant
+                        llObjects()\i = newNegConstIdx
+                        NextElement(llObjects())
+                        llObjects()\code = #ljNOOP
+                        peepholeCount + 1
+                        negateOpt = #True
+                     EndIf
+                  EndIf
+               EndIf
+
+               If Not negateOpt
+                  NextElement(llObjects())
+                  ; Check for double negate
+                  If NextElement(llObjects())
+                     If llObjects()\code = #ljNEGATE
+                        llObjects()\code = #ljNOOP
+                        PreviousElement(llObjects())
+                        llObjects()\code = #ljNOOP
+                        peepholeCount + 1
+                     Else
+                        PreviousElement(llObjects())
+                     EndIf
+                  EndIf
+               EndIf
+            Else
+               ; Check for double negate
+               If NextElement(llObjects())
+                  If llObjects()\code = #ljNEGATE
+                     llObjects()\code = #ljNOOP
+                     PreviousElement(llObjects())
+                     llObjects()\code = #ljNOOP
+                     peepholeCount + 1
+                  Else
+                     PreviousElement(llObjects())
+                  EndIf
                EndIf
             EndIf
 
@@ -635,48 +670,15 @@ Procedure Optimizer()
             EndIf
 
          ;- ====== COMPARISON + NOT → FLIPPED COMPARISON ======
-         Case #ljLESS
-            If NextElement(llObjects())
+         ; V1.035.3: Use rule-based comparison flip lookup
+         Case #ljLESS, #ljGREATER, #ljLESSEQUAL, #ljGreaterEqual, #ljNOTEQUAL
+            Protected cmpOp.i = llObjects()\code
+            Protected flippedOp.i = GetFlippedCompare(cmpOp)
+            If flippedOp And NextElement(llObjects())
                If llObjects()\code = #ljNOT
                   llObjects()\code = #ljNOOP
                   PreviousElement(llObjects())
-                  llObjects()\code = #ljGreaterEqual
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljGREATER
-            If NextElement(llObjects())
-               If llObjects()\code = #ljNOT
-                  llObjects()\code = #ljNOOP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljLESSEQUAL
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljLESSEQUAL
-            If NextElement(llObjects())
-               If llObjects()\code = #ljNOT
-                  llObjects()\code = #ljNOOP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljGREATER
-                  peepholeCount + 1
-               Else
-                  PreviousElement(llObjects())
-               EndIf
-            EndIf
-
-         Case #ljGreaterEqual
-            If NextElement(llObjects())
-               If llObjects()\code = #ljNOT
-                  llObjects()\code = #ljNOOP
-                  PreviousElement(llObjects())
-                  llObjects()\code = #ljLESS
+                  llObjects()\code = flippedOp
                   peepholeCount + 1
                Else
                   PreviousElement(llObjects())
@@ -786,7 +788,9 @@ Procedure Optimizer()
    ;- ========================================
    ;- PASS 3: COMPOUND ASSIGNMENT OPTIMIZATION
    ;- ========================================
+   ; V1.035.3: Use rule-based compound assignment lookup
    ; Pattern: FETCH var + PUSH val + OP + STORE same_var → compound assign
+   Protected compoundOp.i
    ForEach llObjects()
       If llObjects()\code = #ljFetch Or llObjects()\code = #ljFETCHF
          varSlot = llObjects()\i
@@ -797,43 +801,33 @@ Procedure Optimizer()
                valueSlot = llObjects()\i
                If NextElement(llObjects())
                   stepsForward = 2
-                  Select llObjects()\code
-                     Case #ljADD, #ljSUBTRACT, #ljMULTIPLY, #ljDIVIDE, #ljMOD, #ljFLOATADD, #ljFLOATSUB, #ljFLOATMUL, #ljFLOATDIV
-                        opCode = llObjects()\code
-                        If NextElement(llObjects())
-                           stepsForward = 3
-                           If (llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF) And llObjects()\i = varSlot
-                              Protected storeLocalityJ.i = llObjects()\j
-                              PreviousElement(llObjects())
-                              PreviousElement(llObjects())
-                              PreviousElement(llObjects())
-                              llObjects()\code = #ljNOOP
-                              NextElement(llObjects())
-                              NextElement(llObjects())
-                              Select opCode
-                                 Case #ljADD : llObjects()\code = #ljADD_ASSIGN_VAR
-                                 Case #ljSUBTRACT : llObjects()\code = #ljSUB_ASSIGN_VAR
-                                 Case #ljMULTIPLY : llObjects()\code = #ljMUL_ASSIGN_VAR
-                                 Case #ljDIVIDE : llObjects()\code = #ljDIV_ASSIGN_VAR
-                                 Case #ljMOD : llObjects()\code = #ljMOD_ASSIGN_VAR
-                                 Case #ljFLOATADD : llObjects()\code = #ljFLOATADD_ASSIGN_VAR
-                                 Case #ljFLOATSUB : llObjects()\code = #ljFLOATSUB_ASSIGN_VAR
-                                 Case #ljFLOATMUL : llObjects()\code = #ljFLOATMUL_ASSIGN_VAR
-                                 Case #ljFLOATDIV : llObjects()\code = #ljFLOATDIV_ASSIGN_VAR
-                              EndSelect
-                              llObjects()\i = varSlot
-                              llObjects()\j = storeLocalityJ
-                              NextElement(llObjects())
-                              llObjects()\code = #ljNOOP
-                           Else
-                              For i = 1 To stepsForward : PreviousElement(llObjects()) : Next
-                           EndIf
+                  opCode = llObjects()\code
+                  compoundOp = GetCompoundAssignOpcode(opCode)
+                  If compoundOp
+                     If NextElement(llObjects())
+                        stepsForward = 3
+                        If (llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF) And llObjects()\i = varSlot
+                           Protected storeLocalityJ.i = llObjects()\j
+                           PreviousElement(llObjects())
+                           PreviousElement(llObjects())
+                           PreviousElement(llObjects())
+                           llObjects()\code = #ljNOOP
+                           NextElement(llObjects())
+                           NextElement(llObjects())
+                           llObjects()\code = compoundOp
+                           llObjects()\i = varSlot
+                           llObjects()\j = storeLocalityJ
+                           NextElement(llObjects())
+                           llObjects()\code = #ljNOOP
                         Else
                            For i = 1 To stepsForward : PreviousElement(llObjects()) : Next
                         EndIf
-                     Default
+                     Else
                         For i = 1 To stepsForward : PreviousElement(llObjects()) : Next
-                  EndSelect
+                     EndIf
+                  Else
+                     For i = 1 To stepsForward : PreviousElement(llObjects()) : Next
+                  EndIf
                Else
                   For i = 1 To stepsForward : PreviousElement(llObjects()) : Next
                EndIf

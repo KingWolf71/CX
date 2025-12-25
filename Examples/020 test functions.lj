@@ -54,39 +54,23 @@ func factorial(n) {
 
 // TESTS
 print("=== Integer Test ===");
-print("");
 r1 = add(10, 5);
-print("add(10,5) = ", r1);
-print("");
+printf("add(10,5) = %d\n", r1);
 
-print("");
-print("=== Float Test ===");
-print("");
+print("\n=== Float Test ===");
 r2.f = divide(100.0, 4.0);
-print("divide(100,4) = ", r2);
-print("");
+printf("divide(100,4) = %f\n", r2);
 
-print("");
-print("=== String Test ===");
-print("");
+print("\n=== String Test ===");
 s.s = greet("Bob");
 print(s);
-print("");
 
-print("");
-print("=== Nested Test ===");
-print("");
+print("\n=== Nested Test ===");
 r3 = addSquares(3, 4);
-print("3*3 + 4*4 = ", r3);
-print("");
+printf("3*3 + 4*4 = %d\n", r3);
 
-print("");
-print("=== Recursion Test ===");
-print("");
+print("\n=== Recursion Test ===");
 r4 = factorial(5);
-print("factorial(5) = ", r4);
-print("");
+printf("factorial(5) = %d\n", r4);
 
-print("");
-print("=== Done ===");
-print("");
+print("\n=== Done ===");

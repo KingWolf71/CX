@@ -432,7 +432,22 @@ EndProcedure
                If gNextChar = #INV$
                   par_AddToken( #ljSTRING, #ljSTRING, "", "" )
                Else
-                  text = gNextChar
+                  ; V1.035.13: Process escape sequences in string literals
+                  ; Handle first character (may be escape)
+                  If gNextChar = "\"
+                     par_NextCharacter()
+                     Select gNextChar
+                        Case "n" : text = Chr(10)    ; newline
+                        Case "t" : text = Chr(9)     ; tab
+                        Case "r" : text = Chr(13)    ; carriage return
+                        Case "\" : text = "\"        ; backslash
+                        Case #INV$ : text = #INV$    ; escaped quote
+                        Case "0" : text = Chr(0)     ; null
+                        Default : text = "\" + gNextChar  ; unknown escape, keep literal
+                     EndSelect
+                  Else
+                     text = gNextChar
+                  EndIf
 
                   Repeat
                      par_NextCharacter()
@@ -443,6 +458,18 @@ EndProcedure
                         Break
                      ElseIf gNextChar = #CR$
                         SetError( "EOL in string", #C2ERR_EOL_IN_STRING )
+                     ElseIf gNextChar = "\"
+                        ; V1.035.13: Process escape sequence
+                        par_NextCharacter()
+                        Select gNextChar
+                           Case "n" : text + Chr(10)    ; newline
+                           Case "t" : text + Chr(9)     ; tab
+                           Case "r" : text + Chr(13)    ; carriage return
+                           Case "\" : text + "\"        ; backslash
+                           Case #INV$ : text + #INV$    ; escaped quote
+                           Case "0" : text + Chr(0)     ; null
+                           Default : text + "\" + gNextChar  ; unknown escape, keep literal
+                        EndSelect
                      Else
                         text + gNextChar
                      EndIf

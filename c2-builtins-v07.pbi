@@ -379,6 +379,146 @@ Procedure C2BUILTIN_GETC()
    pc + 1
 EndProcedure
 
+;- V1.035.13: printf() - C-style formatted output
+; Supports:
+;   %d, %i - integer
+;   %f     - float (default decimals)
+;   %.Nf   - float with N decimal places
+;   %s     - string
+;   %%     - literal percent
+; Escape sequences are processed at compile time in scanner
+Procedure C2BUILTIN_PRINTF()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   Protected format.s, output.s
+   Protected i.i, fmtLen.i, argIndex.i
+   Protected ch.s, nextCh.s
+   Protected precision.i, precisionStr.s
+   Protected outLen.i, outIdx.i, outCh.s  ; V1.035.13: For GUI newline handling
+
+   If paramCount < 1
+      ; No format string
+      pc + 1
+      ProcedureReturn
+   EndIf
+
+   ; Get format string (first argument, deepest on stack)
+   ; V1.035.13: Use cached string length from \i field
+   format = gEvalStack(sp - paramCount)\ss
+   fmtLen = gEvalStack(sp - paramCount)\i
+   If fmtLen = 0 : fmtLen = Len(format) : EndIf  ; Fallback if not cached
+   argIndex = 1  ; Start with first arg after format string
+   output = ""
+
+   i = 1
+   While i <= fmtLen
+      ch = Mid(format, i, 1)
+
+      If ch = "%"
+         i + 1
+         If i > fmtLen
+            output + "%"  ; Trailing % at end of string
+            Break
+         EndIf
+
+         nextCh = Mid(format, i, 1)
+
+         Select nextCh
+            Case "%"  ; Literal percent
+               output + "%"
+
+            Case "d", "i"  ; Integer
+               If argIndex < paramCount
+                  output + Str(gEvalStack(sp - paramCount + argIndex)\i)
+                  argIndex + 1
+               EndIf
+
+            Case "f"  ; Float (default decimals)
+               If argIndex < paramCount
+                  output + StrD(gEvalStack(sp - paramCount + argIndex)\f, gDecs)
+                  argIndex + 1
+               EndIf
+
+            Case "s"  ; String
+               If argIndex < paramCount
+                  output + gEvalStack(sp - paramCount + argIndex)\ss
+                  argIndex + 1
+               EndIf
+
+            Case "."  ; Precision specifier (%.Nf)
+               i + 1
+               precisionStr = ""
+               ; Collect digits
+               While i <= fmtLen
+                  ch = Mid(format, i, 1)
+                  If ch >= "0" And ch <= "9"
+                     precisionStr + ch
+                     i + 1
+                  Else
+                     Break
+                  EndIf
+               Wend
+
+               If i <= fmtLen And Mid(format, i, 1) = "f"
+                  precision = Val(precisionStr)
+                  If precision > 15 : precision = 15 : EndIf
+                  If argIndex < paramCount
+                     output + StrD(gEvalStack(sp - paramCount + argIndex)\f, precision)
+                     argIndex + 1
+                  EndIf
+               Else
+                  ; Not a valid %.Nf, output literal
+                  output + "%." + precisionStr
+                  i - 1  ; Back up to process current char
+               EndIf
+
+            Default  ; Unknown format specifier, output literal
+               output + "%" + nextCh
+         EndSelect
+      Else
+         output + ch
+      EndIf
+
+      i + 1
+   Wend
+
+   ; Output the formatted string
+   ; V1.035.13: Handle newlines properly for GUI console output
+   CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
+      gBatchOutput + output
+      gConsoleLine + output
+      Print(output)
+   CompilerElse
+      If gTestMode = #True
+         Print(output)
+      Else
+         ; GUI mode: process output character by character for proper newline handling
+         outLen = Len(output)
+         For outIdx = 1 To outLen
+            outCh = Mid(output, outIdx, 1)
+            If outCh = Chr(10)  ; Newline
+               If gFastPrint = #True
+                  vm_SetGadgetText( #edConsole, cy, cline )
+               EndIf
+               cy + 1
+               cline = ""
+               vm_AddGadgetLine( #edConsole, "" )
+               vm_ScrollToBottom( #edConsole )
+               vm_ScrollGadget( #edConsole )
+            ElseIf outCh <> Chr(13)  ; Skip carriage return
+               cline = cline + outCh
+               If gFastPrint = #False
+                  vm_SetGadgetText( #edConsole, cy, cline )
+               EndIf
+            EndIf
+         Next
+      EndIf
+   CompilerEndIf
+
+   vm_PopParams(paramCount)
+   pc + 1
+EndProcedure
+
 ;- End Built-in Functions
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)

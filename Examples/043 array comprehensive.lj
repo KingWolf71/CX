@@ -38,7 +38,7 @@ g_ints[4] = 50;
 
 i = 0;
 while i < 5 {
-    print("  g_ints[", i, "] = ", g_ints[i]);
+    printf("  g_ints[%d] = %d\n", i, g_ints[i]);
     i = i + 1;
 }
 
@@ -60,7 +60,7 @@ g_floats[2] = 3.125;
 
 i = 0;
 while i < 3 {
-    print("  g_floats[", i, "] = ", g_floats[i]);
+    printf("  g_floats[%d] = %f\n", i, g_floats[i]);
     i = i + 1;
 }
 
@@ -83,7 +83,7 @@ g_strings[3] = "Test";
 
 i = 0;
 while i < 4 {
-    print("  g_strings[", i, "] = ", g_strings[i]);
+    printf("  g_strings[%d] = %s\n", i, g_strings[i]);
     i = i + 1;
 }
 
@@ -136,7 +136,7 @@ function testLocalInts() {
     print("  Local int array:");
     j = 0;
     while j < 3 {
-        print("    local_ints[", j, "] = ", local_ints[j]);
+        printf("    local_ints[%d] = %d\n", j, local_ints[j]);
         j = j + 1;
     }
 
@@ -165,7 +165,7 @@ function testLocalFloats() {
     print("  Local float array:");
     k = 0;
     while k < 2 {
-        print("    local_floats[", k, "] = ", local_floats[k]);
+        printf("    local_floats[%d] = %f\n", k, local_floats[k]);
         k = k + 1;
     }
 
@@ -193,7 +193,7 @@ function testLocalStrings() {
     print("  Local string array:");
     m = 0;
     while m < 3 {
-        print("    local_strings[", m, "] = ", local_strings[m]);
+        printf("    local_strings[%d] = %s\n", m, local_strings[m]);
         m = m + 1;
     }
 
@@ -320,7 +320,7 @@ function resetTest() {
     n = 0;
     total = 0;
     while n < 3 {
-        print("  reset_array[", n, "] = ", reset_array[n]);
+        printf("  reset_array[%d] = %d\n", n, reset_array[n]);
         total = total + reset_array[n];
         n = n + 1;
     }

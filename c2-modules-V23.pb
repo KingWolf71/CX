@@ -22,7 +22,7 @@ EnableDebugger  ; V1.031.109: Disabled for performance - Debug statements now su
 DeclareModule C2Common
 
    ;#DEBUG = 0
-   XIncludeFile         "c2-inc-v18.pbi"
+   XIncludeFile         "c2-inc-v19.pbi"
 EndDeclareModule
 
 Module C2Common
@@ -55,7 +55,7 @@ DeclareModule C2Lang
    Declare              LoadLJ( file.s )
 EndDeclareModule
 
-XIncludeFile            "c2-vm-V16.pb"
+XIncludeFile            "c2-vm-V17.pb"
 
 Module C2Lang
    EnableExplicit
@@ -161,7 +161,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Global NewMap        mapMacros.stMacro()
    Global NewMap        mapModules.stModInfo()
    Global NewMap        mapBuiltins.stBuiltinDef()
-   Global NewMap        mapVariableTypes.w()  ; Track variable types during parsing (name → type flags)
+   Global NewMap        mapVariableTypes.l()  ; Track variable types during parsing (name → type flags) - V1.035.14: .l for EXPLICIT flag (65536)
    Global NewMap        MapCodeElements.stCodeElement()  ; V1.034.0: Unified code element map for O(1) lookup
    Global NewMap        MapLocalByOffset.i()  ; V1.034.0: func_offset → slot for local variable lookup
 
@@ -189,6 +189,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Global               gEmitIntCmd.i
    Global               gEmitIntLastOp
    Global               gInTernary.b      ; Flag to disable PUSH/FETCH→MOV optimization inside ternary
+   Global               gInFuncArgs.b     ; V1.035.14: Flag to suppress DROP for increments in function args
 
    Global               gszFileText.s
    Global               gszOriginalSource.s  ; Original source before comment stripping
@@ -337,9 +338,10 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    EndProcedure
 
    ; V1.033.23: TypeInference + PostProcessor V10 (debugging)
-   XIncludeFile         "c2-typeinfer-V02.pbi"
-   XIncludeFile         "c2-postprocessor-V11.pbi"
-   XIncludeFile         "c2-optimizer-V02.pbi"
+   XIncludeFile         "c2-typeinfer-V03.pbi"
+   XIncludeFile         "c2-postprocessor-V12.pbi"
+   XIncludeFile         "c2-codegen-rules.pbi"   ; V1.035.3: Rule-based optimization (must be before optimizer)
+   XIncludeFile         "c2-optimizer-V03.pbi"
 
    CreateRegularExpression( #C2REG_FLOATS, gszFloating )
    
@@ -375,21 +377,24 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    EndProcedure
    
    Macro                SetError( text, err )
-      If err > 0 And err < 10
-         gszlastError = text + " on line " + Str( gLineNumber ) + ", col = " + Str( gCol )
-         If GetSourceLine(gLineNumber) <> ""
-            gszlastError + #CRLF$ + ">> " + GetSourceLine(gLineNumber)
+      ; V1.035.14: Don't overwrite existing error - keep the first (most specific) error
+      If gLastError = 0
+         If err > 0 And err < 10
+            gszlastError = text + " on line " + Str( gLineNumber ) + ", col = " + Str( gCol )
+            If GetSourceLine(gLineNumber) <> ""
+               gszlastError + #CRLF$ + ">> " + GetSourceLine(gLineNumber)
+            EndIf
+         ElseIf err >= 10
+            gszlastError = text + " on line " + Str(llTokenList()\row) + ", col = " + Str(llTokenList()\col)
+            If GetSourceLine(llTokenList()\row) <> ""
+               gszlastError + #CRLF$ + ">> " + GetSourceLine(llTokenList()\row)
+            EndIf
+         Else
+            gszlastError = text
          EndIf
-      ElseIf err >= 10
-         gszlastError = text + " on line " + Str(llTokenList()\row) + ", col = " + Str(llTokenList()\col)
-         If GetSourceLine(llTokenList()\row) <> ""
-            gszlastError + #CRLF$ + ">> " + GetSourceLine(llTokenList()\row)
-         EndIf
-      Else
-         gszlastError = text
-      EndIf
 
-      gLastError = err
+         gLastError = err
+      EndIf
 
       ProcedureReturn err
    EndMacro
@@ -528,6 +533,9 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       InstallBuiltin( "mapNext",           #ljMAP_NEXT,             1, 1, #C2FLAG_INT )
       InstallBuiltin( "mapKey",            #ljMAP_KEY,              1, 1, #C2FLAG_STR )
       InstallBuiltin( "mapValue",          #ljMAP_VALUE,            1, 1, 0 )  ; Return type depends on map type
+
+      ; V1.035.13: printf - C-style formatted output
+      InstallBuiltin( "printf",            #ljBUILTIN_PRINTF,       1, 99, 0 )  ; printf(format, args...)
    EndProcedure
    CompilerEndIf
 
@@ -700,6 +708,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       gEmitIntCmd             = #LJUnknown
       gEmitIntLastOp          = 0
       gInTernary              = #False
+      gInFuncArgs             = #False  ; V1.035.14: Reset func args context
 
       Install( "array", #ljArray )
       Install( "arr", #ljArray )       ; V1.024.27: Alias for array
@@ -774,9 +783,15 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       SetError( "Invalid file", #C2ERR_INVALID_FILE )
    EndProcedure
 
-   XIncludeFile         "c2-scanner-v05.pbi"
-   XIncludeFile         "c2-ast-v07.pbi"
-   XIncludeFile         "c2-codegen-v07.pbi"
+   XIncludeFile         "c2-scanner-v06.pbi"
+   XIncludeFile         "c2-codegen-vars.pbi"    ; V1.035.9: FetchVarOffset (must be before ast)
+   XIncludeFile         "c2-ast-v08.pbi"
+   ; V1.035.3: c2-codegen-rules.pbi moved earlier (before optimizer)
+   XIncludeFile         "c2-codegen-struct.pbi"  ; V1.035.0: Unified struct field resolution
+   XIncludeFile         "c2-codegen-lookup.pbi"  ; V1.035.0: O(1) variable lookup wrappers
+   XIncludeFile         "c2-codegen-emit.pbi"    ; V1.035.8: EmitInt (must be before v08)
+   XIncludeFile         "c2-codegen-types.pbi"   ; V1.035.10: GetExprResultType, GetExprSlotOrTemp
+   XIncludeFile         "c2-codegen-v08.pbi"     ; Main CodeGenerator procedure
 
    ;- =====================================
    ;- Preprocessors
@@ -1940,7 +1955,7 @@ CompilerIf #PB_Compiler_IsMainFile
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 25
+; CursorPosition = 34
 ; FirstLine = 16
 ; Folding = 0---------
 ; Markers = 569,718
@@ -1951,7 +1966,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2522
+; EnableCompileCount = 2533
 ; EnableBuildCount = 0
 ; EnableExeConstant
 ; IncludeVersionInfo

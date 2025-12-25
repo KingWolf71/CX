@@ -513,8 +513,8 @@ Module C2VM
       ProcedureReturn #True
    EndProcedure
 
-   XIncludeFile      "c2-vm-commands-v14.pb"
-   ; Note: c2-pointers-v05.pbi and c2-collections-v03.pbi included via c2-vm-commands-v14.pb
+   XIncludeFile      "c2-vm-commands-v15.pb"
+   ; Note: c2-pointers-v06.pbi and c2-collections-v04.pbi included via c2-vm-commands-v15.pb
    ; V1.028.0: Collections (lists/maps) now unified in gVar\ll() and gVar\map()
 
    ;- Console GUI
@@ -747,6 +747,7 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_LEN )     = @C2BUILTIN_LEN()
       *ptrJumpTable( #ljBUILTIN_STRCMP )  = @C2BUILTIN_STRCMP()
       *ptrJumpTable( #ljBUILTIN_GETC )    = @C2BUILTIN_GETC()
+      *ptrJumpTable( #ljBUILTIN_PRINTF )  = @C2BUILTIN_PRINTF()  ; V1.035.13
 
       ; Array operations
       *ptrJumpTable( #ljARRAYINDEX )      = @C2ARRAYINDEX()
@@ -1418,7 +1419,12 @@ Module C2VM
 
       ; V1.031.42: VM loop ended - thread will terminate naturally
       ; V1.035.0: Stack balance - sp should be 0 at end
-      endline  = "Runtime: " + FormatNumber( (ElapsedMilliseconds() - t ) / 1000 ) + " seconds. sp=(" + Str(sp) + ") CALL=" + Str(gCallCount) + " CALL0=" + Str(gCall0Count)
+      ; V1.035.7: CALL/CALL0 stats only shown in DEBUG mode
+      CompilerIf #DEBUG
+         endline  = "Runtime: " + FormatNumber( (ElapsedMilliseconds() - t ) / 1000 ) + " seconds. sp=(" + Str(sp) + ") CALL=" + Str(gCallCount) + " CALL0=" + Str(gCall0Count)
+      CompilerElse
+         endline  = "Runtime: " + FormatNumber( (ElapsedMilliseconds() - t ) / 1000 ) + " seconds."
+      CompilerEndIf
 
       ; V1.035.0: Debug leaked stack values (stack should be empty: sp == 0)
       If sp <> 0

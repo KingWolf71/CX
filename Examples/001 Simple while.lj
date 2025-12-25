@@ -22,14 +22,7 @@
 #pragma DumpASM off
 
 count = 1;
- while (count < 10) {
-     print("count is: ", count++);
- }
- 
- print(""); 
- 
- count = 1;
- while (count < 10) {
-     print("count is: ", count);
-	 count++;
- }
+while (count < 10) {
+    printf("count is: %d\n", count);
+    count++;
+}

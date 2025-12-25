@@ -29,9 +29,9 @@ function testLocalStrings() {
     local_strings[1] = "Two";
     local_strings[2] = "Three";
 
-    print("  local_strings[0] = ", local_strings[0]);
-    print("  local_strings[1] = ", local_strings[1]);
-    print("  local_strings[2] = ", local_strings[2]);
+    printf("  local_strings[0] = %s\n", local_strings[0]);
+    printf("  local_strings[1] = %s\n", local_strings[1]);
+    printf("  local_strings[2] = %s\n", local_strings[2]);
 }
 
 testLocalStrings();
