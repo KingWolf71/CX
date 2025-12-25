@@ -1,4 +1,4 @@
-
+﻿
 ; -- lexical parser to VM for a simplified C Language
 ; Tested in UTF8
 ; PBx64 v6.20
@@ -18,10 +18,9 @@
 ; Complete isolation between global variables, local variables, and evaluation stack.
 ; Three separate arrays prevent any possibility of stack/local overlap bugs.
 ;
-; Storage Model:
-;   - gVar[]      : Global variables ONLY (permanent, indexed by slot)
-;   - gLocal[]    : Local variables ONLY (per-function frame, indexed by offset)
-;   - gEvalStack[]: Evaluation stack ONLY (sp-indexed, completely isolated)
+; V1.034.18: Unified Storage Model with ABSOLUTE indexing:
+;   - gStorage[0..gGlobalStack-1]: Globals (indexed by slot)
+;   - gStorage[gGlobalStack..]: Locals + eval stack (sp and gFrameBase are absolute)
 ;
 ; Opcode Categories (LL/GG/LG/GL):
 ;   - GG: Global to Global - MOV, MOVF, MOVS
@@ -46,10 +45,10 @@
 ;- Constants
 ; ======================================================================================================
 
-#DEBUG            = 0
+#DEBUG            = 0   ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
 #C2PROFILER       = 0     ; V1.033.16: Disabled for true VM speed test
 #C2PROFILER_LOG   = 0     ; V1.031.112: Append profiler data to cumulative log file
-#VM_INLINE_HOT    = 1     ; V1.033.15: Inline hot opcodes (LFETCHS, STORE, LSTORES, SUB, JMP, NEG + originals) in VM loop
+#VM_INLINE_HOT    = 0     ; V1.034.27: Disabled inline hot opcodes for now
 
 #INV$             = ~"\""
 #C2MAXTOKENS      = 500   ; Legacy, use #C2TOKENCOUNT for actual count
@@ -57,7 +56,7 @@
 #C2MAXFUNCTIONS   = 8192  ; V1.033.54: Max functions (for function-indexed arrays)
 
 ; V1.31.0: Isolated Variable System array sizes - now use global variables:
-; gLocalStack, gMaxEvalStack, gGlobalStack, gFunctionStack (set via pragmas)
+; gMaxEvalStack, gMaxEvalStack, gGlobalStack, gFunctionStack (set via pragmas)
 
 #C2FLAG_TYPE      = 28   ; Mask for type bits only (INT | FLOAT | STR = 4|8|16 = 28); VOID is separate
 #C2FLAG_CONST     = 1
@@ -118,6 +117,7 @@ Enumeration
    #ljDEFAULT_CASE  ; V1.024.0: default label
    #ljBREAK         ; V1.024.0: break statement
    #ljCONTINUE      ; V1.024.0: continue statement
+   #ljFOREACH       ; V1.034.6: foreach loop for lists/maps (scoped iterator)
    #ljJZ
    #ljJMP
    #ljNEGATE
@@ -158,6 +158,8 @@ Enumeration
    #ljAND
    #ljXOR
    #ljMOD
+   #ljSHL            ; V1.034.4: Bit shift left
+   #ljSHR            ; V1.034.4: Bit shift right
   
    #ljEQUAL 
    #ljNotEqual
@@ -211,6 +213,8 @@ Enumeration
    #ljCALL0        ; V1.033.12: Optimized call - 0 parameters (no param copy loop)
    #ljCALL1        ; V1.033.12: Optimized call - 1 parameter (direct copy)
    #ljCALL2        ; V1.033.12: Optimized call - 2 parameters (unrolled copy)
+   #ljCALL_REC     ; V1.034.65: Recursive call - uses frame pool, no gFuncActive check
+   #ljRETURN_REC   ; V1.034.65: Return from recursive function - returns frame to pool
    #ljARRAYINFO    ; V1.031.105: Local array info for CALL (i=paramOffset, j=arraySize)
 
    #ljUNKNOWN
@@ -671,6 +675,21 @@ Enumeration
    #ljMAP_PUT_STRUCT_PTR          ; Put struct from \ptr storage - pool slot, key, struct slot on stack
    #ljMAP_GET_STRUCT_PTR          ; Get struct to \ptr storage - pool slot, key on stack, dest slot in \j
 
+   ;- V1.034.6: ForEach Opcodes (scoped iterator for lists and maps)
+   #ljFOREACH_LIST_INIT           ; Push initial iterator (-1) for list - varSlot in \i
+   #ljFOREACH_LIST_NEXT           ; Advance iterator, push success
+   #ljFOREACH_MAP_INIT            ; Push initial iterator state for map - varSlot in \i
+   #ljFOREACH_MAP_NEXT            ; Advance iterator, push success
+   #ljFOREACH_END                 ; Pop iterator from stack (cleanup)
+   #ljFOREACH_LIST_GET_INT        ; Get list element using stack iterator
+   #ljFOREACH_LIST_GET_FLOAT      ; Get list element using stack iterator
+   #ljFOREACH_LIST_GET_STR        ; Get list element using stack iterator
+   #ljFOREACH_MAP_KEY             ; Get current map key using stack iterator
+   #ljFOREACH_MAP_VALUE_INT       ; Get current map value using stack iterator
+   #ljFOREACH_MAP_VALUE_FLOAT     ; Get current map value using stack iterator
+   #ljFOREACH_MAP_VALUE_STR       ; Get current map value using stack iterator
+
+
    ; V1.026.0: Special opcode for collection function first parameter
    ; V1.026.8: DEPRECATED - use FETCH/LFETCH instead (pool slot stored in gVar[slot]\i or LOCAL[offset])
    #ljPUSH_SLOT                   ; Push slot index as integer (not value) - for collection functions
@@ -841,6 +860,7 @@ EndStructure
 
 ; Instruction flags
 #INST_FLAG_TERNARY = 1
+#INST_FLAG_IMPLICIT_RETURN = 2  ; V1.034.0: Marks NOOPIF that will become RETURN
 
 ;- Pointer Type Tags (for efficient pointer metadata)
 Enumeration  ; Pointer Types
@@ -888,6 +908,62 @@ Structure stVarMeta  ; Compile-time metadata and constant values
    ; V1.029.40: Track if STRUCT_ALLOC has been emitted for this struct
    structAllocEmitted.b ; True if STRUCT_ALLOC has been emitted for this struct base slot
 EndStructure
+
+; V1.034.0: Unified Code Element Structure for O(1) compiler lookups
+; This parallels gVarMeta for faster name-based lookups during compilation
+Enumeration eElementType
+   #ELEMENT_NONE = 0
+   #ELEMENT_VARIABLE
+   #ELEMENT_CONSTANT
+   #ELEMENT_FUNCTION
+   #ELEMENT_PARAMETER
+   #ELEMENT_STRUCT_FIELD
+   #ELEMENT_ARRAY
+EndEnumeration
+
+Structure stCodeElement
+   ; Identity
+   name.s                  ; Element name (variable, function, constant name)
+   id.i                    ; Numeric ID (matches gVarMeta slot for variables)
+
+   ; Type information
+   elementType.w           ; eElementType
+   varType.w               ; Type flags: #C2FLAG_INT, #C2FLAG_FLOAT, #C2FLAG_STR, etc.
+
+   ; Value storage (for constants)
+   valueInt.i
+   valueFloat.d
+   valueString.s
+
+   ; Size and structure info
+   size.i                  ; Size in slots
+   elementSize.i           ; For arrays: slots per element; for structs: field count
+   structType.s            ; For structs/struct pointers: struct type name
+
+   ; Flags
+   isIdent.b               ; Is an identifier (not literal constant)
+   isArray.b               ; Is an array
+   isPointer.b             ; Is a pointer type
+   isLeftMost.b            ; Is leftmost in expression chain
+
+   ; Expression chain traversal (for type coercion in a + b * c)
+   *Left.stCodeElement     ; Left operand in expression
+   *Right.stCodeElement    ; Right operand in expression
+
+   ; Usage flow tracking (assignment->read patterns)
+   *AssignedFrom.stCodeElement  ; Source of last assignment
+   *UsedBy.stCodeElement        ; Next usage after this point
+
+   ; Scope information
+   paramOffset.i           ; -1 = global, >= 0 = local offset from localBase
+   functionContext.s       ; For locals: parent function name
+   List parameters.s()     ; For functions: parameter names
+   returnType.w            ; For functions: return type flags
+
+   ; Backwards compatibility
+   varSlot.i               ; Index in gVarMeta array
+EndStructure
+
 
 Structure stATR
    s.s
@@ -947,6 +1023,8 @@ EndStructure
 Structure stFuncTemplate
    funcId.i                      ; Function ID (index in gFuncTemplates)
    localCount.i                  ; Number of non-param locals (template size)
+   funcSlot.i                    ; V1.035.0: *gVar slot for this function's locals
+   nParams.i                     ; V1.035.0: Number of parameters (for var() array sizing)
    Array template.stVarTemplate(0)  ; Pre-initialized values for locals
 EndStructure
 
@@ -1078,11 +1156,11 @@ Macro          ASMLine(obj,show)
       CompilerElse
          line + "  (" +Str(obj\i) + ") " + Str(ListIndex(obj)+1+obj\i)
       CompilerEndIf
-   ElseIf obj\code = #ljCall Or obj\code = #ljCALL0 Or obj\code = #ljCALL1 Or obj\code = #ljCALL2
-      ; V1.033.12: Include optimized CALL0, CALL1, CALL2 opcodes
+   ElseIf obj\code = #ljCall Or obj\code = #ljCALL0 Or obj\code = #ljCALL1 Or obj\code = #ljCALL2 Or obj\code = #ljCALL_REC
+      ; V1.033.12: Include optimized CALL0, CALL1, CALL2 opcodes; V1.034.65: CALL_REC for recursive
       CompilerIf show
          ; Runtime: just show basic CALL info (no compile-time metadata available)
-         line + "  (" +Str(obj\i) + ") " + Str(i+1+obj\i) + " [params=" + Str(obj\j) + " locals=" + Str(obj\n) + "]"
+         line + "  (" +Str(obj\i) + ") " + Str(i+1+obj\i) + " [params=" + Str(obj\j) + " locals=" + Str(obj\n) + " nArr=" + Str(obj\ndx) + "]"
       CompilerElse
          ; V1.033.17: Compile-time: Look up and display function name
          gAsmCurrentFunc = obj\funcid
@@ -1093,7 +1171,7 @@ Macro          ASMLine(obj,show)
          If _asmFuncName = ""
             _asmFuncName = "func#" + Str(obj\funcid)
          EndIf
-         line + _asmFuncName + "() [params=" + Str(obj\j) + " locals=" + Str(obj\n) + "]"
+         line + _asmFuncName + "() [params=" + Str(obj\j) + " locals=" + Str(obj\n) + " nArr=" + Str(obj\ndx) + "]"
       CompilerEndIf
    ; Specialized array operations (no runtime branching) - opcode name encodes all info
    ElseIf obj\code = #ljARRAYFETCH_INT_GLOBAL_OPT Or obj\code = #ljARRAYFETCH_INT_GLOBAL_STACK Or obj\code = #ljARRAYFETCH_INT_LOCAL_OPT Or obj\code = #ljARRAYFETCH_INT_LOCAL_STACK Or obj\code = #ljARRAYFETCH_FLOAT_GLOBAL_OPT Or obj\code = #ljARRAYFETCH_FLOAT_GLOBAL_STACK Or obj\code = #ljARRAYFETCH_FLOAT_LOCAL_OPT Or obj\code = #ljARRAYFETCH_FLOAT_LOCAL_STACK Or obj\code = #ljARRAYFETCH_STR_GLOBAL_OPT Or obj\code = #ljARRAYFETCH_STR_GLOBAL_STACK Or obj\code = #ljARRAYFETCH_STR_LOCAL_OPT Or obj\code = #ljARRAYFETCH_STR_LOCAL_STACK Or obj\code = #ljARRAYSTORE_INT_GLOBAL_OPT_OPT Or obj\code = #ljARRAYSTORE_INT_GLOBAL_OPT_STACK Or obj\code = #ljARRAYSTORE_INT_GLOBAL_STACK_OPT Or obj\code = #ljARRAYSTORE_INT_GLOBAL_STACK_STACK Or obj\code = #ljARRAYSTORE_INT_LOCAL_OPT_OPT Or obj\code = #ljARRAYSTORE_INT_LOCAL_OPT_STACK Or obj\code = #ljARRAYSTORE_INT_LOCAL_STACK_OPT Or obj\code = #ljARRAYSTORE_INT_LOCAL_STACK_STACK Or obj\code = #ljARRAYSTORE_FLOAT_GLOBAL_OPT_OPT Or obj\code = #ljARRAYSTORE_FLOAT_GLOBAL_OPT_STACK Or obj\code = #ljARRAYSTORE_FLOAT_GLOBAL_STACK_OPT Or obj\code = #ljARRAYSTORE_FLOAT_GLOBAL_STACK_STACK Or obj\code = #ljARRAYSTORE_FLOAT_LOCAL_OPT_OPT Or obj\code = #ljARRAYSTORE_FLOAT_LOCAL_OPT_STACK Or obj\code = #ljARRAYSTORE_FLOAT_LOCAL_STACK_OPT Or obj\code = #ljARRAYSTORE_FLOAT_LOCAL_STACK_STACK Or obj\code = #ljARRAYSTORE_STR_GLOBAL_OPT_OPT Or obj\code = #ljARRAYSTORE_STR_GLOBAL_OPT_STACK Or obj\code = #ljARRAYSTORE_STR_GLOBAL_STACK_OPT Or obj\code = #ljARRAYSTORE_STR_GLOBAL_STACK_STACK Or obj\code = #ljARRAYSTORE_STR_LOCAL_OPT_OPT Or obj\code = #ljARRAYSTORE_STR_LOCAL_OPT_STACK Or obj\code = #ljARRAYSTORE_STR_LOCAL_STACK_OPT Or obj\code = #ljARRAYSTORE_STR_LOCAL_STACK_STACK
@@ -1165,16 +1243,54 @@ Macro          ASMLine(obj,show)
       line + "[ptr=LOCAL[" + Str(obj\i) + "] fldOfs=" + Str(obj\n) + " val=LOCAL[" + Str(obj\ndx) + "]]"
       flag + 1
    ElseIf obj\code = #ljMOV
-      _ASMLineHelper1( show, obj\j )
-      line + "[" + gVarMeta( obj\j )\name + temp + "] --> [" + gVarMeta( obj\i )\name + "] (src=" + Str(obj\j) + " dst=" + Str(obj\i) + ")"
+      ; V1.034.37: Unified MOV with n field for locality
+      ; n & 1 = source is local, n >> 1 = destination is local
+      ; n=0: GG, n=1: LG, n=2: GL, n=3: LL
+      Protected srcIsLocal.i = obj\n & 1
+      Protected dstIsLocal.i = obj\n >> 1
+      If dstIsLocal
+         ; Destination is local
+         If srcIsLocal
+            ; LL: local to local
+            line + "[LOCAL[" + Str(obj\j) + "]] --> [LOCAL[" + Str(obj\i) + "]] (n=" + Str(obj\n) + " LL)"
+         Else
+            ; GL: global to local
+            _ASMLineHelper1( show, obj\j )
+            line + "[" + gVarMeta( obj\j )\name + temp + "] --> [LOCAL[" + Str(obj\i) + "]] (n=" + Str(obj\n) + " GL)"
+         EndIf
+      Else
+         ; Destination is global
+         If srcIsLocal
+            ; LG: local to global
+            line + "[LOCAL[" + Str(obj\j) + "]] --> [" + gVarMeta( obj\i )\name + "] (n=" + Str(obj\n) + " LG)"
+         Else
+            ; GG: global to global
+            _ASMLineHelper1( show, obj\j )
+            line + "[" + gVarMeta( obj\j )\name + temp + "] --> [" + gVarMeta( obj\i )\name + "] (n=" + Str(obj\n) + " GG)"
+         EndIf
+      EndIf
       flag + 1
+   ; V1.034.30: Unified STORE handling - check j flag for local vs global
    ElseIf obj\code = #ljSTORE Or obj\code = #ljSTORES Or obj\code = #ljSTOREF
-      ; V1.023.31: Don't use sp-1 for value display - sp is runtime, not compile-time
-      line + "[sp] --> [" + gVarMeta( obj\i )\name + "] (slot=" + Str(obj\i) + ")"
+      ; V1.034.31: Check j flag to determine local vs global
+      If obj\j = 1
+         ; Unified STORE to local variable - show as LOCAL
+         CompilerIf show
+            line + "[sp] --> [LOCAL[" + Str(obj\i) + "]]"
+         CompilerElse
+            ; V1.033.17: Show local variable name at compile-time
+            _GetLocalName(obj\i)
+            line + "[sp] --> " + gAsmLocalName
+         CompilerEndIf
+      Else
+         ; V1.023.31: Don't use sp-1 for value display - sp is runtime, not compile-time
+         ; Global STORE (j=0)
+         line + "[sp] --> [" + gVarMeta( obj\i )\name + "] (slot=" + Str(obj\i) + " j=" + Str(obj\j) + ")"
+      EndIf
       flag + 1
    ; Local variable STORE operations - show paramOffset with name
    ; V1.023.21: Added PLSTORE to display
-   ElseIf obj\code = #ljLSTORE Or obj\code = #ljLSTORES Or obj\code = #ljLSTOREF Or obj\code = #ljPLSTORE
+   ElseIf obj\code = #ljLSTORE Or obj\code = #ljLSTORES Or obj\code = #ljLSTOREF Or (obj\code = #ljPSTORE And obj\j = 1)
       CompilerIf show
          line + "[sp] --> [LOCAL[" + Str(obj\i) + "]]"
       CompilerElse
@@ -1204,8 +1320,39 @@ Macro          ASMLine(obj,show)
       CompilerEndIf
       flag + 1
    ; In-place increment/decrement operations
+   ; V1.034.37: Unified format - j=0 global, j=1 local
    ElseIf obj\code = #ljINC_VAR Or obj\code = #ljDEC_VAR Or obj\code = #ljINC_VAR_PRE Or obj\code = #ljDEC_VAR_PRE Or obj\code = #ljINC_VAR_POST Or obj\code = #ljDEC_VAR_POST
-      line + "[" + gVarMeta(obj\i)\name + "]"
+      If obj\j = 1
+         ; Local variable - i is paramOffset
+         line + "[LOCAL[" + Str(obj\i) + "]]"
+      Else
+         ; Global variable - i is slot
+         line + "[" + gVarMeta(obj\i)\name + "]"
+      EndIf
+      flag + 1
+   ; V1.034.38: PFETCH display - pointer FETCH with j=1 for locals
+   ElseIf obj\code = #ljPFETCH
+      If obj\j = 1
+         line + "[LOCAL[" + Str(obj\i) + "]] --> [sp] (ptr)"
+      Else
+         line + "[slot" + Str(obj\i) + "] --> [sp] (ptr)"
+      EndIf
+      flag + 1
+   ; V1.034.38: PTRINC_POST_INT display - pointer post-increment with j=1 for locals
+   ElseIf obj\code = #ljPTRINC_POST_INT Or obj\code = #ljPTRINC_POST_FLOAT Or obj\code = #ljPTRINC_POST_STRING Or obj\code = #ljPTRINC_POST_ARRAY Or obj\code = #ljPTRDEC_POST_INT Or obj\code = #ljPTRDEC_POST_FLOAT Or obj\code = #ljPTRDEC_POST_STRING Or obj\code = #ljPTRDEC_POST_ARRAY
+      If obj\j = 1
+         line + "[LOCAL[" + Str(obj\i) + "]] (ptr++/--)"
+      Else
+         line + "[slot" + Str(obj\i) + "] (ptr++/--)"
+      EndIf
+      flag + 1
+   ; V1.034.38: PPOP display - pointer POP with j/i for target
+   ElseIf obj\code = #ljPPOP
+      If obj\j = 1
+         line + "[sp] --> [LOCAL[" + Str(obj\i) + "]] (ppop)"
+      Else
+         line + "[sp] --> [slot" + Str(obj\i) + "] (ppop)"
+      EndIf
       flag + 1
    ElseIf obj\code = #ljLINC_VAR Or obj\code = #ljLDEC_VAR Or obj\code = #ljLINC_VAR_PRE Or obj\code = #ljLDEC_VAR_PRE Or obj\code = #ljLINC_VAR_POST Or obj\code = #ljLDEC_VAR_POST
       CompilerIf show
@@ -1221,20 +1368,33 @@ Macro          ASMLine(obj,show)
       ; V1.023.31: Don't use sp-1 for value display - sp is runtime, not compile-time
       line + "[" + gVarMeta(obj\i)\name + " OP= sp]"
       flag + 1
-   ElseIf obj\code = #ljPUSH Or obj\code = #ljFetch Or obj\code = #ljPUSHS Or obj\code = #ljPUSHF
+   ElseIf obj\code = #ljPUSH Or obj\code = #ljFetch Or obj\code = #ljPUSHS Or obj\code = #ljPUSHF Or obj\code = #ljFETCHS Or obj\code = #ljFETCHF
       flag + 1
-      _ASMLineHelper1( 0, obj\i )
-      If gVarMeta( obj\i )\flags & #C2FLAG_IDENT
-         ; V1.023.21: Show slot number for IDENT to help debug
-         line + "[" + gVarMeta( obj\i )\name + " (slot=" + Str(obj\i) + ")] --> [sp]"
-      ElseIf gVarMeta( obj\i )\flags & #C2FLAG_STR
-         line + "[" + gVarMeta( obj\i )\valueString + "] --> [sp]"
-      ElseIf gVarMeta( obj\i )\flags & #C2FLAG_INT
-         line + "[" + Str(gVarMeta( obj\i )\valueInt) +  "] --> [sp]"
-      ElseIf gVarMeta( obj\i )\flags & #C2FLAG_FLOAT
-         line + "[" + StrD(gVarMeta( obj\i )\valueFloat,3) +  "] --> [sp]"
+      ; V1.034.17: Handle unified opcodes - j=1 means local, obj\i is paramOffset
+      If obj\j = 1
+         ; Local variable - show as LOCAL[paramOffset]
+         CompilerIf show
+            line + "[LOCAL[" + Str(obj\i) + "]] --> [sp]"
+         CompilerElse
+            ; Compile-time: look up local variable name
+            _GetLocalName(obj\i)
+            line + gAsmLocalName + " --> [sp]"
+         CompilerEndIf
       Else
-         line + "[" + gVarMeta( obj\i )\name + "] --> [sp]"
+         ; Global variable - standard display
+         _ASMLineHelper1( 0, obj\i )
+         If gVarMeta( obj\i )\flags & #C2FLAG_IDENT
+            ; V1.023.21: Show slot number for IDENT to help debug
+            line + "[" + gVarMeta( obj\i )\name + " (slot=" + Str(obj\i) + ")] --> [sp]"
+         ElseIf gVarMeta( obj\i )\flags & #C2FLAG_STR
+            line + "[" + gVarMeta( obj\i )\valueString + "] --> [sp]"
+         ElseIf gVarMeta( obj\i )\flags & #C2FLAG_INT
+            line + "[" + Str(gVarMeta( obj\i )\valueInt) +  "] --> [sp]"
+         ElseIf gVarMeta( obj\i )\flags & #C2FLAG_FLOAT
+            line + "[" + StrD(gVarMeta( obj\i )\valueFloat,3) +  "] --> [sp]"
+         Else
+            line + "[" + gVarMeta( obj\i )\name + "] --> [sp]"
+         EndIf
       EndIf
    ElseIf obj\code = #ljPOP Or obj\code = #ljPOPS Or obj\code = #ljPOPF
       flag + 1
@@ -1375,963 +1535,550 @@ EndMacro
 Macro                   _AR()
    arCode(pc)
 EndMacro
+; V1.035.0: POINTER ARRAY ARCHITECTURE - _LARRAY now just returns offset
 Macro                   _LARRAY(offset)
-   ; V1.031.14: Use global gLocalBase, NOT stack frame's localBase
-   ; Stack frame stores CALLER's base for restoration, not current function's base
-   (gLocalBase + offset)
+   (offset)
+EndMacro
+; V1.035.0: _LVAR for local variable access
+Macro                   _LVAR(offset)
+   *gVar(gCurrentFuncSlot)\var(offset)
 EndMacro
 ;- End of file
 
-DataSection
-c2tokens:
-   Data.s   "UNUSED"
-   Data.i   0, 0
-   Data.s   "VAR"
-   Data.i   0, 0
-   Data.s   "INT"
-   Data.i   0, 0
-   Data.s   "FLT"
-   Data.i   0, 0
-   Data.s   "STR"
-   Data.i   0, 0
-   Data.s   "VOID"        ; V1.033.19: Must match #ljVOID enum entry added in V1.033.11
-   Data.i   0, 0
-   Data.s   "STRUCTTYPE"  ; V1.022.80: New enum entry - must be in DataSection to maintain alignment
-   Data.i   0, 0
-   Data.s   "TYPEGUESS"   ; V1.022.80: New enum entry - must be in DataSection to maintain alignment
-   Data.i   0, 0
-   Data.s   "ARRAY"
-   Data.i   0, 0
+; V1.034.21: Inline opcode names - eliminates DataSection sync issues
+; This macro REPLACES the DataSection reading loop
+; Generated from enum - to add opcode, just add to Enumeration
+Macro _INIT_OPCODE_NAMES
+   ; Initialize opcode display names using enum constants directly
+   ; Names stay perfectly in sync with enum - no manual sync required
+   gszATR(#ljUNUSED)\s = "UNUSED"
+   gszATR(#ljIDENT)\s = "IDENT"
+   gszATR(#ljINT)\s = "INT"
+   gszATR(#ljFLOAT)\s = "FLOAT"
+   gszATR(#ljSTRING)\s = "STRING"
+   gszATR(#ljVOID)\s = "VOID"
+   gszATR(#ljStructType)\s = "STRUCTTYPE"
+   gszATR(#ljTypeGuess)\s = "TYPEGUESS"
+   gszATR(#ljArray)\s = "ARRAY"
+   gszATR(#ljIF)\s = "IF"
+   gszATR(#ljElse)\s = "ELSE"
+   gszATR(#ljWHILE)\s = "WHILE"
+   gszATR(#ljFOR)\s = "FOR"
+   gszATR(#ljSWITCH)\s = "SWITCH"
+   gszATR(#ljCASE)\s = "CASE"
+   gszATR(#ljDEFAULT_CASE)\s = "DEFAULT_CASE"
+   gszATR(#ljBREAK)\s = "BREAK"
+   gszATR(#ljCONTINUE)\s = "CONTINUE"
+   gszATR(#ljFOREACH)\s = "FOREACH"
+   gszATR(#ljJZ)\s = "JZ"
+   gszATR(#ljJMP)\s = "JMP"
+   gszATR(#ljNEGATE)\s = "NEGATE"
+   gszATR(#ljFLOATNEG)\s = "FLOATNEG"
+   gszATR(#ljNOT)\s = "NOT"
+   gszATR(#ljASSIGN)\s = "ASSIGN"
+   gszATR(#ljADD_ASSIGN)\s = "ADD_ASSIGN"
+   gszATR(#ljSUB_ASSIGN)\s = "SUB_ASSIGN"
+   gszATR(#ljMUL_ASSIGN)\s = "MUL_ASSIGN"
+   gszATR(#ljDIV_ASSIGN)\s = "DIV_ASSIGN"
+   gszATR(#ljMOD_ASSIGN)\s = "MOD_ASSIGN"
+   gszATR(#ljINC)\s = "INC"
+   gszATR(#ljDEC)\s = "DEC"
+   gszATR(#ljPRE_INC)\s = "PRE_INC"
+   gszATR(#ljPRE_DEC)\s = "PRE_DEC"
+   gszATR(#ljPOST_INC)\s = "POST_INC"
+   gszATR(#ljPOST_DEC)\s = "POST_DEC"
+   gszATR(#ljADD)\s = "ADD"
+   gszATR(#ljSUBTRACT)\s = "SUBTRACT"
+   gszATR(#ljMULTIPLY)\s = "MULTIPLY"
+   gszATR(#ljDIVIDE)\s = "DIVIDE"
+   gszATR(#ljFLOATADD)\s = "FLOATADD"
+   gszATR(#ljFLOATSUB)\s = "FLOATSUB"
+   gszATR(#ljFLOATMUL)\s = "FLOATMUL"
+   gszATR(#ljFLOATDIV)\s = "FLOATDIV"
+   gszATR(#ljSTRADD)\s = "STRADD"
+   ; V1.034.26: Float/string token mappings for type coercion
+   gszATR(#ljNEGATE)\flttoken = #ljFLOATNEG
+   gszATR(#ljADD)\flttoken = #ljFLOATADD
+   gszATR(#ljADD)\strtoken = #ljSTRADD
+   gszATR(#ljSUBTRACT)\flttoken = #ljFLOATSUB
+   gszATR(#ljMULTIPLY)\flttoken = #ljFLOATMUL
+   gszATR(#ljDIVIDE)\flttoken = #ljFLOATDIV
+   gszATR(#ljEQUAL)\flttoken = #ljFLOATEQ
+   gszATR(#ljNotEqual)\flttoken = #ljFLOATNE
+   gszATR(#ljLESSEQUAL)\flttoken = #ljFLOATLE
+   gszATR(#ljGreaterEqual)\flttoken = #ljFLOATGE
+   gszATR(#ljGREATER)\flttoken = #ljFLOATGR
+   gszATR(#ljLESS)\flttoken = #ljFLOATLESS
+   gszATR(#ljFTOS)\s = "FTOS"
+   gszATR(#ljITOS)\s = "ITOS"
+   gszATR(#ljITOF)\s = "ITOF"
+   gszATR(#ljFTOI)\s = "FTOI"
+   gszATR(#ljSTOF)\s = "STOF"
+   gszATR(#ljSTOI)\s = "STOI"
+   gszATR(#ljOr)\s = "OR"
+   gszATR(#ljAND)\s = "AND"
+   gszATR(#ljXOR)\s = "XOR"
+   gszATR(#ljMOD)\s = "MOD"
+   gszATR(#ljSHL)\s = "SHL"
+   gszATR(#ljSHR)\s = "SHR"
+   gszATR(#ljEQUAL)\s = "EQUAL"
+   gszATR(#ljNotEqual)\s = "NOTEQUAL"
+   gszATR(#ljLESSEQUAL)\s = "LESSEQUAL"
+   gszATR(#ljGreaterEqual)\s = "GREATEREQUAL"
+   gszATR(#ljGREATER)\s = "GREATER"
+   gszATR(#ljLESS)\s = "LESS"
+   gszATR(#ljFLOATEQ)\s = "FLOATEQ"
+   gszATR(#ljFLOATNE)\s = "FLOATNE"
+   gszATR(#ljFLOATLE)\s = "FLOATLE"
+   gszATR(#ljFLOATGE)\s = "FLOATGE"
+   gszATR(#ljFLOATGR)\s = "FLOATGR"
+   gszATR(#ljFLOATLESS)\s = "FLOATLESS"
+   gszATR(#ljSTREQ)\s = "STREQ"
+   gszATR(#ljSTRNE)\s = "STRNE"
+   gszATR(#ljMOV)\s = "MOV"
+   gszATR(#ljFetch)\s = "FETCH"
+   gszATR(#ljPOP)\s = "POP"
+   gszATR(#ljPOPS)\s = "POPS"
+   gszATR(#ljPOPF)\s = "POPF"
+   gszATR(#ljPush)\s = "PUSH"
+   gszATR(#ljPUSHS)\s = "PUSHS"
+   gszATR(#ljPUSHF)\s = "PUSHF"
+   gszATR(#ljPUSH_IMM)\s = "PUSH_IMM"
+   gszATR(#ljStore)\s = "STORE"
+   gszATR(#ljHALT)\s = "HALT"
+   gszATR(#ljPrint)\s = "PRINT"
+   gszATR(#ljPRTC)\s = "PRTC"
+   gszATR(#ljPRTI)\s = "PRTI"
+   gszATR(#ljPRTF)\s = "PRTF"
+   gszATR(#ljPRTS)\s = "PRTS"
+   gszATR(#ljLeftBrace)\s = "LEFTBRACE"
+   gszATR(#ljRightBrace)\s = "RIGHTBRACE"
+   gszATR(#ljLeftParent)\s = "LEFTPARENT"
+   gszATR(#ljRightParent)\s = "RIGHTPARENT"
+   gszATR(#ljLeftBracket)\s = "LEFTBRACKET"
+   gszATR(#ljRightBracket)\s = "RIGHTBRACKET"
+   gszATR(#ljSemi)\s = "SEMI"
+   gszATR(#ljComma)\s = "COMMA"
+   gszATR(#ljBackslash)\s = "BACKSLASH"
+   gszATR(#ljfunction)\s = "FUNCTION"
+   gszATR(#ljreturn)\s = "RETURN"
+   gszATR(#ljreturnF)\s = "RETURNF"
+   gszATR(#ljreturnS)\s = "RETURNS"
+   gszATR(#ljCall)\s = "CALL"
+   gszATR(#ljCALL0)\s = "CALL0"
+   gszATR(#ljCALL1)\s = "CALL1"
+   gszATR(#ljCALL2)\s = "CALL2"
+   gszATR(#ljCALL_REC)\s = "CALL_REC"
+   gszATR(#ljRETURN_REC)\s = "RETURN_REC"
+   gszATR(#ljARRAYINFO)\s = "ARRAYINFO"
+   gszATR(#ljUNKNOWN)\s = "UNKNOWN"
+   gszATR(#ljNOOP)\s = "NOOP"
+   gszATR(#ljOP)\s = "OP"
+   gszATR(#ljSEQ)\s = "SEQ"
+   gszATR(#ljKeyword)\s = "KEYWORD"
+   gszATR(#ljTERNARY)\s = "TERNARY"
+   gszATR(#ljQUESTION)\s = "QUESTION"
+   gszATR(#ljCOLON)\s = "COLON"
+   gszATR(#ljTENIF)\s = "TENIF"
+   gszATR(#ljTENELSE)\s = "TENELSE"
+   gszATR(#ljNOOPIF)\s = "NOOPIF"
+   gszATR(#ljDUP)\s = "DUP"
+   gszATR(#ljDUP_I)\s = "DUP_I"
+   gszATR(#ljDUP_F)\s = "DUP_F"
+   gszATR(#ljDUP_S)\s = "DUP_S"
+   gszATR(#ljJNZ)\s = "JNZ"
+   gszATR(#ljDROP)\s = "DROP"
+   gszATR(#ljMOVS)\s = "MOVS"
+   gszATR(#ljMOVF)\s = "MOVF"
+   gszATR(#ljFETCHS)\s = "FETCHS"
+   gszATR(#ljFETCHF)\s = "FETCHF"
+   gszATR(#ljSTORES)\s = "STORES"
+   gszATR(#ljSTOREF)\s = "STOREF"
+   gszATR(#ljLMOV)\s = "LMOV"
+   gszATR(#ljLMOVS)\s = "LMOVS"
+   gszATR(#ljLMOVF)\s = "LMOVF"
+   gszATR(#ljLFETCH)\s = "LFETCH"
+   gszATR(#ljLFETCHS)\s = "LFETCHS"
+   gszATR(#ljLFETCHF)\s = "LFETCHF"
+   gszATR(#ljLSTORE)\s = "LSTORE"
+   gszATR(#ljLSTORES)\s = "LSTORES"
+   gszATR(#ljLSTOREF)\s = "LSTOREF"
+   gszATR(#ljLGMOV)\s = "LGMOV"
+   gszATR(#ljLGMOVS)\s = "LGMOVS"
+   gszATR(#ljLGMOVF)\s = "LGMOVF"
+   gszATR(#ljLLMOV)\s = "LLMOV"
+   gszATR(#ljLLMOVS)\s = "LLMOVS"
+   gszATR(#ljLLMOVF)\s = "LLMOVF"
+   gszATR(#ljLLPMOV)\s = "LLPMOV"
+   gszATR(#ljINC_VAR)\s = "INC_VAR"
+   gszATR(#ljDEC_VAR)\s = "DEC_VAR"
+   gszATR(#ljINC_VAR_PRE)\s = "INC_VAR_PRE"
+   gszATR(#ljDEC_VAR_PRE)\s = "DEC_VAR_PRE"
+   gszATR(#ljINC_VAR_POST)\s = "INC_VAR_POST"
+   gszATR(#ljDEC_VAR_POST)\s = "DEC_VAR_POST"
+   gszATR(#ljLINC_VAR)\s = "LINC_VAR"
+   gszATR(#ljLDEC_VAR)\s = "LDEC_VAR"
+   gszATR(#ljLINC_VAR_PRE)\s = "LINC_VAR_PRE"
+   gszATR(#ljLDEC_VAR_PRE)\s = "LDEC_VAR_PRE"
+   gszATR(#ljLINC_VAR_POST)\s = "LINC_VAR_POST"
+   gszATR(#ljLDEC_VAR_POST)\s = "LDEC_VAR_POST"
+   gszATR(#ljPTRINC)\s = "PTRINC"
+   gszATR(#ljPTRDEC)\s = "PTRDEC"
+   gszATR(#ljPTRINC_PRE)\s = "PTRINC_PRE"
+   gszATR(#ljPTRDEC_PRE)\s = "PTRDEC_PRE"
+   gszATR(#ljPTRINC_POST)\s = "PTRINC_POST"
+   gszATR(#ljPTRDEC_POST)\s = "PTRDEC_POST"
+   gszATR(#ljSTORE_STRUCT)\s = "STORE_STRUCT"
+   gszATR(#ljLSTORE_STRUCT)\s = "LSTORE_STRUCT"
+   gszATR(#ljADD_ASSIGN_VAR)\s = "ADD_ASSIGN_VAR"
+   gszATR(#ljSUB_ASSIGN_VAR)\s = "SUB_ASSIGN_VAR"
+   gszATR(#ljMUL_ASSIGN_VAR)\s = "MUL_ASSIGN_VAR"
+   gszATR(#ljDIV_ASSIGN_VAR)\s = "DIV_ASSIGN_VAR"
+   gszATR(#ljMOD_ASSIGN_VAR)\s = "MOD_ASSIGN_VAR"
+   gszATR(#ljFLOATADD_ASSIGN_VAR)\s = "FLOATADD_ASSIGN_VAR"
+   gszATR(#ljFLOATSUB_ASSIGN_VAR)\s = "FLOATSUB_ASSIGN_VAR"
+   gszATR(#ljFLOATMUL_ASSIGN_VAR)\s = "FLOATMUL_ASSIGN_VAR"
+   gszATR(#ljFLOATDIV_ASSIGN_VAR)\s = "FLOATDIV_ASSIGN_VAR"
+   gszATR(#ljPTRADD_ASSIGN)\s = "PTRADD_ASSIGN"
+   gszATR(#ljPTRSUB_ASSIGN)\s = "PTRSUB_ASSIGN"
+   gszATR(#ljBUILTIN_RANDOM)\s = "BUILTIN_RANDOM"
+   gszATR(#ljBUILTIN_ABS)\s = "BUILTIN_ABS"
+   gszATR(#ljBUILTIN_MIN)\s = "BUILTIN_MIN"
+   gszATR(#ljBUILTIN_MAX)\s = "BUILTIN_MAX"
+   gszATR(#ljBUILTIN_ASSERT_EQUAL)\s = "BUILTIN_ASSERT_EQUAL"
+   gszATR(#ljBUILTIN_ASSERT_FLOAT)\s = "BUILTIN_ASSERT_FLOAT"
+   gszATR(#ljBUILTIN_ASSERT_STRING)\s = "BUILTIN_ASSERT_STRING"
+   gszATR(#ljBUILTIN_SQRT)\s = "BUILTIN_SQRT"
+   gszATR(#ljBUILTIN_POW)\s = "BUILTIN_POW"
+   gszATR(#ljBUILTIN_LEN)\s = "BUILTIN_LEN"
+   gszATR(#ljBUILTIN_STRCMP)\s = "BUILTIN_STRCMP"
+   gszATR(#ljBUILTIN_GETC)\s = "BUILTIN_GETC"
+   gszATR(#ljARRAYINDEX)\s = "ARRAYINDEX"
+   gszATR(#ljARRAYFETCH)\s = "ARRAYFETCH"
+   gszATR(#ljARRAYFETCH_INT)\s = "ARRAYFETCH_INT"
+   gszATR(#ljARRAYFETCH_FLOAT)\s = "ARRAYFETCH_FLOAT"
+   gszATR(#ljARRAYFETCH_STR)\s = "ARRAYFETCH_STR"
+   gszATR(#ljARRAYSTORE)\s = "ARRAYSTORE"
+   gszATR(#ljARRAYSTORE_INT)\s = "ARRAYSTORE_INT"
+   gszATR(#ljARRAYSTORE_FLOAT)\s = "ARRAYSTORE_FLOAT"
+   gszATR(#ljARRAYSTORE_STR)\s = "ARRAYSTORE_STR"
+   gszATR(#ljARRAYFETCH_INT_GLOBAL_OPT)\s = "ARRAYFETCH_INT_GLOBAL_OPT"
+   gszATR(#ljARRAYFETCH_INT_GLOBAL_STACK)\s = "ARRAYFETCH_INT_GLOBAL_STACK"
+   gszATR(#ljARRAYFETCH_INT_LOCAL_OPT)\s = "ARRAYFETCH_INT_LOCAL_OPT"
+   gszATR(#ljARRAYFETCH_INT_LOCAL_STACK)\s = "ARRAYFETCH_INT_LOCAL_STACK"
+   gszATR(#ljARRAYFETCH_FLOAT_GLOBAL_OPT)\s = "ARRAYFETCH_FLOAT_GLOBAL_OPT"
+   gszATR(#ljARRAYFETCH_FLOAT_GLOBAL_STACK)\s = "ARRAYFETCH_FLOAT_GLOBAL_STACK"
+   gszATR(#ljARRAYFETCH_FLOAT_LOCAL_OPT)\s = "ARRAYFETCH_FLOAT_LOCAL_OPT"
+   gszATR(#ljARRAYFETCH_FLOAT_LOCAL_STACK)\s = "ARRAYFETCH_FLOAT_LOCAL_STACK"
+   gszATR(#ljARRAYFETCH_STR_GLOBAL_OPT)\s = "ARRAYFETCH_STR_GLOBAL_OPT"
+   gszATR(#ljARRAYFETCH_STR_GLOBAL_STACK)\s = "ARRAYFETCH_STR_GLOBAL_STACK"
+   gszATR(#ljARRAYFETCH_STR_LOCAL_OPT)\s = "ARRAYFETCH_STR_LOCAL_OPT"
+   gszATR(#ljARRAYFETCH_STR_LOCAL_STACK)\s = "ARRAYFETCH_STR_LOCAL_STACK"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_OPT_OPT)\s = "ARRAYSTORE_INT_GLOBAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_OPT_STACK)\s = "ARRAYSTORE_INT_GLOBAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_STACK_OPT)\s = "ARRAYSTORE_INT_GLOBAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_STACK_STACK)\s = "ARRAYSTORE_INT_GLOBAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_OPT_OPT)\s = "ARRAYSTORE_INT_LOCAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_OPT_STACK)\s = "ARRAYSTORE_INT_LOCAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_STACK_OPT)\s = "ARRAYSTORE_INT_LOCAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_STACK_STACK)\s = "ARRAYSTORE_INT_LOCAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_OPT_OPT)\s = "ARRAYSTORE_FLOAT_GLOBAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_OPT_STACK)\s = "ARRAYSTORE_FLOAT_GLOBAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_STACK_OPT)\s = "ARRAYSTORE_FLOAT_GLOBAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_STACK_STACK)\s = "ARRAYSTORE_FLOAT_GLOBAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_OPT_OPT)\s = "ARRAYSTORE_FLOAT_LOCAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_OPT_STACK)\s = "ARRAYSTORE_FLOAT_LOCAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_STACK_OPT)\s = "ARRAYSTORE_FLOAT_LOCAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_STACK_STACK)\s = "ARRAYSTORE_FLOAT_LOCAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_OPT_OPT)\s = "ARRAYSTORE_STR_GLOBAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_OPT_STACK)\s = "ARRAYSTORE_STR_GLOBAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_STACK_OPT)\s = "ARRAYSTORE_STR_GLOBAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_STACK_STACK)\s = "ARRAYSTORE_STR_GLOBAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_OPT_OPT)\s = "ARRAYSTORE_STR_LOCAL_OPT_OPT"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_OPT_STACK)\s = "ARRAYSTORE_STR_LOCAL_OPT_STACK"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_STACK_OPT)\s = "ARRAYSTORE_STR_LOCAL_STACK_OPT"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_STACK_STACK)\s = "ARRAYSTORE_STR_LOCAL_STACK_STACK"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_OPT_LOPT)\s = "ARRAYSTORE_INT_GLOBAL_OPT_LOPT"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_OPT_LOPT)\s = "ARRAYSTORE_FLOAT_GLOBAL_OPT_LOPT"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_OPT_LOPT)\s = "ARRAYSTORE_STR_GLOBAL_OPT_LOPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_OPT_LOPT)\s = "ARRAYSTORE_INT_LOCAL_OPT_LOPT"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_OPT_LOPT)\s = "ARRAYSTORE_FLOAT_LOCAL_OPT_LOPT"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_OPT_LOPT)\s = "ARRAYSTORE_STR_LOCAL_OPT_LOPT"
+   gszATR(#ljARRAYFETCH_INT_GLOBAL_LOPT)\s = "ARRAYFETCH_INT_GLOBAL_LOPT"
+   gszATR(#ljARRAYFETCH_FLOAT_GLOBAL_LOPT)\s = "ARRAYFETCH_FLOAT_GLOBAL_LOPT"
+   gszATR(#ljARRAYFETCH_STR_GLOBAL_LOPT)\s = "ARRAYFETCH_STR_GLOBAL_LOPT"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_LOPT_LOPT)\s = "ARRAYSTORE_INT_GLOBAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_LOPT_OPT)\s = "ARRAYSTORE_INT_GLOBAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_INT_GLOBAL_LOPT_STACK)\s = "ARRAYSTORE_INT_GLOBAL_LOPT_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_LOPT_LOPT)\s = "ARRAYSTORE_FLOAT_GLOBAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_LOPT_OPT)\s = "ARRAYSTORE_FLOAT_GLOBAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_GLOBAL_LOPT_STACK)\s = "ARRAYSTORE_FLOAT_GLOBAL_LOPT_STACK"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_LOPT_LOPT)\s = "ARRAYSTORE_STR_GLOBAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_LOPT_OPT)\s = "ARRAYSTORE_STR_GLOBAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_STR_GLOBAL_LOPT_STACK)\s = "ARRAYSTORE_STR_GLOBAL_LOPT_STACK"
+   gszATR(#ljARRAYFETCH_INT_LOCAL_LOPT)\s = "ARRAYFETCH_INT_LOCAL_LOPT"
+   gszATR(#ljARRAYFETCH_FLOAT_LOCAL_LOPT)\s = "ARRAYFETCH_FLOAT_LOCAL_LOPT"
+   gszATR(#ljARRAYFETCH_STR_LOCAL_LOPT)\s = "ARRAYFETCH_STR_LOCAL_LOPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_LOPT_LOPT)\s = "ARRAYSTORE_INT_LOCAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_LOPT_OPT)\s = "ARRAYSTORE_INT_LOCAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_INT_LOCAL_LOPT_STACK)\s = "ARRAYSTORE_INT_LOCAL_LOPT_STACK"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_LOPT_LOPT)\s = "ARRAYSTORE_FLOAT_LOCAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_LOPT_OPT)\s = "ARRAYSTORE_FLOAT_LOCAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_FLOAT_LOCAL_LOPT_STACK)\s = "ARRAYSTORE_FLOAT_LOCAL_LOPT_STACK"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_LOPT_LOPT)\s = "ARRAYSTORE_STR_LOCAL_LOPT_LOPT"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_LOPT_OPT)\s = "ARRAYSTORE_STR_LOCAL_LOPT_OPT"
+   gszATR(#ljARRAYSTORE_STR_LOCAL_LOPT_STACK)\s = "ARRAYSTORE_STR_LOCAL_LOPT_STACK"
+   gszATR(#ljGETADDR)\s = "GETADDR"
+   gszATR(#ljGETADDRF)\s = "GETADDRF"
+   gszATR(#ljGETADDRS)\s = "GETADDRS"
+   gszATR(#ljGETLOCALADDR)\s = "GETLOCALADDR"
+   gszATR(#ljGETLOCALADDRF)\s = "GETLOCALADDRF"
+   gszATR(#ljGETLOCALADDRS)\s = "GETLOCALADDRS"
+   gszATR(#ljPTRFETCH)\s = "PTRFETCH"
+   gszATR(#ljPTRFETCH_INT)\s = "PTRFETCH_INT"
+   gszATR(#ljPTRFETCH_FLOAT)\s = "PTRFETCH_FLOAT"
+   gszATR(#ljPTRFETCH_STR)\s = "PTRFETCH_STR"
+   gszATR(#ljPTRSTORE)\s = "PTRSTORE"
+   gszATR(#ljPTRSTORE_INT)\s = "PTRSTORE_INT"
+   gszATR(#ljPTRSTORE_FLOAT)\s = "PTRSTORE_FLOAT"
+   gszATR(#ljPTRSTORE_STR)\s = "PTRSTORE_STR"
+   gszATR(#ljPTRFIELD_I)\s = "PTRFIELD_I"
+   gszATR(#ljPTRFIELD_F)\s = "PTRFIELD_F"
+   gszATR(#ljPTRFIELD_S)\s = "PTRFIELD_S"
+   gszATR(#ljPTRADD)\s = "PTRADD"
+   gszATR(#ljPTRSUB)\s = "PTRSUB"
+   gszATR(#ljGETFUNCADDR)\s = "GETFUNCADDR"
+   gszATR(#ljCALLFUNCPTR)\s = "CALLFUNCPTR"
+   gszATR(#ljGETARRAYADDR)\s = "GETARRAYADDR"
+   gszATR(#ljGETARRAYADDRF)\s = "GETARRAYADDRF"
+   gszATR(#ljGETARRAYADDRS)\s = "GETARRAYADDRS"
+   gszATR(#ljGETLOCALARRAYADDR)\s = "GETLOCALARRAYADDR"
+   gszATR(#ljGETLOCALARRAYADDRF)\s = "GETLOCALARRAYADDRF"
+   gszATR(#ljGETLOCALARRAYADDRS)\s = "GETLOCALARRAYADDRS"
+   gszATR(#ljPRTPTR)\s = "PRTPTR"
+   gszATR(#ljPMOV)\s = "PMOV"
+   gszATR(#ljPFETCH)\s = "PFETCH"
+   gszATR(#ljPSTORE)\s = "PSTORE"
+   gszATR(#ljPPOP)\s = "PPOP"
+   gszATR(#ljPLFETCH)\s = "PLFETCH"
+   gszATR(#ljPLSTORE)\s = "PLSTORE"
+   gszATR(#ljPLMOV)\s = "PLMOV"
+   gszATR(#ljCAST_INT)\s = "CAST_INT"
+   gszATR(#ljCAST_FLOAT)\s = "CAST_FLOAT"
+   gszATR(#ljCAST_STRING)\s = "CAST_STRING"
+   gszATR(#ljCAST_VOID)\s = "CAST_VOID"
+   gszATR(#ljStruct)\s = "STRUCT"
+   gszATR(#ljStructField)\s = "STRUCTFIELD"
+   gszATR(#ljStructInit)\s = "STRUCTINIT"
+   gszATR(#ljSTRUCTARRAY_FETCH_INT)\s = "STRUCTARRAY_FETCH_INT"
+   gszATR(#ljSTRUCTARRAY_FETCH_FLOAT)\s = "STRUCTARRAY_FETCH_FLOAT"
+   gszATR(#ljSTRUCTARRAY_FETCH_STR)\s = "STRUCTARRAY_FETCH_STR"
+   gszATR(#ljSTRUCTARRAY_STORE_INT)\s = "STRUCTARRAY_STORE_INT"
+   gszATR(#ljSTRUCTARRAY_STORE_FLOAT)\s = "STRUCTARRAY_STORE_FLOAT"
+   gszATR(#ljSTRUCTARRAY_STORE_STR)\s = "STRUCTARRAY_STORE_STR"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_INT)\s = "ARRAYOFSTRUCT_FETCH_INT"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_FLOAT)\s = "ARRAYOFSTRUCT_FETCH_FLOAT"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_STR)\s = "ARRAYOFSTRUCT_FETCH_STR"
+   gszATR(#ljARRAYOFSTRUCT_STORE_INT)\s = "ARRAYOFSTRUCT_STORE_INT"
+   gszATR(#ljARRAYOFSTRUCT_STORE_FLOAT)\s = "ARRAYOFSTRUCT_STORE_FLOAT"
+   gszATR(#ljARRAYOFSTRUCT_STORE_STR)\s = "ARRAYOFSTRUCT_STORE_STR"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_INT_LOPT)\s = "ARRAYOFSTRUCT_FETCH_INT_LOPT"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_FLOAT_LOPT)\s = "ARRAYOFSTRUCT_FETCH_FLOAT_LOPT"
+   gszATR(#ljARRAYOFSTRUCT_FETCH_STR_LOPT)\s = "ARRAYOFSTRUCT_FETCH_STR_LOPT"
+   gszATR(#ljARRAYOFSTRUCT_STORE_INT_LOPT)\s = "ARRAYOFSTRUCT_STORE_INT_LOPT"
+   gszATR(#ljARRAYOFSTRUCT_STORE_FLOAT_LOPT)\s = "ARRAYOFSTRUCT_STORE_FLOAT_LOPT"
+   gszATR(#ljARRAYOFSTRUCT_STORE_STR_LOPT)\s = "ARRAYOFSTRUCT_STORE_STR_LOPT"
+   gszATR(#ljGETSTRUCTADDR)\s = "GETSTRUCTADDR"
+   gszATR(#ljPTRSTRUCTFETCH_INT)\s = "PTRSTRUCTFETCH_INT"
+   gszATR(#ljPTRSTRUCTFETCH_FLOAT)\s = "PTRSTRUCTFETCH_FLOAT"
+   gszATR(#ljPTRSTRUCTFETCH_STR)\s = "PTRSTRUCTFETCH_STR"
+   gszATR(#ljPTRSTRUCTSTORE_INT)\s = "PTRSTRUCTSTORE_INT"
+   gszATR(#ljPTRSTRUCTSTORE_FLOAT)\s = "PTRSTRUCTSTORE_FLOAT"
+   gszATR(#ljPTRSTRUCTSTORE_STR)\s = "PTRSTRUCTSTORE_STR"
+   gszATR(#ljPTRSTRUCTSTORE_INT_LOPT)\s = "PTRSTRUCTSTORE_INT_LOPT"
+   gszATR(#ljPTRSTRUCTSTORE_FLOAT_LOPT)\s = "PTRSTRUCTSTORE_FLOAT_LOPT"
+   gszATR(#ljPTRSTRUCTSTORE_STR_LOPT)\s = "PTRSTRUCTSTORE_STR_LOPT"
+   gszATR(#ljPTRSTRUCTFETCH_INT_LPTR)\s = "PTRSTRUCTFETCH_INT_LPTR"
+   gszATR(#ljPTRSTRUCTFETCH_FLOAT_LPTR)\s = "PTRSTRUCTFETCH_FLOAT_LPTR"
+   gszATR(#ljPTRSTRUCTFETCH_STR_LPTR)\s = "PTRSTRUCTFETCH_STR_LPTR"
+   gszATR(#ljPTRSTRUCTSTORE_INT_LPTR)\s = "PTRSTRUCTSTORE_INT_LPTR"
+   gszATR(#ljPTRSTRUCTSTORE_FLOAT_LPTR)\s = "PTRSTRUCTSTORE_FLOAT_LPTR"
+   gszATR(#ljPTRSTRUCTSTORE_STR_LPTR)\s = "PTRSTRUCTSTORE_STR_LPTR"
+   gszATR(#ljPTRSTRUCTSTORE_INT_LPTR_LOPT)\s = "PTRSTRUCTSTORE_INT_LPTR_LOPT"
+   gszATR(#ljPTRSTRUCTSTORE_FLOAT_LPTR_LOPT)\s = "PTRSTRUCTSTORE_FLOAT_LPTR_LOPT"
+   gszATR(#ljPTRSTRUCTSTORE_STR_LPTR_LOPT)\s = "PTRSTRUCTSTORE_STR_LPTR_LOPT"
+   gszATR(#ljARRAYRESIZE)\s = "ARRAYRESIZE"
+   gszATR(#ljSTRUCTCOPY)\s = "STRUCTCOPY"
+   gszATR(#ljSTRUCT_ALLOC)\s = "STRUCT_ALLOC"
+   gszATR(#ljSTRUCT_ALLOC_LOCAL)\s = "STRUCT_ALLOC_LOCAL"
+   gszATR(#ljSTRUCT_FREE)\s = "STRUCT_FREE"
+   gszATR(#ljSTRUCT_FETCH_INT)\s = "STRUCT_FETCH_INT"
+   gszATR(#ljSTRUCT_FETCH_FLOAT)\s = "STRUCT_FETCH_FLOAT"
+   gszATR(#ljSTRUCT_FETCH_INT_LOCAL)\s = "STRUCT_FETCH_INT_LOCAL"
+   gszATR(#ljSTRUCT_FETCH_FLOAT_LOCAL)\s = "STRUCT_FETCH_FLOAT_LOCAL"
+   gszATR(#ljSTRUCT_STORE_INT)\s = "STRUCT_STORE_INT"
+   gszATR(#ljSTRUCT_STORE_FLOAT)\s = "STRUCT_STORE_FLOAT"
+   gszATR(#ljSTRUCT_STORE_INT_LOCAL)\s = "STRUCT_STORE_INT_LOCAL"
+   gszATR(#ljSTRUCT_STORE_FLOAT_LOCAL)\s = "STRUCT_STORE_FLOAT_LOCAL"
+   gszATR(#ljSTRUCT_FETCH_STR)\s = "STRUCT_FETCH_STR"
+   gszATR(#ljSTRUCT_FETCH_STR_LOCAL)\s = "STRUCT_FETCH_STR_LOCAL"
+   gszATR(#ljSTRUCT_STORE_STR)\s = "STRUCT_STORE_STR"
+   gszATR(#ljSTRUCT_STORE_STR_LOCAL)\s = "STRUCT_STORE_STR_LOCAL"
+   gszATR(#ljSTRUCT_COPY_PTR)\s = "STRUCT_COPY_PTR"
+   gszATR(#ljFETCH_STRUCT)\s = "FETCH_STRUCT"
+   gszATR(#ljLFETCH_STRUCT)\s = "LFETCH_STRUCT"
+   gszATR(#ljList)\s = "LIST"
+   gszATR(#ljLIST_NEW)\s = "LIST_NEW"
+   gszATR(#ljLIST_ADD)\s = "LIST_ADD"
+   gszATR(#ljLIST_INSERT)\s = "LIST_INSERT"
+   gszATR(#ljLIST_DELETE)\s = "LIST_DELETE"
+   gszATR(#ljLIST_CLEAR)\s = "LIST_CLEAR"
+   gszATR(#ljLIST_SIZE)\s = "LIST_SIZE"
+   gszATR(#ljLIST_FIRST)\s = "LIST_FIRST"
+   gszATR(#ljLIST_LAST)\s = "LIST_LAST"
+   gszATR(#ljLIST_NEXT)\s = "LIST_NEXT"
+   gszATR(#ljLIST_PREV)\s = "LIST_PREV"
+   gszATR(#ljLIST_SELECT)\s = "LIST_SELECT"
+   gszATR(#ljLIST_INDEX)\s = "LIST_INDEX"
+   gszATR(#ljLIST_GET)\s = "LIST_GET"
+   gszATR(#ljLIST_SET)\s = "LIST_SET"
+   gszATR(#ljLIST_RESET)\s = "LIST_RESET"
+   gszATR(#ljLIST_SORT)\s = "LIST_SORT"
+   gszATR(#ljLIST_ADD_INT)\s = "LIST_ADD_INT"
+   gszATR(#ljLIST_ADD_FLOAT)\s = "LIST_ADD_FLOAT"
+   gszATR(#ljLIST_ADD_STR)\s = "LIST_ADD_STR"
+   gszATR(#ljLIST_INSERT_INT)\s = "LIST_INSERT_INT"
+   gszATR(#ljLIST_INSERT_FLOAT)\s = "LIST_INSERT_FLOAT"
+   gszATR(#ljLIST_INSERT_STR)\s = "LIST_INSERT_STR"
+   gszATR(#ljLIST_GET_INT)\s = "LIST_GET_INT"
+   gszATR(#ljLIST_GET_FLOAT)\s = "LIST_GET_FLOAT"
+   gszATR(#ljLIST_GET_STR)\s = "LIST_GET_STR"
+   gszATR(#ljLIST_SET_INT)\s = "LIST_SET_INT"
+   gszATR(#ljLIST_SET_FLOAT)\s = "LIST_SET_FLOAT"
+   gszATR(#ljLIST_SET_STR)\s = "LIST_SET_STR"
+   gszATR(#ljLIST_ADD_STRUCT)\s = "LIST_ADD_STRUCT"
+   gszATR(#ljLIST_GET_STRUCT)\s = "LIST_GET_STRUCT"
+   gszATR(#ljLIST_SET_STRUCT)\s = "LIST_SET_STRUCT"
+   gszATR(#ljMap)\s = "MAP"
+   gszATR(#ljMAP_NEW)\s = "MAP_NEW"
+   gszATR(#ljMAP_PUT)\s = "MAP_PUT"
+   gszATR(#ljMAP_GET)\s = "MAP_GET"
+   gszATR(#ljMAP_DELETE)\s = "MAP_DELETE"
+   gszATR(#ljMAP_CLEAR)\s = "MAP_CLEAR"
+   gszATR(#ljMAP_SIZE)\s = "MAP_SIZE"
+   gszATR(#ljMAP_CONTAINS)\s = "MAP_CONTAINS"
+   gszATR(#ljMAP_RESET)\s = "MAP_RESET"
+   gszATR(#ljMAP_NEXT)\s = "MAP_NEXT"
+   gszATR(#ljMAP_KEY)\s = "MAP_KEY"
+   gszATR(#ljMAP_VALUE)\s = "MAP_VALUE"
+   gszATR(#ljMAP_PUT_INT)\s = "MAP_PUT_INT"
+   gszATR(#ljMAP_PUT_FLOAT)\s = "MAP_PUT_FLOAT"
+   gszATR(#ljMAP_PUT_STR)\s = "MAP_PUT_STR"
+   gszATR(#ljMAP_GET_INT)\s = "MAP_GET_INT"
+   gszATR(#ljMAP_GET_FLOAT)\s = "MAP_GET_FLOAT"
+   gszATR(#ljMAP_GET_STR)\s = "MAP_GET_STR"
+   gszATR(#ljMAP_VALUE_INT)\s = "MAP_VALUE_INT"
+   gszATR(#ljMAP_VALUE_FLOAT)\s = "MAP_VALUE_FLOAT"
+   gszATR(#ljMAP_VALUE_STR)\s = "MAP_VALUE_STR"
+   gszATR(#ljMAP_PUT_STRUCT)\s = "MAP_PUT_STRUCT"
+   gszATR(#ljMAP_GET_STRUCT)\s = "MAP_GET_STRUCT"
+   gszATR(#ljMAP_VALUE_STRUCT)\s = "MAP_VALUE_STRUCT"
+   gszATR(#ljLIST_ADD_STRUCT_PTR)\s = "LIST_ADD_STRUCT_PTR"
+   gszATR(#ljLIST_GET_STRUCT_PTR)\s = "LIST_GET_STRUCT_PTR"
+   gszATR(#ljMAP_PUT_STRUCT_PTR)\s = "MAP_PUT_STRUCT_PTR"
+   gszATR(#ljMAP_GET_STRUCT_PTR)\s = "MAP_GET_STRUCT_PTR"
+   gszATR(#ljFOREACH_LIST_INIT)\s = "FOREACH_LIST_INIT"
+   gszATR(#ljFOREACH_LIST_NEXT)\s = "FOREACH_LIST_NEXT"
+   gszATR(#ljFOREACH_MAP_INIT)\s = "FOREACH_MAP_INIT"
+   gszATR(#ljFOREACH_MAP_NEXT)\s = "FOREACH_MAP_NEXT"
+   gszATR(#ljFOREACH_END)\s = "FOREACH_END"
+   gszATR(#ljFOREACH_LIST_GET_INT)\s = "FOREACH_LIST_GET_INT"
+   gszATR(#ljFOREACH_LIST_GET_FLOAT)\s = "FOREACH_LIST_GET_FLOAT"
+   gszATR(#ljFOREACH_LIST_GET_STR)\s = "FOREACH_LIST_GET_STR"
+   gszATR(#ljFOREACH_MAP_KEY)\s = "FOREACH_MAP_KEY"
+   gszATR(#ljFOREACH_MAP_VALUE_INT)\s = "FOREACH_MAP_VALUE_INT"
+   gszATR(#ljFOREACH_MAP_VALUE_FLOAT)\s = "FOREACH_MAP_VALUE_FLOAT"
+   gszATR(#ljFOREACH_MAP_VALUE_STR)\s = "FOREACH_MAP_VALUE_STR"
+   gszATR(#ljPUSH_SLOT)\s = "PUSH_SLOT"
+   gszATR(#ljPRTPTR_INT)\s = "PRTPTR_INT"
+   gszATR(#ljPRTPTR_FLOAT)\s = "PRTPTR_FLOAT"
+   gszATR(#ljPRTPTR_STR)\s = "PRTPTR_STR"
+   gszATR(#ljPRTPTR_ARRAY_INT)\s = "PRTPTR_ARRAY_INT"
+   gszATR(#ljPRTPTR_ARRAY_FLOAT)\s = "PRTPTR_ARRAY_FLOAT"
+   gszATR(#ljPRTPTR_ARRAY_STR)\s = "PRTPTR_ARRAY_STR"
+   gszATR(#ljPTRFETCH_VAR_INT)\s = "PTRFETCH_VAR_INT"
+   gszATR(#ljPTRFETCH_VAR_FLOAT)\s = "PTRFETCH_VAR_FLOAT"
+   gszATR(#ljPTRFETCH_VAR_STR)\s = "PTRFETCH_VAR_STR"
+   gszATR(#ljPTRFETCH_ARREL_INT)\s = "PTRFETCH_ARREL_INT"
+   gszATR(#ljPTRFETCH_ARREL_FLOAT)\s = "PTRFETCH_ARREL_FLOAT"
+   gszATR(#ljPTRFETCH_ARREL_STR)\s = "PTRFETCH_ARREL_STR"
+   gszATR(#ljPTRSTORE_VAR_INT)\s = "PTRSTORE_VAR_INT"
+   gszATR(#ljPTRSTORE_VAR_FLOAT)\s = "PTRSTORE_VAR_FLOAT"
+   gszATR(#ljPTRSTORE_VAR_STR)\s = "PTRSTORE_VAR_STR"
+   gszATR(#ljPTRSTORE_ARREL_INT)\s = "PTRSTORE_ARREL_INT"
+   gszATR(#ljPTRSTORE_ARREL_FLOAT)\s = "PTRSTORE_ARREL_FLOAT"
+   gszATR(#ljPTRSTORE_ARREL_STR)\s = "PTRSTORE_ARREL_STR"
+   gszATR(#ljPTRADD_INT)\s = "PTRADD_INT"
+   gszATR(#ljPTRADD_FLOAT)\s = "PTRADD_FLOAT"
+   gszATR(#ljPTRADD_STRING)\s = "PTRADD_STRING"
+   gszATR(#ljPTRADD_ARRAY)\s = "PTRADD_ARRAY"
+   gszATR(#ljPTRSUB_INT)\s = "PTRSUB_INT"
+   gszATR(#ljPTRSUB_FLOAT)\s = "PTRSUB_FLOAT"
+   gszATR(#ljPTRSUB_STRING)\s = "PTRSUB_STRING"
+   gszATR(#ljPTRSUB_ARRAY)\s = "PTRSUB_ARRAY"
+   gszATR(#ljPTRINC_INT)\s = "PTRINC_INT"
+   gszATR(#ljPTRINC_FLOAT)\s = "PTRINC_FLOAT"
+   gszATR(#ljPTRINC_STRING)\s = "PTRINC_STRING"
+   gszATR(#ljPTRINC_ARRAY)\s = "PTRINC_ARRAY"
+   gszATR(#ljPTRDEC_INT)\s = "PTRDEC_INT"
+   gszATR(#ljPTRDEC_FLOAT)\s = "PTRDEC_FLOAT"
+   gszATR(#ljPTRDEC_STRING)\s = "PTRDEC_STRING"
+   gszATR(#ljPTRDEC_ARRAY)\s = "PTRDEC_ARRAY"
+   gszATR(#ljPTRINC_PRE_INT)\s = "PTRINC_PRE_INT"
+   gszATR(#ljPTRINC_PRE_FLOAT)\s = "PTRINC_PRE_FLOAT"
+   gszATR(#ljPTRINC_PRE_STRING)\s = "PTRINC_PRE_STRING"
+   gszATR(#ljPTRINC_PRE_ARRAY)\s = "PTRINC_PRE_ARRAY"
+   gszATR(#ljPTRDEC_PRE_INT)\s = "PTRDEC_PRE_INT"
+   gszATR(#ljPTRDEC_PRE_FLOAT)\s = "PTRDEC_PRE_FLOAT"
+   gszATR(#ljPTRDEC_PRE_STRING)\s = "PTRDEC_PRE_STRING"
+   gszATR(#ljPTRDEC_PRE_ARRAY)\s = "PTRDEC_PRE_ARRAY"
+   gszATR(#ljPTRINC_POST_INT)\s = "PTRINC_POST_INT"
+   gszATR(#ljPTRINC_POST_FLOAT)\s = "PTRINC_POST_FLOAT"
+   gszATR(#ljPTRINC_POST_STRING)\s = "PTRINC_POST_STRING"
+   gszATR(#ljPTRINC_POST_ARRAY)\s = "PTRINC_POST_ARRAY"
+   gszATR(#ljPTRDEC_POST_INT)\s = "PTRDEC_POST_INT"
+   gszATR(#ljPTRDEC_POST_FLOAT)\s = "PTRDEC_POST_FLOAT"
+   gszATR(#ljPTRDEC_POST_STRING)\s = "PTRDEC_POST_STRING"
+   gszATR(#ljPTRDEC_POST_ARRAY)\s = "PTRDEC_POST_ARRAY"
+   gszATR(#ljPTRADD_ASSIGN_INT)\s = "PTRADD_ASSIGN_INT"
+   gszATR(#ljPTRADD_ASSIGN_FLOAT)\s = "PTRADD_ASSIGN_FLOAT"
+   gszATR(#ljPTRADD_ASSIGN_STRING)\s = "PTRADD_ASSIGN_STRING"
+   gszATR(#ljPTRADD_ASSIGN_ARRAY)\s = "PTRADD_ASSIGN_ARRAY"
+   gszATR(#ljPTRSUB_ASSIGN_INT)\s = "PTRSUB_ASSIGN_INT"
+   gszATR(#ljPTRSUB_ASSIGN_FLOAT)\s = "PTRSUB_ASSIGN_FLOAT"
+   gszATR(#ljPTRSUB_ASSIGN_STRING)\s = "PTRSUB_ASSIGN_STRING"
+   gszATR(#ljPTRSUB_ASSIGN_ARRAY)\s = "PTRSUB_ASSIGN_ARRAY"
+   gszATR(#ljPTRFETCH_LVAR_INT)\s = "PTRFETCH_LVAR_INT"
+   gszATR(#ljPTRFETCH_LVAR_FLOAT)\s = "PTRFETCH_LVAR_FLOAT"
+   gszATR(#ljPTRFETCH_LVAR_STR)\s = "PTRFETCH_LVAR_STR"
+   gszATR(#ljPTRFETCH_LARREL_INT)\s = "PTRFETCH_LARREL_INT"
+   gszATR(#ljPTRFETCH_LARREL_FLOAT)\s = "PTRFETCH_LARREL_FLOAT"
+   gszATR(#ljPTRFETCH_LARREL_STR)\s = "PTRFETCH_LARREL_STR"
+   gszATR(#ljPTRSTORE_LVAR_INT)\s = "PTRSTORE_LVAR_INT"
+   gszATR(#ljPTRSTORE_LVAR_FLOAT)\s = "PTRSTORE_LVAR_FLOAT"
+   gszATR(#ljPTRSTORE_LVAR_STR)\s = "PTRSTORE_LVAR_STR"
+   gszATR(#ljPTRSTORE_LARREL_INT)\s = "PTRSTORE_LARREL_INT"
+   gszATR(#ljPTRSTORE_LARREL_FLOAT)\s = "PTRSTORE_LARREL_FLOAT"
+   gszATR(#ljPTRSTORE_LARREL_STR)\s = "PTRSTORE_LARREL_STR"
+   gszATR(#ljEOF)\s = "EOF"
+EndMacro
 
-   Data.s   "IF"
-   Data.i   0, 0
-   Data.s   "ELSE"
-   Data.i   0, 0
-   Data.s   "WHILE"
-   Data.i   0, 0
-   ; V1.024.0: Control flow tokens
-   Data.s   "FOR"
-   Data.i   0, 0
-   Data.s   "SWITCH"
-   Data.i   0, 0
-   Data.s   "CASE"
-   Data.i   0, 0
-   Data.s   "DEFAULT"
-   Data.i   0, 0
-   Data.s   "BREAK"
-   Data.i   0, 0
-   Data.s   "CONTINUE"
-   Data.i   0, 0
-   Data.s   "JZ"
-   Data.i   0, 0
-   Data.s   "JMP"
-   Data.i   0, 0
-   Data.s   "NEG"
-   Data.i   #ljFLOATNEG, 0
-   Data.s   "FLNEG"
-   Data.i   #ljFLOATNEG, 0
-   Data.s   "NOT"
-   Data.i   0, 0
-   Data.s   "ASSIGN"
-   Data.i   0, 0
-
-   ; Compound assignment and increment/decrement operators
-   Data.s   "ADD_ASSIGN"
-   Data.i   0, 0
-   Data.s   "SUB_ASSIGN"
-   Data.i   0, 0
-   Data.s   "MUL_ASSIGN"
-   Data.i   0, 0
-   Data.s   "DIV_ASSIGN"
-   Data.i   0, 0
-   Data.s   "MOD_ASSIGN"
-   Data.i   0, 0
-   Data.s   "INC"
-   Data.i   0, 0
-   Data.s   "DEC"
-   Data.i   0, 0
-   Data.s   "PRE_INC"
-   Data.i   0, 0
-   Data.s   "PRE_DEC"
-   Data.i   0, 0
-   Data.s   "POST_INC"
-   Data.i   0, 0
-   Data.s   "POST_DEC"
-   Data.i   0, 0
-
-   Data.s   "ADD"
-   Data.i   #ljFLOATADD, #ljSTRADD
-   Data.s   "SUB"
-   Data.i   #ljFLOATSUB, 0
-   Data.s   "MUL"
-   Data.i   #ljFLOATMUL, 0
-   Data.s   "DIV"
-   Data.i   #ljFLOATDIV, 0
-   Data.s   "FLADD"
-   Data.i   #ljFLOATADD, #ljSTRADD
-   Data.s   "FLSUB"
-   Data.i   #ljFLOATSUB, 0
-   Data.s   "FLMUL"
-   Data.i   #ljFLOATMUL, 0
-   Data.s   "FLDIV"
-   Data.i   #ljFLOATDIV, 0
-   Data.s   "STRADD"
-   Data.i   #ljFLOATADD, #ljSTRADD
-   Data.s   "FTOS"
-   Data.i   0, 0
-   Data.s   "ITOS"
-   Data.i   0, 0
-   Data.s   "ITOF"
-   Data.i   0, 0
-   Data.s   "FTOI"
-   Data.i   0, 0
-   Data.s   "STOF"
-   Data.i   0, 0
-   Data.s   "STOI"
-   Data.i   0, 0
-
-   Data.s   "OR"
-   Data.i   0, 0
-   Data.s   "AND"
-   Data.i   0, 0
-   Data.s   "XOR"
-   Data.i   0, 0
-   Data.s   "MOD"
-   Data.i   0, 0
-   
-   Data.s   "EQ"
-   Data.i   #ljFLOATEQ, 0
-   Data.s   "NE"
-   Data.i   #ljFLOATNE, 0
-   Data.s   "LTE"
-   Data.i   #ljFLOATLE, 0
-   Data.s   "GTE"
-   Data.i   #ljFLOATGE, 0
-   Data.s   "GT"
-   Data.i   #ljFLOATGR, 0
-   Data.s   "LT"
-   Data.i   #ljFLOATLESS, 0
-   Data.s   "FLEQ"
-   Data.i   0, 0
-   Data.s   "FLNE"
-   Data.i   0, 0
-   Data.s   "FLLTE"
-   Data.i   0, 0
-   Data.s   "FLGTE"
-   Data.i   0, 0
-   Data.s   "FLGT"
-   Data.i   0, 0
-   Data.s   "FLLT"
-   Data.i   0, 0
-
-   ; V1.023.30: String comparison opcodes
-   Data.s   "STREQ"
-   Data.i   0, 0
-   Data.s   "STRNE"
-   Data.i   0, 0
-
-   Data.s   "MOV"
-   Data.i   #ljMOVF, #ljMOVS
-   Data.s   "FETCH"
-   Data.i   #ljFETCHF, #ljFETCHS
-   Data.s   "POP"
-   Data.i   #ljPOPF, #ljPOPS
-   Data.s   "POPS"
-   Data.i   0, 0
-   Data.s   "POPF"
-   Data.i   0, 0
-   Data.s   "PUSH"
-   Data.i   #ljPUSHF, #ljPUSHS
-   Data.s   "PUSHS"
-   Data.i   0, 0
-   Data.s   "PUSHF"
-   Data.i   0, 0
-   Data.s   "PUSH_IMM"        ; V1.031.113: Push immediate value
-   Data.i   0, 0
-   Data.s   "STORE"
-   Data.i   #ljSTOREF, #ljSTORES
-   Data.s   "HALT"
-   Data.i   0, 0
-   
-   Data.s   "PRINT"
-   Data.i   #ljPRTF, #ljPRTS
-   Data.s   "PRTC"
-   Data.i   #ljPRTF, #ljPRTS
-   Data.s   "PRTI"
-   Data.i   #ljPRTF, #ljPRTS
-   Data.s   "PRTF"
-   Data.i   #ljPRTF, #ljPRTS
-   Data.s   "PRTS"
-   Data.i   #ljPRTF, #ljPRTS
-
-   Data.s   "LeftBrace"
-   Data.i   0, 0
-   Data.s   "RightBrace"
-   Data.i   0, 0
-   Data.s   "LeftParent"
-   Data.i   0, 0
-   Data.s   "RightParent"
-   Data.i   0, 0
-   Data.s   "LeftBracket"
-   Data.i   0, 0
-   Data.s   "RightBracket"
-   Data.i   0, 0
-   Data.s   "SemiColon"
-   Data.i   0, 0
-   Data.s   "Comma"
-   Data.i   0, 0
-   Data.s   "Backslash"
-   Data.i   0, 0
-   Data.s   "function"
-   Data.i   0, 0
-   Data.s   "RET"
-   Data.i   #ljReturnF, #ljReturnS
-   Data.s   "RETF"
-   Data.i   0, 0
-   Data.s   "RETS"
-   Data.i   0, 0
-   Data.s   "CALL"
-   Data.i   0, 0
-   Data.s   "CALL0"         ; V1.033.12: Optimized 0-param call
-   Data.i   0, 0
-   Data.s   "CALL1"         ; V1.033.12: Optimized 1-param call
-   Data.i   0, 0
-   Data.s   "CALL2"         ; V1.033.12: Optimized 2-param call
-   Data.i   0, 0
-   Data.s   "ARRAYINFO"     ; V1.031.105: Local array info (i=paramOffset, j=arraySize)
-   Data.i   0, 0
-
-   Data.s   "Unknown"
-   Data.i   0, 0
-   Data.s   "NOOP"
-   Data.i   0, 0
-   Data.s   "OP"
-   Data.i   0, 0
-   Data.s   "SEQ"
-   Data.i   0, 0
-   Data.s   "Keyword"
-   Data.i   0, 0
-
-   Data.s   "TERNARY"
-   Data.i   0, 0
-   Data.s   "QUESTION"
-   Data.i   0, 0
-   Data.s   "COLON"
-   Data.i   0, 0
-   Data.s   "TENIF"
-   Data.i   0, 0
-   Data.s   "TENELSE"
-   Data.i   0, 0
-   Data.s   "NOOPIF"
-   Data.i   0, 0
-
-   ; V1.024.0: New opcodes for switch statement
-   Data.s   "DUP"
-   Data.i   0, 0
-   Data.s   "DUP_I"
-   Data.i   0, 0
-   Data.s   "DUP_F"
-   Data.i   0, 0
-   Data.s   "DUP_S"
-   Data.i   0, 0
-   Data.s   "JNZ"
-   Data.i   0, 0
-   Data.s   "DROP"
-   Data.i   0, 0
-
-   Data.s   "MOVS"
-   Data.i   0, 0
-   Data.s   "MOVF"
-   Data.i   0, 0
-   Data.s   "FETCHS"
-   Data.i   0, 0
-   Data.s   "FETCHF"
-   Data.i   0, 0
-   Data.s   "STORES"
-   Data.i   0, 0
-   Data.s   "STOREF"
-   Data.i   0, 0
-
-   ; Local variable opcodes (frame-relative, no flag checks)
-   Data.s   "LMOV"
-   Data.i   #ljLMOVF, #ljLMOVS
-   Data.s   "LMOVS"
-   Data.i   0, 0
-   Data.s   "LMOVF"
-   Data.i   0, 0
-   Data.s   "LFETCH"
-   Data.i   #ljLFETCHF, #ljLFETCHS
-   Data.s   "LFETCHS"
-   Data.i   0, 0
-   Data.s   "LFETCHF"
-   Data.i   0, 0
-   Data.s   "LSTORE"
-   Data.i   #ljLSTOREF, #ljLSTORES
-   Data.s   "LSTORES"
-   Data.i   0, 0
-   Data.s   "LSTOREF"
-   Data.i   0, 0
-
-   ; V1.022.31: Cross-locality MOV opcodes
-   Data.s   "LGMOV"
-   Data.i   #ljLGMOVF, #ljLGMOVS
-   Data.s   "LGMOVS"
-   Data.i   0, 0
-   Data.s   "LGMOVF"
-   Data.i   0, 0
-   Data.s   "LLMOV"
-   Data.i   #ljLLMOVF, #ljLLMOVS
-   Data.s   "LLMOVS"
-   Data.i   0, 0
-   Data.s   "LLMOVF"
-   Data.i   0, 0
-
-   ; In-place increment/decrement opcodes
-   Data.s   "INC_VAR"
-   Data.i   0, 0
-   Data.s   "DEC_VAR"
-   Data.i   0, 0
-   Data.s   "INC_VAR_PRE"
-   Data.i   0, 0
-   Data.s   "DEC_VAR_PRE"
-   Data.i   0, 0
-   Data.s   "INC_VAR_POST"
-   Data.i   0, 0
-   Data.s   "DEC_VAR_POST"
-   Data.i   0, 0
-   Data.s   "LINC_VAR"
-   Data.i   0, 0
-   Data.s   "LDEC_VAR"
-   Data.i   0, 0
-   Data.s   "LINCV_PRE"
-   Data.i   0, 0
-   Data.s   "LDECV_PRE"
-   Data.i   0, 0
-   Data.s   "LINCV_POST"
-   Data.i   0, 0
-   Data.s   "LDECV_POST"
-   Data.i   0, 0
-
-   ; Pointer increment/decrement opcodes (V1.20.36)
-   Data.s   "INCP"
-   Data.i   0, 0
-   Data.s   "DECP"
-   Data.i   0, 0
-   Data.s   "INCP_PRE"
-   Data.i   0, 0
-   Data.s   "DECP_PRE"
-   Data.i   0, 0
-   Data.s   "INCP_POST"
-   Data.i   0, 0
-   Data.s   "DECP_POST"
-   Data.i   0, 0
-
-   ; V1.029.84: Struct storage opcode
-   Data.s   "STOSTRUCT"
-   Data.i   0, 0
-
-   ; In-place compound assignment opcodes (renamed V1.029.61)
-   Data.s   "ADDASS"
-   Data.i   0, 0
-   Data.s   "SUBASS"
-   Data.i   0, 0
-   Data.s   "MULASS"
-   Data.i   0, 0
-   Data.s   "DIVASS"
-   Data.i   0, 0
-   Data.s   "MODASS"
-   Data.i   0, 0
-   Data.s   "ADDASSF"
-   Data.i   0, 0
-   Data.s   "SUBASSF"
-   Data.i   0, 0
-   Data.s   "MULASSF"
-   Data.i   0, 0
-   Data.s   "DIVASSF"
-   Data.i   0, 0
-   Data.s   "ADDPTRA"
-   Data.i   0, 0
-   Data.s   "SUBPTRA"
-   Data.i   0, 0
-
-   ; Built-in functions
-   Data.s   "RANDOM"
-   Data.i   0, 0
-   Data.s   "ABS"
-   Data.i   0, 0
-   Data.s   "MIN"
-   Data.i   0, 0
-   Data.s   "MAX"
-   Data.i   0, 0
-   Data.s   "ASSERT_EQ"
-   Data.i   0, 0
-   Data.s   "ASSERT_FLT"
-   Data.i   0, 0
-   Data.s   "ASSERT_STR"
-   Data.i   0, 0
-   Data.s   "SQRT"
-   Data.i   0, 0
-   Data.s   "POW"
-   Data.i   0, 0
-   Data.s   "LEN"
-   Data.i   0, 0
-   Data.s   "STRCMP"
-   Data.i   0, 0
-   Data.s   "GETC"
-   Data.i   0, 0
-
-   ; Array operations
-   Data.s   "ARRIDX"
-   Data.i   0, 0
-   Data.s   "ARRFETCH"
-   Data.i   #ljARRAYFETCH_INT, #ljARRAYFETCH_STR
-   Data.s   "IFETCHAR"
-   Data.i   0, 0
-   Data.s   "FFETCHAR"
-   Data.i   0, 0
-   Data.s   "SFETCHAR"
-   Data.i   0, 0
-   Data.s   "ARRSTORE"
-   Data.i   #ljARRAYSTORE_INT, #ljARRAYSTORE_STR
-   Data.s   "IARRSTORE"
-   Data.i   0, 0
-   Data.s   "FARRSTORE"
-   Data.i   0, 0
-   Data.s   "SARRSTORE"
-   Data.i   0, 0
-
-   ; Specialized array fetch opcodes (renamed V1.029.61 - FCHR=fetch char)
-   Data.s   "GFCHR_O"
-   Data.i   0, 0
-   Data.s   "GFCHR_K"
-   Data.i   0, 0
-   Data.s   "LFCHR_O"
-   Data.i   0, 0
-   Data.s   "LFCHR_K"
-   Data.i   0, 0
-   Data.s   "GFCHRF_O"
-   Data.i   0, 0
-   Data.s   "GFCHRF_K"
-   Data.i   0, 0
-   Data.s   "LFCHRF_O"
-   Data.i   0, 0
-   Data.s   "LFCHRF_K"
-   Data.i   0, 0
-   Data.s   "GFCHRS_O"
-   Data.i   0, 0
-   Data.s   "GFCHRS_K"
-   Data.i   0, 0
-   Data.s   "LFCHRS_O"
-   Data.i   0, 0
-   Data.s   "LFCHRS_K"
-   Data.i   0, 0
-
-   ; Specialized array store opcodes (renamed V1.029.61 - STAR=store array)
-   Data.s   "GSTAR_OO"
-   Data.i   0, 0
-   Data.s   "GSTAR_OS"
-   Data.i   0, 0
-   Data.s   "GSTAR_SO"
-   Data.i   0, 0
-   Data.s   "GSTAR_SS"
-   Data.i   0, 0
-   Data.s   "LSTAR_OO"
-   Data.i   0, 0
-   Data.s   "LSTAR_OS"
-   Data.i   0, 0
-   Data.s   "LSTAR_SO"
-   Data.i   0, 0
-   Data.s   "LSTAR_SS"
-   Data.i   0, 0
-   Data.s   "GSTARF_OO"
-   Data.i   0, 0
-   Data.s   "GSTARF_OS"
-   Data.i   0, 0
-   Data.s   "GSTARF_SO"
-   Data.i   0, 0
-   Data.s   "GSTARF_SS"
-   Data.i   0, 0
-   Data.s   "LSTARF_OO"
-   Data.i   0, 0
-   Data.s   "LSTARF_OS"
-   Data.i   0, 0
-   Data.s   "LSTARF_SO"
-   Data.i   0, 0
-   Data.s   "LSTARF_SS"
-   Data.i   0, 0
-   Data.s   "GSTARS_OO"
-   Data.i   0, 0
-   Data.s   "GSTARS_OS"
-   Data.i   0, 0
-   Data.s   "GSTARS_SO"
-   Data.i   0, 0
-   Data.s   "GSTARS_SS"
-   Data.i   0, 0
-   Data.s   "LSTARS_OO"
-   Data.i   0, 0
-   Data.s   "LSTARS_OS"
-   Data.i   0, 0
-   Data.s   "LSTARS_SO"
-   Data.i   0, 0
-   Data.s   "LSTARS_SS"
-   Data.i   0, 0
-
-   ; V1.022.114: OPT_LOPT opcodes (renamed V1.029.61)
-   Data.s   "GSTAR_OLO"
-   Data.i   0, 0
-   Data.s   "GSTARF_OLO"
-   Data.i   0, 0
-   Data.s   "GSTARS_OLO"
-   Data.i   0, 0
-
-   ; V1.022.115: LOCAL OPT_LOPT opcodes (renamed V1.029.61)
-   Data.s   "LSTAR_OLO"
-   Data.i   0, 0
-   Data.s   "LSTARF_OLO"
-   Data.i   0, 0
-   Data.s   "LSTARS_OLO"
-   Data.i   0, 0
-
-   ; V1.022.86: Local-Index Array Opcodes (renamed V1.029.61)
-   Data.s   "GFCHR_LO"
-   Data.i   0, 0
-   Data.s   "GFCHRF_LO"
-   Data.i   0, 0
-   Data.s   "GFCHRS_LO"
-   Data.i   0, 0
-   Data.s   "GSTAR_LOLO"
-   Data.i   0, 0
-   Data.s   "GSTAR_LOO"
-   Data.i   0, 0
-   Data.s   "GSTAR_LOS"
-   Data.i   0, 0
-   Data.s   "GSTARF_LOLO"
-   Data.i   0, 0
-   Data.s   "GSTARF_LOO"
-   Data.i   0, 0
-   Data.s   "GSTARF_LOS"
-   Data.i   0, 0
-   Data.s   "GSTARS_LOLO"
-   Data.i   0, 0
-   Data.s   "GSTARS_LOO"
-   Data.i   0, 0
-   Data.s   "GSTARS_LOS"
-   Data.i   0, 0
-
-   ; V1.022.113: Local-Index Array Opcodes for LOCAL arrays (renamed V1.029.61)
-   Data.s   "LFCHR_LO"
-   Data.i   0, 0
-   Data.s   "LFCHRF_LO"
-   Data.i   0, 0
-   Data.s   "LFCHRS_LO"
-   Data.i   0, 0
-   Data.s   "LSTAR_LOLO"
-   Data.i   0, 0
-   Data.s   "LSTAR_LOO"
-   Data.i   0, 0
-   Data.s   "LSTAR_LOS"
-   Data.i   0, 0
-   Data.s   "LSTARF_LOLO"
-   Data.i   0, 0
-   Data.s   "LSTARF_LOO"
-   Data.i   0, 0
-   Data.s   "LSTARF_LOS"
-   Data.i   0, 0
-   Data.s   "LSTARS_LOLO"
-   Data.i   0, 0
-   Data.s   "LSTARS_LOO"
-   Data.i   0, 0
-   Data.s   "LSTARS_LOS"
-   Data.i   0, 0
-
-   ; Pointer operations (renamed V1.029.61)
-   Data.s   "ADDR"
-   Data.i   0, 0
-   Data.s   "ADDRF"
-   Data.i   0, 0
-   Data.s   "ADDRS"
-   Data.i   0, 0
-   ; V1.027.2: Local variable address opcodes (renamed V1.029.61)
-   Data.s   "LADDR"
-   Data.i   0, 0
-   Data.s   "LADDRF"
-   Data.i   0, 0
-   Data.s   "LADDRS"
-   Data.i   0, 0
-   Data.s   "FETPTR"
-   Data.i   #ljPTRFETCH_FLOAT, #ljPTRFETCH_STR
-   Data.s   "FETPTR_I"
-   Data.i   0, 0
-   Data.s   "FETPTRF"
-   Data.i   0, 0
-   Data.s   "FETPTRS"
-   Data.i   0, 0
-   Data.s   "STOPTR"
-   Data.i   #ljPTRSTORE_FLOAT, #ljPTRSTORE_STR
-   Data.s   "STOPTR_I"
-   Data.i   0, 0
-   Data.s   "STOPTRF"
-   Data.i   0, 0
-   Data.s   "STOPTRS"
-   Data.i   0, 0
-   Data.s   "FLDPTR"
-   Data.i   0, 0
-   Data.s   "FLDPTRF"
-   Data.i   0, 0
-   Data.s   "FLDPTRS"
-   Data.i   0, 0
-   ; V1.022.44: AST node types for struct array field access (in enumeration, need entries)
-   Data.s   "SAFLD_I"
-   Data.i   0, 0
-   Data.s   "SAFLD_F"
-   Data.i   0, 0
-   Data.s   "SAFLD_S"
-   Data.i   0, 0
-   Data.s   "PTRADD"
-   Data.i   0, 0
-   Data.s   "PTRSUB"
-   Data.i   0, 0
-   Data.s   "ADDRFN"
-   Data.i   0, 0
-   Data.s   "CALLFP"
-   Data.i   0, 0
-
-   ; Array pointer opcodes (renamed V1.029.61)
-   Data.s   "ADDRAR"
-   Data.i   0, 0
-   Data.s   "ADDRARF"
-   Data.i   0, 0
-   Data.s   "ADDRARS"
-   Data.i   0, 0
-   ; V1.027.2: Local array address opcodes (renamed V1.029.61)
-   Data.s   "LADDRAR"
-   Data.i   0, 0
-   Data.s   "LADDRARF"
-   Data.i   0, 0
-   Data.s   "LADDRARS"
-   Data.i   0, 0
-
-   Data.s   "PRTPTR"
-   Data.i   0, 0
-
-   ; V1.20.27: Pointer-only opcodes (always copy metadata, no runtime checks)
-   Data.s   "PMOV"
-   Data.i   0, 0
-   Data.s   "PFETCH"
-   Data.i   0, 0
-   Data.s   "PSTORE"
-   Data.i   0, 0
-   Data.s   "PPOP"
-   Data.i   0, 0
-   Data.s   "PLFETCH"
-   Data.i   0, 0
-   Data.s   "PLSTORE"
-   Data.i   0, 0
-   Data.s   "PLMOV"
-   Data.i   0, 0
-
-   ; V1.18.63: Cast opcodes
-   Data.s   "CAST_INT"
-   Data.i   0, 0
-   Data.s   "CAST_FLT"
-   Data.i   0, 0
-   Data.s   "CAST_STR"
-   Data.i   0, 0
-
-   ; V1.021.0: Structure support (renamed V1.029.61)
-   Data.s   "STRUCT"
-   Data.i   0, 0
-   Data.s   "STFIELD"
-   Data.i   0, 0
-   Data.s   "INITST"
-   Data.i   0, 0
-
-   ; V1.022.0: Struct array field opcodes (renamed V1.029.61 - STAR=struct's array)
-   Data.s   "FETSTAR"
-   Data.i   0, 0
-   Data.s   "FETSTARF"
-   Data.i   0, 0
-   Data.s   "FETSTARS"
-   Data.i   0, 0
-   Data.s   "STOSTAR"
-   Data.i   0, 0
-   Data.s   "STOSTARF"
-   Data.i   0, 0
-   Data.s   "STOSTARS"
-   Data.i   0, 0
-
-   ; V1.022.44: Array of structs opcodes (renamed V1.029.61 - ARST=array's struct)
-   Data.s   "FETARST"
-   Data.i   0, 0
-   Data.s   "FETARSTF"
-   Data.i   0, 0
-   Data.s   "FETARSTS"
-   Data.i   0, 0
-   Data.s   "STOARST"
-   Data.i   0, 0
-   Data.s   "STOARSTF"
-   Data.i   0, 0
-   Data.s   "STOARSTS"
-   Data.i   0, 0
-
-   ; V1.022.118: Array of struct LOPT opcodes (renamed V1.029.61 - LI=local index)
-   Data.s   "FETARST_LI"
-   Data.i   0, 0
-   Data.s   "FETARSTF_LI"
-   Data.i   0, 0
-   Data.s   "FETARSTS_LI"
-   Data.i   0, 0
-   Data.s   "STOARST_LI"
-   Data.i   0, 0
-   Data.s   "STOARSTF_LI"
-   Data.i   0, 0
-   Data.s   "STOARSTS_LI"
-   Data.i   0, 0
-
-   ; V1.022.54: Struct pointer opcodes (renamed V1.029.61)
-   Data.s   "ADDRST"
-   Data.i   0, 0
-   Data.s   "FETPST"
-   Data.i   0, 0
-   Data.s   "FETPSTF"
-   Data.i   0, 0
-   Data.s   "FETPSTS"
-   Data.i   0, 0
-   Data.s   "STOPST"
-   Data.i   0, 0
-   Data.s   "STOPSTF"
-   Data.i   0, 0
-   Data.s   "STOPSTS"
-   Data.i   0, 0
-
-   ; V1.022.117: PTRSTRUCTSTORE LOPT opcodes (renamed V1.029.61 - LV=local value)
-   Data.s   "STOPST_LV"
-   Data.i   0, 0
-   Data.s   "STOPSTF_LV"
-   Data.i   0, 0
-   Data.s   "STOPSTS_LV"
-   Data.i   0, 0
-
-   ; V1.022.119: PTRSTRUCTFETCH LPTR opcodes (renamed V1.029.61 - L=local ptr)
-   Data.s   "LFETPST"
-   Data.i   0, 0
-   Data.s   "LFETPSTF"
-   Data.i   0, 0
-   Data.s   "LFETPSTS"
-   Data.i   0, 0
-
-   ; V1.022.119: PTRSTRUCTSTORE LPTR opcodes (renamed V1.029.61 - L=local ptr)
-   Data.s   "LSTOPST"
-   Data.i   0, 0
-   Data.s   "LSTOPSTF"
-   Data.i   0, 0
-   Data.s   "LSTOPSTS"
-   Data.i   0, 0
-
-   ; V1.022.119: PTRSTRUCTSTORE LPTR_LOPT opcodes (renamed V1.029.61 - L=local ptr, LV=local val)
-   Data.s   "LSTOPST_LV"
-   Data.i   0, 0
-   Data.s   "LSTOPSTF_LV"
-   Data.i   0, 0
-   Data.s   "LSTOPSTS_LV"
-   Data.i   0, 0
-
-   ; V1.022.64: Array resize opcode
-   Data.s   "ARRESIZE"
-   Data.i   0, 0
-
-   ; V1.022.65: Struct copy opcode
-   Data.s   "SCOPY"
-   Data.i   0, 0
-
-   ; V1.029.36: Struct pointer opcodes (renamed V1.029.61)
-   Data.s   "ALLOCST"
-   Data.i   0, 0
-   Data.s   "LALLOCST"
-   Data.i   0, 0
-   Data.s   "FREEST"
-   Data.i   0, 0
-   Data.s   "FETST"
-   Data.i   0, 0
-   Data.s   "FETSTF"
-   Data.i   0, 0
-   Data.s   "LFETST"
-   Data.i   0, 0
-   Data.s   "LFETSTF"
-   Data.i   0, 0
-   Data.s   "STOST"
-   Data.i   0, 0
-   Data.s   "STOSTF"
-   Data.i   0, 0
-   Data.s   "LSTOST"
-   Data.i   0, 0
-   Data.s   "LSTOSTF"
-   Data.i   0, 0
-   ; V1.029.55: String struct field opcodes (renamed V1.029.61)
-   Data.s   "FETSTS"
-   Data.i   0, 0
-   Data.s   "LFETSTS"
-   Data.i   0, 0
-   Data.s   "STOSTS"
-   Data.i   0, 0
-   Data.s   "LSTOSTS"
-   Data.i   0, 0
-   Data.s   "COPYSTP"
-   Data.i   0, 0
-   ; V1.029.38: Struct parameter passing (renamed V1.029.61)
-   Data.s   "FETST_P"
-   Data.i   0, 0
-   Data.s   "LFETST_P"
-   Data.i   0, 0
-
-   ; V1.026.0: List operations
-   Data.s   "List"
-   Data.i   0, 0
-   Data.s   "LIST_NEW"
-   Data.i   0, 0
-   Data.s   "LIST_ADD"
-   Data.i   0, 0
-   Data.s   "LIST_INSERT"
-   Data.i   0, 0
-   Data.s   "LIST_DELETE"
-   Data.i   0, 0
-   Data.s   "LIST_CLEAR"
-   Data.i   0, 0
-   Data.s   "LIST_SIZE"
-   Data.i   0, 0
-   Data.s   "LIST_FIRST"
-   Data.i   0, 0
-   Data.s   "LIST_LAST"
-   Data.i   0, 0
-   Data.s   "LIST_NEXT"
-   Data.i   0, 0
-   Data.s   "LIST_PREV"
-   Data.i   0, 0
-   Data.s   "LIST_SELECT"
-   Data.i   0, 0
-   Data.s   "LIST_INDEX"
-   Data.i   0, 0
-   Data.s   "LIST_GET"
-   Data.i   0, 0
-   Data.s   "LIST_SET"
-   Data.i   0, 0
-   Data.s   "LIST_RESET"
-   Data.i   0, 0
-   Data.s   "LIST_SORT"
-   Data.i   0, 0
-
-   ; V1.026.8: Typed list operations (renamed V1.029.61 - LST=list)
-   Data.s   "LSTADD"
-   Data.i   0, 0
-   Data.s   "LSTADDF"
-   Data.i   0, 0
-   Data.s   "LSTADDS"
-   Data.i   0, 0
-   Data.s   "LSTINS"
-   Data.i   0, 0
-   Data.s   "LSTINSF"
-   Data.i   0, 0
-   Data.s   "LSTINSS"
-   Data.i   0, 0
-   Data.s   "LSTGET"
-   Data.i   0, 0
-   Data.s   "LSTGETF"
-   Data.i   0, 0
-   Data.s   "LSTGETS"
-   Data.i   0, 0
-   Data.s   "LSTSET"
-   Data.i   0, 0
-   Data.s   "LSTSETF"
-   Data.i   0, 0
-   Data.s   "LSTSETS"
-   Data.i   0, 0
-
-   ; V1.029.28: Struct list operations (renamed V1.029.61)
-   Data.s   "LSTADDST"
-   Data.i   0, 0
-   Data.s   "LSTGETST"
-   Data.i   0, 0
-   Data.s   "LSTSETST"
-   Data.i   0, 0
-
-   ; V1.026.0: Map operations
-   Data.s   "Map"
-   Data.i   0, 0
-   Data.s   "MAP_NEW"
-   Data.i   0, 0
-   Data.s   "MAP_PUT"
-   Data.i   0, 0
-   Data.s   "MAP_GET"
-   Data.i   0, 0
-   Data.s   "MAP_DELETE"
-   Data.i   0, 0
-   Data.s   "MAP_CLEAR"
-   Data.i   0, 0
-   Data.s   "MAP_SIZE"
-   Data.i   0, 0
-   Data.s   "MAP_CONTAINS"
-   Data.i   0, 0
-   Data.s   "MAP_RESET"
-   Data.i   0, 0
-   Data.s   "MAP_NEXT"
-   Data.i   0, 0
-   Data.s   "MAP_KEY"
-   Data.i   0, 0
-   Data.s   "MAP_VALUE"
-   Data.i   0, 0
-
-   ; V1.026.8: Typed map operations (renamed V1.029.61 - MAP=map)
-   Data.s   "MAPPUT"
-   Data.i   0, 0
-   Data.s   "MAPPUTF"
-   Data.i   0, 0
-   Data.s   "MAPPUTS"
-   Data.i   0, 0
-   Data.s   "MAPGET"
-   Data.i   0, 0
-   Data.s   "MAPGETF"
-   Data.i   0, 0
-   Data.s   "MAPGETS"
-   Data.i   0, 0
-   Data.s   "MAPVAL"
-   Data.i   0, 0
-   Data.s   "MAPVALF"
-   Data.i   0, 0
-   Data.s   "MAPVALS"
-   Data.i   0, 0
-
-   ; V1.029.28: Struct map operations (renamed V1.029.61)
-   Data.s   "MAPPUTST"
-   Data.i   0, 0
-   Data.s   "MAPGETST"
-   Data.i   0, 0
-   Data.s   "MAPVALST"
-   Data.i   0, 0
-
-   ; V1.029.65: \ptr-based struct collection operations
-   Data.s   "LSTADDSTPT"
-   Data.i   0, 0
-   Data.s   "LSTGETSTPT"
-   Data.i   0, 0
-   Data.s   "MAPPUTSTPT"
-   Data.i   0, 0
-   Data.s   "MAPGETSTPT"
-   Data.i   0, 0
-
-   ; V1.026.0: Collection slot push
-   ; V1.026.8: DEPRECATED - use FETCH/LFETCH instead
-   Data.s   "PUSH_SLOT"
-   Data.i   0, 0
-
-   Data.s   "EOF"
-   Data.i   0, 0
-   Data.s   "-"
-EndDataSection
+; Total opcodes: 505
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 49
+; CursorPosition = 47
 ; FirstLine = 30
-; Folding = --
+; Folding = ---
 ; Optimizer
 ; EnableAsm
 ; EnableThread

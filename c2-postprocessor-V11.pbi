@@ -55,6 +55,45 @@ Procedure.q GenerateStructTypeBitmap(structType.s, *fieldIndex.Integer)
    ProcedureReturn bitmap
 EndProcedure
 
+; V1.034.0: Mark function-end NOOPIFs BEFORE InitJumpTracker runs
+; This ensures backward jumps correctly target implicit returns
+; NOOPIFs marked with #INST_FLAG_IMPLICIT_RETURN will NOT be skipped in jump tracking
+Procedure            MarkImplicitReturns()
+   Protected inFunction.b = #False
+   Protected *savedNoop
+   Protected nextIsEnd.b
+
+   ForEach llObjects()
+      ; Track function boundaries
+      If llObjects()\code = #ljFunction
+         inFunction = #True
+      EndIf
+
+      ; Check if this NOOPIF will become RETURN at function end
+      If (llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP) And inFunction
+         *savedNoop = @llObjects()
+         nextIsEnd = #False
+
+         If NextElement(llObjects())
+            ; Check if next instruction is function boundary or HALT
+            If llObjects()\code = #ljFunction Or llObjects()\code = #ljHALT
+               nextIsEnd = #True
+            EndIf
+            ChangeCurrentElement(llObjects(), *savedNoop)
+         Else
+            ; End of code while in function - will become RETURN
+            nextIsEnd = #True
+            ChangeCurrentElement(llObjects(), *savedNoop)
+         EndIf
+
+         ; Mark this NOOPIF so InitJumpTracker won't skip it
+         If nextIsEnd
+            llObjects()\flags = llObjects()\flags | #INST_FLAG_IMPLICIT_RETURN
+         EndIf
+      EndIf
+   Next
+EndProcedure
+
 Procedure            InitJumpTracker()
       ; V1.020.077: Initialize jump tracker BEFORE PostProcessor runs
       ; This allows optimization passes to call AdjustJumpsForNOOP() with populated tracker
@@ -135,7 +174,8 @@ Procedure            InitJumpTracker()
          ElseIf llHoles()\mode = #C2HOLE_LOOPBACK
             llHoles()\mode = #C2HOLE_PAIR
             ChangeCurrentElement( llObjects(), llHoles()\src )
-            While llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP
+            ; V1.034.0: Don't skip NOOPIFs marked as implicit returns
+            While (llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP) And Not (llObjects()\flags & #INST_FLAG_IMPLICIT_RETURN)
                If Not NextElement(llObjects())
                   Break
                EndIf
@@ -159,7 +199,8 @@ Procedure            InitJumpTracker()
          ElseIf llHoles()\mode = #C2HOLE_FORLOOP
             llHoles()\mode = #C2HOLE_PAIR
             ChangeCurrentElement( llObjects(), llHoles()\src )
-            While llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP
+            ; V1.034.0: Don't skip NOOPIFs marked as implicit returns
+            While (llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP) And Not (llObjects()\flags & #INST_FLAG_IMPLICIT_RETURN)
                If Not NextElement(llObjects())
                   Break
                EndIf
@@ -183,7 +224,8 @@ Procedure            InitJumpTracker()
          ElseIf llHoles()\mode = #C2HOLE_CONTINUE
             llHoles()\mode = #C2HOLE_PAIR
             ChangeCurrentElement( llObjects(), llHoles()\src )
-            While llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP
+            ; V1.034.0: Don't skip NOOPIFs marked as implicit returns
+            While (llObjects()\code = #ljNOOPIF Or llObjects()\code = #ljNOOP) And Not (llObjects()\flags & #INST_FLAG_IMPLICIT_RETURN)
                If Not NextElement(llObjects())
                   Break
                EndIf
@@ -313,8 +355,9 @@ Procedure            FixJMP()
 
       ; Patch all CALL instructions with correct function addresses
       ; V1.033.12: Also handle optimized CALL0, CALL1, CALL2 opcodes
+      ; V1.034.65: Also handle CALL_REC for recursive calls
       ForEach llObjects()
-         If llObjects()\code = #ljCall Or llObjects()\code = #ljCALL0 Or llObjects()\code = #ljCALL1 Or llObjects()\code = #ljCALL2
+         If llObjects()\code = #ljCall Or llObjects()\code = #ljCALL0 Or llObjects()\code = #ljCALL1 Or llObjects()\code = #ljCALL2 Or llObjects()\code = #ljCALL_REC
             ForEach mapModules()
                If mapModules()\function = llObjects()\i
                   llObjects()\funcid = mapModules()\function
@@ -436,7 +479,8 @@ Procedure            PostProcessor()
             Case #ljreturn
                If PreviousElement(llObjects())
                   Select llObjects()\code
-                     Case #ljPUSHF, #ljFETCHF, #ljLFETCHF
+                     ; V1.034.24: LFETCHF eliminated - unified FETCHF uses j=1 for local
+                     Case #ljPUSHF, #ljFETCHF
                         NextElement(llObjects())
                         InsertElement(llObjects())
                         llObjects()\code = #ljFTOI
@@ -451,7 +495,8 @@ Procedure            PostProcessor()
             Case #ljreturnF
                If PreviousElement(llObjects())
                   Select llObjects()\code
-                     Case #ljPush, #ljFetch, #ljLFETCH
+                     ; V1.034.24: LFETCH eliminated - unified FETCH uses j=1 for local
+                     Case #ljPush, #ljFetch
                         varIdx = llObjects()\i
                         If varIdx >= 0 And varIdx < gnLastVariable
                            If Not (gVarMeta(varIdx)\flags & #C2FLAG_FLOAT)
@@ -475,7 +520,8 @@ Procedure            PostProcessor()
             Case #ljreturnS
                If PreviousElement(llObjects())
                   Select llObjects()\code
-                     Case #ljPush, #ljFetch, #ljLFETCH
+                     ; V1.034.24: LFETCH eliminated - unified FETCH uses j=1 for local
+                     Case #ljPush, #ljFetch
                         varIdx = llObjects()\i
                         If varIdx >= 0 And varIdx < gnLastVariable
                            If Not (gVarMeta(varIdx)\flags & #C2FLAG_STR)
@@ -492,7 +538,8 @@ Procedure            PostProcessor()
                         Else
                            NextElement(llObjects())
                         EndIf
-                     Case #ljPUSHF, #ljFETCHF, #ljLFETCHF
+                     ; V1.034.24: LFETCHF eliminated - unified FETCHF uses j=1 for local
+                     Case #ljPUSHF, #ljFETCHF
                         NextElement(llObjects())
                         InsertElement(llObjects())
                         llObjects()\code = #ljFTOS
@@ -543,24 +590,14 @@ Procedure            PostProcessor()
 
                While PreviousElement(llObjects()) And searchDepth < maxSearchDepth
                   searchDepth + 1
-                  If llObjects()\code = #ljFetch Or llObjects()\code = #ljLFETCH Or llObjects()\code = #ljPFETCH Or llObjects()\code = #ljPLFETCH
+                  ; V1.034.24: LFETCH eliminated - unified FETCH uses j=1 for local
+                  If llObjects()\code = #ljFetch Or llObjects()\code = #ljPFETCH
                      checkSlot = -1
-                     If llObjects()\code = #ljLFETCH Or llObjects()\code = #ljPLFETCH
+                     ; Check j=1 for local (works for both FETCH and PFETCH)
+                     If llObjects()\j = 1
                         checkParamOffset = llObjects()\i
-                        For searchLocalIdx = 0 To gnLastVariable - 1
-                           If gVarMeta(searchLocalIdx)\paramOffset = checkParamOffset
-                              pass8VarName = gVarMeta(searchLocalIdx)\name
-                              If pass8FuncName <> "" And Left(pass8VarName, 1) <> "$"
-                                 If LCase(Left(pass8VarName, Len(pass8FuncName) + 1)) = LCase(pass8FuncName + "_")
-                                    checkSlot = searchLocalIdx
-                                    Break
-                                 EndIf
-                              ElseIf pass8FuncName = ""
-                                 checkSlot = searchLocalIdx
-                                 Break
-                              EndIf
-                           EndIf
-                        Next
+                        ; V1.034.2: Use O(1) offset-based lookup
+                        checkSlot = FindVariableSlotByOffset(checkParamOffset, pass8FuncName)
                      Else
                         checkSlot = llObjects()\i
                      EndIf
@@ -619,20 +656,15 @@ Procedure            PostProcessor()
                            Protected listStoreFound.b = #False
                            Protected listLookAhead.i = 0
                            While NextElement(llObjects()) And listLookAhead < 3 And Not listStoreFound
-                              ; Check for any STORE variant (regular, struct, or local)
-                              If llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF Or llObjects()\code = #ljSTORES Or llObjects()\code = #ljSTRUCT_STORE_INT Or llObjects()\code = #ljSTRUCT_STORE_FLOAT Or llObjects()\code = #ljSTRUCT_STORE_STR Or llObjects()\code = #ljSTORE_STRUCT
-                                 ; Found global STORE - capture destination slot
+                              ; V1.034.24: Check for unified STORE variants (j=1 for local, j=0 for global)
+                              If llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF Or llObjects()\code = #ljSTORES Or llObjects()\code = #ljSTORE_STRUCT Or llObjects()\code = #ljSTRUCT_STORE_INT Or llObjects()\code = #ljSTRUCT_STORE_FLOAT Or llObjects()\code = #ljSTRUCT_STORE_STR
                                  Protected listDestSlot.i = llObjects()\i
+                                 If llObjects()\j = 1
+                                    ; Found LOCAL STORE (j=1) - capture offset with local flag
+                                    listDestSlot = listDestSlot | #C2_LOCAL_COLLECTION_FLAG
+                                 EndIf
                                  llObjects()\code = #ljNOOP  ; Remove STORE
                                  ; Go back to LIST_GET_STRUCT_PTR and set destination
-                                 ChangeCurrentElement(llObjects(), *listGetPos)
-                                 llObjects()\j = listDestSlot
-                                 listStoreFound = #True
-                              ElseIf llObjects()\code = #ljLSTORE_STRUCT Or llObjects()\code = #ljLSTORE Or llObjects()\code = #ljLSTOREF Or llObjects()\code = #ljLSTORES
-                                 ; Found LOCAL STORE - capture offset with local flag
-                                 listDestSlot = llObjects()\i | #C2_LOCAL_COLLECTION_FLAG
-                                 llObjects()\code = #ljNOOP  ; Remove STORE
-                                 ; Go back to LIST_GET_STRUCT_PTR and set destination with local flag
                                  ChangeCurrentElement(llObjects(), *listGetPos)
                                  llObjects()\j = listDestSlot
                                  listStoreFound = #True
@@ -684,24 +716,14 @@ Procedure            PostProcessor()
 
                While PreviousElement(llObjects()) And searchDepth < maxSearchDepth
                   searchDepth + 1
-                  If llObjects()\code = #ljFetch Or llObjects()\code = #ljLFETCH Or llObjects()\code = #ljPFETCH Or llObjects()\code = #ljPLFETCH
+                  ; V1.034.24: LFETCH eliminated - unified FETCH uses j=1 for local
+                  If llObjects()\code = #ljFetch Or llObjects()\code = #ljPFETCH
                      checkSlot = -1
-                     If llObjects()\code = #ljLFETCH Or llObjects()\code = #ljPLFETCH
+                     ; Check j=1 for local (works for both FETCH and PFETCH)
+                     If llObjects()\j = 1
                         checkParamOffset = llObjects()\i
-                        For searchLocalIdx = 0 To gnLastVariable - 1
-                           If gVarMeta(searchLocalIdx)\paramOffset = checkParamOffset
-                              pass8VarName = gVarMeta(searchLocalIdx)\name
-                              If pass8FuncName <> "" And Left(pass8VarName, 1) <> "$"
-                                 If LCase(Left(pass8VarName, Len(pass8FuncName) + 1)) = LCase(pass8FuncName + "_")
-                                    checkSlot = searchLocalIdx
-                                    Break
-                                 EndIf
-                              ElseIf pass8FuncName = ""
-                                 checkSlot = searchLocalIdx
-                                 Break
-                              EndIf
-                           EndIf
-                        Next
+                        ; V1.034.2: Use O(1) offset-based lookup
+                        checkSlot = FindVariableSlotByOffset(checkParamOffset, pass8FuncName)
                      Else
                         checkSlot = llObjects()\i
                      EndIf
@@ -749,20 +771,15 @@ Procedure            PostProcessor()
                            Protected mapStoreFound.b = #False
                            Protected mapLookAhead.i = 0
                            While NextElement(llObjects()) And mapLookAhead < 3 And Not mapStoreFound
-                              ; Check for any STORE variant (regular, struct, or local)
-                              If llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF Or llObjects()\code = #ljSTORES Or llObjects()\code = #ljSTRUCT_STORE_INT Or llObjects()\code = #ljSTRUCT_STORE_FLOAT Or llObjects()\code = #ljSTRUCT_STORE_STR Or llObjects()\code = #ljSTORE_STRUCT
-                                 ; Found global STORE - capture destination slot
+                              ; V1.034.24: Check for unified STORE variants (j=1 for local, j=0 for global)
+                              If llObjects()\code = #ljStore Or llObjects()\code = #ljSTOREF Or llObjects()\code = #ljSTORES Or llObjects()\code = #ljSTORE_STRUCT Or llObjects()\code = #ljSTRUCT_STORE_INT Or llObjects()\code = #ljSTRUCT_STORE_FLOAT Or llObjects()\code = #ljSTRUCT_STORE_STR
                                  Protected mapDestSlot.i = llObjects()\i
+                                 If llObjects()\j = 1
+                                    ; Found LOCAL STORE (j=1) - capture offset with local flag
+                                    mapDestSlot = mapDestSlot | #C2_LOCAL_COLLECTION_FLAG
+                                 EndIf
                                  llObjects()\code = #ljNOOP  ; Remove STORE
                                  ; Go back to MAP_GET_STRUCT_PTR and set destination
-                                 ChangeCurrentElement(llObjects(), *mapGetPos)
-                                 llObjects()\j = mapDestSlot
-                                 mapStoreFound = #True
-                              ElseIf llObjects()\code = #ljLSTORE_STRUCT Or llObjects()\code = #ljLSTORE Or llObjects()\code = #ljLSTOREF Or llObjects()\code = #ljLSTORES
-                                 ; Found LOCAL STORE - capture offset with local flag
-                                 mapDestSlot = llObjects()\i | #C2_LOCAL_COLLECTION_FLAG
-                                 llObjects()\code = #ljNOOP  ; Remove STORE
-                                 ; Go back to MAP_GET_STRUCT_PTR and set destination with local flag
                                  ChangeCurrentElement(llObjects(), *mapGetPos)
                                  llObjects()\j = mapDestSlot
                                  mapStoreFound = #True
@@ -959,6 +976,9 @@ Procedure            PostProcessor()
          ReDim gFuncTemplates.stFuncTemplate(maxFuncId)
          ; V1.033.55: Don't ReDim gFuncNames - keep #C2MAXFUNCTIONS capacity for multi-run sessions
 
+         ; V1.035.0: Track function index for slot assignment
+         Protected funcIdx.i = 0
+
          ForEach mapModules()
             If mapModules()\function >= #C2FUNCSTART
                funcId = mapModules()\function
@@ -977,6 +997,11 @@ Procedure            PostProcessor()
 
                gFuncTemplates(funcId)\funcId = funcId
                gFuncTemplates(funcId)\localCount = localCount
+               ; V1.035.0: Pointer Array Architecture - assign slot and params
+               ; V1.035.1: Use gnLastVariable (includes constants/literals) to avoid slot collision
+               gFuncTemplates(funcId)\funcSlot = gnLastVariable + funcIdx
+               gFuncTemplates(funcId)\nParams = nParams
+               funcIdx + 1
 
                If localCount > 0
                   ReDim gFuncTemplates(funcId)\template.stVarTemplate(localCount - 1)

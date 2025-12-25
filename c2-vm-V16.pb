@@ -1,4 +1,4 @@
-﻿
+
 ; -- lexical parser to VM for a simplified C Language 
 ; Tested in UTF8
 ; PBx64 v6.20
@@ -76,14 +76,23 @@ Module C2VM
       Map Map.stVTSimple()     ; Map with string keys (empty by default)
    EndStructure
 
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   ; Each slot (global or function) has its own stVar with embedded var() array
+   Structure stVar
+      Array var.stVT(1)
+   EndStructure
+
    Structure stStack
-      sp.l                     ; Saved stack pointer (into gEvalStack[])
+      sp.l                     ; Saved eval stack pointer
       pc.l                     ; Saved program counter
-      localBase.l              ; V1.31.0: Base index in gLocal[] for this frame
-      localCount.l             ; V1.31.0: Number of local slots in gLocal[] (params + locals)
-      ; V1.31.0: ISOLATED VARIABLE SYSTEM
-      ; Locals stored in gLocal[localBase to localBase+localCount-1]
-      ; Evaluation stack in gEvalStack[sp] (completely separate)
+      funcSlot.l               ; V1.035.0: Which function slot this frame belongs to
+      *savedFrame.stVar        ; V1.035.0: Original gVar pointer (to restore on return)
+      localCount.l             ; Number of local slots (params + locals)
+      isAllocated.b            ; V1.035.0: True if frame was AllocateStructure'd (needs FreeStructure)
+      isPooled.b               ; V1.034.64: True if frame from pool (return to pool, don't free)
+      ; V1.035.0: POINTER ARRAY ARCHITECTURE
+      ; On recursion: allocate new frame, swap pointer in *gVar(funcSlot)
+      ; On return: restore original pointer, FreeStructure if allocated
    EndStructure
 
    ;- Globals
@@ -95,12 +104,14 @@ Module C2VM
    Global               gStackDepth          = -1      ; Current stack frame index (-1 = no frames)
    Global               gDecs                = 3
    Global               gExitApplication     = 0
+   Global               gCall0Count          = 0       ; V1.034.73: Debug counter for CALL0
+   Global               gCallCount           = 0       ; V1.034.73: Debug counter for CALL
    Global               gStopVMThread        = 0       ; V1.031.41: Graceful thread stop for Linux   
    Global               gVMThreadFinished    = 0       ; V1.031.46: Simple flag set when VM thread finishes
    Global               gGlobalStack         = 2048
    Global               gFunctionStack       = 256
    Global               gMaxEvalStack        = 1024
-   Global               gLocalStack          = 128
+   ; V1.035.0: gCurrentFuncSlot tracks current function for local access
    Global               gWidth.i             = 960,   ; V1.027.4: Wider for examples listbox
                         gHeight.i            = 340,
                         gWindowX             = #PB_Ignore, 
@@ -136,14 +147,32 @@ Module C2VM
    Global               gSelectedExample.i   = 0       ; V1.027.6: Track selected example in listbox
 
    Global Dim           *ptrJumpTable(1)
-   Global Dim           gVar.stVT(gGlobalStack)          ; V1.31.0: Global variables ONLY
    Global Dim           gStack.stStack(gFunctionStack)   ; Call stack (function frames)
 
-   ; V1.31.0: Isolated Variable System - separate arrays for complete isolation
-   Global Dim           gLocal.stVT(gLocalStack)           ; Local variables ONLY (per-function frame)
-   Global Dim           gEvalStack.stVT(gMaxEvalStack)    ; Evaluation stack ONLY (sp-indexed)
-   Global               gLocalBase.i     = 0                 ; Base index in gLocal[] for current frame
-   Global               gLocalTop.i      = 0                 ; Current top of gLocal[] allocation
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   ; *gVar(slot) points to stVar structure containing var() array
+   ; - Globals: *gVar(0) to *gVar(n) each hold one value in \var(0)
+   ; - Functions: *gVar(funcSlot)\var(0..nLocals-1) holds params + locals
+   ; - Recursion: swap pointer to AllocateStructure'd frame, restore on return
+   Global Dim           *gVar.stVar(gGlobalStack)        ; Pointer array for globals + functions
+
+   ; V1.035.0: Separate eval stack for expression evaluation (push/pop)
+   Global Dim           gEvalStack.stVT(gMaxEvalStack)   ; Evaluation stack
+
+   ; V1.035.0: Track which functions have active frames (for recursion detection)
+   Global Dim           gFuncActive.b(gGlobalStack)      ; True if function's base frame is in use
+
+   ; V1.035.0: Current function slot for local variable access
+   ; Updated by CALL/RETURN - opcodes use *gVar(gCurrentFuncSlot)\var(idx)
+   Global               gCurrentFuncSlot.l = 0
+
+   ; V1.034.65: Frame pool for fast recursive frame allocation
+   ; Pool size configurable via #pragma RecursionFrame (default 1024)
+   #FRAME_VAR_SIZE = 32          ; Max vars per pooled frame
+   Global               gRecursionFrame.l = 1024   ; Max recursion depth (configurable via pragma)
+   Global Dim           *gFramePool.stVar(1024)    ; Will be ReDim'd in vmPragmaSet
+   Global               gFramePoolTop.l = 0        ; Next available pool slot
+
    Global               gLogfn.i                             ; Log Filenumber
 
    ; V1.031.96: Flag for pending RunVM - checked in main loop, not in bound callback
@@ -231,7 +260,7 @@ Module C2VM
    EndMacro
 
 
-   ; V1.31.0: Updated macros for Isolated Variable System (use gEvalStack[])
+   ; V1.035.0: Updated macros for Pointer Array Architecture (use gEvalStack[])
    Macro             vm_Comparators( operator )
       sp - 1
       CompilerIf #DEBUG
@@ -272,21 +301,21 @@ Module C2VM
       pc + 1
    EndMacro
 
-   ; V1.031.111: Inline hot opcode macros for VM loop optimization
+   ; V1.035.0: Inline hot opcode macros for VM loop optimization
+   ; Updated for Pointer Array Architecture
    ; These eliminate procedure call overhead for the most frequently executed opcodes
-   ; V1.033.15: Extended to top 6 hot opcodes (LFETCHS, STORE, LSTORES, SUB, JMP, NEG)
    CompilerIf #VM_INLINE_HOT > 0
       Macro vm_InlineLFETCH()
-         gEvalStack(sp)\i = gLocal(gLocalBase + arCode(pc)\i)\i
+         gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(arCode(pc)\i)\i
          sp + 1 : pc + 1
       EndMacro
       Macro vm_InlinePUSH()
-         gEvalStack(sp)\i = gVar(arCode(pc)\i)\i
+         gEvalStack(sp)\i = *gVar(arCode(pc)\i)\var(0)\i
          sp + 1 : pc + 1
       EndMacro
       Macro vm_InlineLSTORE()
          sp - 1
-         gLocal(gLocalBase + arCode(pc)\i)\i = gEvalStack(sp)\i
+         *gVar(gCurrentFuncSlot)\var(arCode(pc)\i)\i = gEvalStack(sp)\i
          pc + 1
       EndMacro
       Macro vm_InlineADD()
@@ -301,17 +330,17 @@ Module C2VM
       EndMacro
       ; V1.033.15: Additional hot opcodes from benchmark analysis
       Macro vm_InlineLFETCHS()
-         gEvalStack(sp)\ss = gLocal(gLocalBase + arCode(pc)\i)\ss
+         gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(arCode(pc)\i)\ss
          sp + 1 : pc + 1
       EndMacro
       Macro vm_InlineSTORE()
          sp - 1
-         gVar(arCode(pc)\i)\i = gEvalStack(sp)\i
+         *gVar(arCode(pc)\i)\var(0)\i = gEvalStack(sp)\i
          pc + 1
       EndMacro
       Macro vm_InlineLSTORES()
          sp - 1
-         gLocal(gLocalBase + arCode(pc)\i)\ss = gEvalStack(sp)\ss
+         *gVar(gCurrentFuncSlot)\var(arCode(pc)\i)\ss = gEvalStack(sp)\ss
          pc + 1
       EndMacro
       Macro vm_InlineSUB()
@@ -376,54 +405,54 @@ Module C2VM
       cs = ArraySize(ArCode())
       vmPragmaSet()
    EndMacro
-   ; V1.029.36: Struct pointer macros - unified struct field access via \ptr
-   ; All struct variables store data in gVar(slot)\ptr as contiguous memory
+   ; V1.035.0: Struct pointer macros - unified struct field access via \ptr
+   ; All struct variables store data in *gVar(slot)\var(0)\ptr as contiguous memory
    ; Field offset = field_index * 8 (8 bytes per field)
    Macro StructGetInt(slot, offset)
-      PeekQ(gVar(slot)\ptr + offset)
+      PeekQ(*gVar(slot)\var(0)\ptr + offset)
    EndMacro
    Macro StructGetFloat(slot, offset)
-      PeekD(gVar(slot)\ptr + offset)
+      PeekD(*gVar(slot)\var(0)\ptr + offset)
    EndMacro
    Macro StructSetInt(slot, offset, value)
-      PokeQ(gVar(slot)\ptr + offset, value)
+      PokeQ(*gVar(slot)\var(0)\ptr + offset, value)
    EndMacro
    Macro StructSetFloat(slot, offset, value)
-      PokeD(gVar(slot)\ptr + offset, value)
+      PokeD(*gVar(slot)\var(0)\ptr + offset, value)
    EndMacro
    ; V1.029.55: String struct field macros
    ; Strings stored as pointers to dynamically allocated string memory
    Macro StructGetStr(slot, offset)
-      PeekS(PeekQ(gVar(slot)\ptr + offset))
+      PeekS(PeekQ(*gVar(slot)\var(0)\ptr + offset))
    EndMacro
    ; Note: StructSetStr is a procedure, not macro, due to memory management
    Macro StructAlloc(slot, byteSize)
-      If gVar(slot)\ptr : FreeMemory(gVar(slot)\ptr) : EndIf
-      gVar(slot)\ptr = AllocateMemory(byteSize)
+      If *gVar(slot)\var(0)\ptr : FreeMemory(*gVar(slot)\var(0)\ptr) : EndIf
+      *gVar(slot)\var(0)\ptr = AllocateMemory(byteSize)
    EndMacro
    Macro StructCopy(srcPtr, destPtr, byteSize)
       CopyMemory(srcPtr, destPtr, byteSize)
    EndMacro
-   ; V1.031.25: LOCAL struct field macros - use gLocal[] instead of gVar[]
-   Macro StructGetIntLocal(slot, offset)
-      PeekQ(gLocal(slot)\ptr + offset)
+   ; V1.035.0: LOCAL struct field macros - use *gVar(gCurrentFuncSlot)\var(localIdx)
+   Macro StructGetIntLocal(localIdx, offset)
+      PeekQ(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr + offset)
    EndMacro
-   Macro StructGetFloatLocal(slot, offset)
-      PeekD(gLocal(slot)\ptr + offset)
+   Macro StructGetFloatLocal(localIdx, offset)
+      PeekD(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr + offset)
    EndMacro
-   Macro StructSetIntLocal(slot, offset, value)
-      PokeQ(gLocal(slot)\ptr + offset, value)
+   Macro StructSetIntLocal(localIdx, offset, value)
+      PokeQ(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr + offset, value)
    EndMacro
-   Macro StructSetFloatLocal(slot, offset, value)
-      PokeD(gLocal(slot)\ptr + offset, value)
+   Macro StructSetFloatLocal(localIdx, offset, value)
+      PokeD(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr + offset, value)
    EndMacro
-   Macro StructGetStrLocal(slot, offset)
-      PeekS(PeekQ(gLocal(slot)\ptr + offset))
+   Macro StructGetStrLocal(localIdx, offset)
+      PeekS(PeekQ(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr + offset))
    EndMacro
-   ; V1.031.26: LOCAL struct allocation macro - use gLocal[] instead of gVar[]
-   Macro StructAllocLocal(slot, byteSize)
-      If gLocal(slot)\ptr : FreeMemory(gLocal(slot)\ptr) : EndIf
-      gLocal(slot)\ptr = AllocateMemory(byteSize)
+   ; V1.035.0: LOCAL struct allocation macro
+   Macro StructAllocLocal(localIdx, byteSize)
+      If *gVar(gCurrentFuncSlot)\var(localIdx)\ptr : FreeMemory(*gVar(gCurrentFuncSlot)\var(localIdx)\ptr) : EndIf
+      *gVar(gCurrentFuncSlot)\var(localIdx)\ptr = AllocateMemory(byteSize)
    EndMacro
 
    ; V1.031.101: Queue GUI message from worker thread
@@ -657,6 +686,8 @@ Module C2VM
       *ptrJumpTable( #ljAND )             = @C2AND()
       *ptrJumpTable( #ljOr )              = @C2OR()
       *ptrJumpTable( #ljXOR )             = @C2XOR()
+      *ptrJumpTable( #ljSHL )             = @C2SHL()    ; V1.034.30: Bit shift left
+      *ptrJumpTable( #ljSHR )             = @C2SHR()    ; V1.034.30: Bit shift right
       *ptrJumpTable( #ljNOT )             = @C2NOT()
       *ptrJumpTable( #ljNEGATE )          = @C2NEGATE()
       *ptrJumpTable( #ljDIVIDE )          = @C2DIVIDE()
@@ -692,6 +723,7 @@ Module C2VM
       *ptrJumpTable( #ljCALL0 )           = @C2CALL0()   ; V1.033.12: 0 params
       *ptrJumpTable( #ljCALL1 )           = @C2CALL1()   ; V1.033.12: 1 param
       *ptrJumpTable( #ljCALL2 )           = @C2CALL2()   ; V1.033.12: 2 params
+      *ptrJumpTable( #ljCALL_REC )        = @C2CALL_REC()  ; V1.034.65: Recursive call (uses frame pool)
       *ptrJumpTable( #ljreturn )          = @C2Return()
       *ptrJumpTable( #ljreturnF )         = @C2ReturnF()
       *ptrJumpTable( #ljreturnS )         = @C2ReturnS()
@@ -954,6 +986,20 @@ Module C2VM
       *ptrJumpTable( #ljMAP_PUT_STRUCT_PTR )    = @C2MAP_PUT_STRUCT_PTR()
       *ptrJumpTable( #ljMAP_GET_STRUCT_PTR )    = @C2MAP_GET_STRUCT_PTR()
 
+      ; V1.034.6: FOREACH opcodes for lists and maps
+      *ptrJumpTable( #ljFOREACH_LIST_INIT )     = @C2FOREACH_LIST_INIT()
+      *ptrJumpTable( #ljFOREACH_LIST_NEXT )     = @C2FOREACH_LIST_NEXT()
+      *ptrJumpTable( #ljFOREACH_MAP_INIT )      = @C2FOREACH_MAP_INIT()
+      *ptrJumpTable( #ljFOREACH_MAP_NEXT )      = @C2FOREACH_MAP_NEXT()
+      *ptrJumpTable( #ljFOREACH_END )           = @C2FOREACH_END()
+      *ptrJumpTable( #ljFOREACH_LIST_GET_INT )  = @C2FOREACH_LIST_GET_INT()
+      *ptrJumpTable( #ljFOREACH_LIST_GET_FLOAT )= @C2FOREACH_LIST_GET_FLOAT()
+      *ptrJumpTable( #ljFOREACH_LIST_GET_STR )  = @C2FOREACH_LIST_GET_STR()
+      *ptrJumpTable( #ljFOREACH_MAP_KEY )       = @C2FOREACH_MAP_KEY()
+      *ptrJumpTable( #ljFOREACH_MAP_VALUE_INT ) = @C2FOREACH_MAP_VALUE_INT()
+      *ptrJumpTable( #ljFOREACH_MAP_VALUE_FLOAT)= @C2FOREACH_MAP_VALUE_FLOAT()
+      *ptrJumpTable( #ljFOREACH_MAP_VALUE_STR ) = @C2FOREACH_MAP_VALUE_STR()
+
       ; Pointer operations
       *ptrJumpTable( #ljGETADDR )         = @C2GETADDR()
       *ptrJumpTable( #ljGETADDRF )        = @C2GETADDRF()
@@ -1090,18 +1136,16 @@ Module C2VM
       InitListPool()
       InitMapPool()
 
-      ; V1.033.47: Ensure gVar is sized to accommodate all variables
-      ; This prevents array bounds errors when gnLastVariable exceeds default gGlobalStack
-      If gnLastVariable > ArraySize(gVar()) + 1
-         ReDim gVar.stVT(gnLastVariable + 64)  ; Add margin for safety
+      ; V1.035.0: Ensure *gVar pointer array is sized to accommodate all variables
+      If gnLastVariable > ArraySize(*gVar()) + 1
+         ReDim *gVar.stVar(gnLastVariable + 64)
       EndIf
 
    EndProcedure
 
    Procedure            vmTransferMetaToRuntime()
-      ; V1.023.0: Transfer compile-time data to runtime using templates
-      ; V1.033.46: VM now uses ONLY gGlobalTemplate, not gVarMeta
-      ; This allows VM to be independent of compiler structures
+      ; V1.035.0: Transfer compile-time data to runtime using Pointer Array Architecture
+      ; Each slot gets its own allocated stVar structure
       Protected i
       Protected structByteSize.i  ; V1.029.40: For struct allocation
       Protected templateSize.i    ; V1.033.47: For bounds checking
@@ -1113,15 +1157,14 @@ Module C2VM
       CompilerEndIf
 
       ; V1.033.47: Verify arrays are properly sized before accessing
-      templateSize = ArraySize(gGlobalTemplate()) + 1  ; ArraySize returns highest index, so add 1 for count
-      gVarSize = ArraySize(gVar()) + 1
+      templateSize = ArraySize(gGlobalTemplate()) + 1
+      gVarSize = ArraySize(*gVar()) + 1
 
       CompilerIf #DEBUG
          Debug "vmTransferMetaToRuntime: gnLastVariable=" + Str(gnLastVariable) + " templateSize=" + Str(templateSize) + " gVarSize=" + Str(gVarSize)
       CompilerEndIf
 
-      ; V1.033.49: Now that BuildVariableTemplates() is called AFTER Optimizer(),
-      ; template should always be sized correctly. Keep check as safety assertion.
+      ; V1.033.49: Verify template is sized correctly
       If gnLastVariable > templateSize
          CompilerIf #DEBUG
             Debug "ERROR: gGlobalTemplate too small! gnLastVariable=" + Str(gnLastVariable) + " templateSize=" + Str(templateSize)
@@ -1129,23 +1172,30 @@ Module C2VM
          ProcedureReturn
       EndIf
 
-      ; V1.033.48: Dynamically resize gVar if needed (instead of returning early)
-      ; This ensures VM can run even if pragmas set a smaller GlobalStack than needed
+      ; V1.035.0: Dynamically resize *gVar pointer array if needed
       If gnLastVariable > gVarSize
          CompilerIf #DEBUG
-            Debug "vmTransferMetaToRuntime: Resizing gVar from " + Str(gVarSize) + " to " + Str(gnLastVariable + 64)
+            Debug "vmTransferMetaToRuntime: Resizing *gVar from " + Str(gVarSize) + " to " + Str(gnLastVariable + 64)
          CompilerEndIf
-         ReDim gVar.stVT(gnLastVariable + 64)  ; Add margin for safety
-         gVarSize = ArraySize(gVar()) + 1      ; Update cached size
+         ReDim *gVar.stVar(gnLastVariable + 64)
+         gVarSize = ArraySize(*gVar()) + 1
       EndIf
 
-      ; V1.033.46: Single loop using gGlobalTemplate only (no gVarMeta access)
+      ; V1.035.0: POINTER ARRAY ARCHITECTURE
+      ; Initialize all global slots (0 to gnLastVariable-1) including constants and literals
+      ; Function slots are allocated on-demand during CALL
       For i = 0 To gnLastVariable - 1
+         ; Allocate stVar structure for this slot if not already done
+         If Not *gVar(i)
+            *gVar(i) = AllocateStructure(stVar)
+            ReDim *gVar(i)\var(0)  ; Default to 1 slot
+         EndIf
+
          If gGlobalTemplate(i)\flags & #C2FLAG_CONST
             ; This is a constant - transfer from template
-            gVar(i)\i = gGlobalTemplate(i)\i
-            gVar(i)\f = gGlobalTemplate(i)\f
-            gVar(i)\ss = gGlobalTemplate(i)\ss
+            *gVar(i)\var(0)\i = gGlobalTemplate(i)\i
+            *gVar(i)\var(0)\f = gGlobalTemplate(i)\f
+            *gVar(i)\var(0)\ss = gGlobalTemplate(i)\ss
 
             CompilerIf #DEBUG
                Debug "  Transfer constant [" + Str(i) + "]: i=" + Str(gGlobalTemplate(i)\i) + " f=" + StrD(gGlobalTemplate(i)\f, 6) + " ss='" + gGlobalTemplate(i)\ss + "'"
@@ -1153,11 +1203,11 @@ Module C2VM
          ElseIf gGlobalTemplate(i)\paramOffset = -1
             ; This is a GLOBAL variable - use gGlobalTemplate (preloaded values)
             ; Local variables (paramOffset >= 0) are initialized at function call time
-            gVar(i)\i = gGlobalTemplate(i)\i
-            gVar(i)\f = gGlobalTemplate(i)\f
-            gVar(i)\ss = gGlobalTemplate(i)\ss
-            gVar(i)\ptr = gGlobalTemplate(i)\ptr
-            gVar(i)\ptrtype = gGlobalTemplate(i)\ptrtype
+            *gVar(i)\var(0)\i = gGlobalTemplate(i)\i
+            *gVar(i)\var(0)\f = gGlobalTemplate(i)\f
+            *gVar(i)\var(0)\ss = gGlobalTemplate(i)\ss
+            *gVar(i)\var(0)\ptr = gGlobalTemplate(i)\ptr
+            *gVar(i)\var(0)\ptrtype = gGlobalTemplate(i)\ptrtype
 
             CompilerIf #DEBUG
                If gGlobalTemplate(i)\i <> 0 Or gGlobalTemplate(i)\f <> 0 Or gGlobalTemplate(i)\ss <> ""
@@ -1168,8 +1218,8 @@ Module C2VM
 
          ; Allocate array storage if this is an array variable
          If gGlobalTemplate(i)\flags & #C2FLAG_ARRAY And gGlobalTemplate(i)\arraySize > 0
-            ReDim gVar(i)\dta\ar(gGlobalTemplate(i)\arraySize - 1)  ; 0-based indexing
-            gVar(i)\dta\size = gGlobalTemplate(i)\arraySize  ; Store size in structure
+            ReDim *gVar(i)\var(0)\dta\ar(gGlobalTemplate(i)\arraySize - 1)  ; 0-based indexing
+            *gVar(i)\var(0)\dta\size = gGlobalTemplate(i)\arraySize
          EndIf
 
          ; V1.029.40: Allocate struct memory for global struct variables
@@ -1178,9 +1228,9 @@ Module C2VM
             ; Calculate byte size: elementSize is field count, multiply by 8 bytes per field
             structByteSize = gGlobalTemplate(i)\elementSize * 8
             If structByteSize > 0
-               gVar(i)\ptr = AllocateMemory(structByteSize)
+               *gVar(i)\var(0)\ptr = AllocateMemory(structByteSize)
                CompilerIf #DEBUG
-                  Debug "  Allocate struct [" + Str(i) + "]: " + Str(structByteSize) + " bytes at ptr=" + Str(gVar(i)\ptr)
+                  Debug "  Allocate struct [" + Str(i) + "]: " + Str(structByteSize) + " bytes at ptr=" + Str(*gVar(i)\var(0)\ptr)
                CompilerEndIf
             EndIf
          EndIf
@@ -1190,28 +1240,51 @@ Module C2VM
    Procedure            vmClearRun()
       Protected         i
 
-      ; Clear runtime values but preserve compilation metadata AND constants
-      ; IMPORTANT: Don't clear flags or paramOffset - they're set during compilation!
-      ; V1.020.062: Only clear runtime globals (0 to gnGlobalVariables-1), NOT compile-time constants
-      For i = 0 To gnGlobalVariables - 1
-         gVar( i )\f = 0
-         gVar( i )\ss = ""
-         gVar( i )\i = 0
+      ; V1.035.0: POINTER ARRAY ARCHITECTURE
+      ; Allocate stVar structures for all globals and functions
+      ; Each *gVar(slot) points to its own stVar with var() array
+
+      ; Clear and reallocate all variable slots (gnLastVariable includes all types)
+      For i = 0 To gnLastVariable - 1
+         ; Free existing structure if any
+         If *gVar(i)
+            FreeStructure(*gVar(i))
+         EndIf
+         ; Allocate new structure for this slot
+         *gVar(i) = AllocateStructure(stVar)
+         ; Globals use var(0) only; functions will ReDim during CALL
+         ReDim *gVar(i)\var(0)
+         ; Clear the value
+         *gVar(i)\var(0)\i = 0
+         *gVar(i)\var(0)\f = 0.0
+         *gVar(i)\var(0)\ss = ""
       Next
 
       ; Clear the call stack
       gStackDepth = -1
       gFunctionDepth = 0
 
-      ; V1.31.0: Reset isolated variable system
-      gLocalBase = 0
-      gLocalTop = 0
-      ; V1.031.15: Clear gLocal[] array to avoid garbage values as array indices
-      For i = 0 To gLocalStack - 1
-         gLocal(i)\i = 0
-         gLocal(i)\f = 0.0
-         gLocal(i)\ss = ""
+      ; V1.035.0: Clear function active flags
+      For i = 0 To gGlobalStack - 1
+         gFuncActive(i) = #False
       Next
+
+      ; V1.035.0: Clear eval stack
+      For i = 0 To gMaxEvalStack - 1
+         gEvalStack(i)\i = 0
+         gEvalStack(i)\f = 0.0
+         gEvalStack(i)\ss = ""
+      Next
+      sp = 0
+
+      ; V1.034.65: Initialize frame pool for fast recursion (size from gRecursionFrame pragma)
+      For i = 0 To gRecursionFrame - 1
+         If Not *gFramePool(i)
+            *gFramePool(i) = AllocateStructure(stVar)
+            ReDim *gFramePool(i)\var(#FRAME_VAR_SIZE - 1)
+         EndIf
+      Next
+      gFramePoolTop = 0
 
       ; Stop any running code by resetting pc and putting HALT at start
       pc = 0
@@ -1233,16 +1306,16 @@ Module C2VM
       Protected      i
       Protected      flag
       Protected.s    temp, line
-      
+
       While arCode( i )\code <> #ljEOF
          ASMLine( arCode( i ), 1 )
          vm_ConsoleOrGUI( line )
          i + 1
       Wend
-      
+
       vm_ConsoleOrGUI( "" )
    EndProcedure
-   
+
    Procedure         vmExecute(*p = 0)
       Protected      i, j
       Protected      t, t1
@@ -1262,17 +1335,29 @@ Module C2VM
       CompilerIf #C2PROFILER > 0
          ReDim arProfiler( gnTotalTokens )
       CompilerEndIf
-      
+
       ; Transfer compile-time metadata to runtime values
       ; V1.033.46: Uses gGlobalTemplate only (VM is now independent of gVarMeta)
       ; In the future, this will load from JSON/XML
-      vmTransferMetaToRuntime()      
-      
-      ; V1.31.0: Isolated Variable System - sp indexes into gEvalStack[], not gVar[]
-      sp    = 0                           ; Evaluation stack starts at gEvalStack[0]
-      gLocalBase = 0                      ; Local variables start at gLocal[0]
-      gLocalTop = 0                       ; No locals allocated yet
-      cy    = 0
+      vmTransferMetaToRuntime()
+
+      ; V1.035.0: Initialize eval stack pointer and function slot
+      sp = 0                              ; Eval stack starts at 0
+      gCurrentFuncSlot = 0                ; No function active initially
+
+      ; V1.034.61: ASM listing moved to post-execution (user preference)
+
+      ; V1.034.57: cy must account for pre-execution output (GUI mode only)
+      CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Executable
+         If gTestMode = #False
+            cy = CountGadgetItems(#edConsole) - 1  ; -1 because AddGadgetItem adds at end
+            If cy < 0 : cy = 0 : EndIf
+         Else
+            cy = 0
+         EndIf
+      CompilerElse
+         cy = 0
+      CompilerEndIf
       pc    = 0
       
       ; Optimized VM loop: cache opcode and handler pointer
@@ -1332,10 +1417,10 @@ Module C2VM
       Wend
 
       ; V1.031.42: VM loop ended - thread will terminate naturally
-      ; V1.31.0: Stack balance uses sp=0 base (gEvalStack[] is isolated)
-      endline  = "Runtime: " + FormatNumber( (ElapsedMilliseconds() - t ) / 1000 ) + " seconds. sp = (" + Str(sp) + ")"
+      ; V1.035.0: Stack balance - sp should be 0 at end
+      endline  = "Runtime: " + FormatNumber( (ElapsedMilliseconds() - t ) / 1000 ) + " seconds. sp=(" + Str(sp) + ") CALL=" + Str(gCallCount) + " CALL0=" + Str(gCall0Count)
 
-      ; V1.31.0: Debug leaked stack values (stack should be empty: sp == 0)
+      ; V1.035.0: Debug leaked stack values (stack should be empty: sp == 0)
       If sp <> 0
          CompilerIf #DEBUG
             Debug "*** STACK IMBALANCE DETECTED ***"
@@ -1371,11 +1456,14 @@ Module C2VM
       vm_ConsoleOrGUI( endline )
       vm_ConsoleOrGUI( line )
       vm_ConsoleOrGUI( "" )
-      
+
+      ; V1.034.61: ASM listing at end (post-execution)
       If gListASM
+         vm_ConsoleOrGUI( "====[ASM Listing]=====" )
          vmListCode()
+         vm_ConsoleOrGUI( "======================" )
       EndIf
-      
+
       CompilerIf #C2PROFILER > 0
          vm_ConsoleOrGUI( "====[Stats]=======================================" )
          For i = 0 To gnTotalTokens
@@ -1510,9 +1598,16 @@ Module C2VM
       gFPSWait = gDefFPS * 4
       
       vm_SetArrayFromPragma("functionstack", gStack, gFunctionStack)
-      vm_SetArrayFromPragma("evalstack", gEvalStack, gMaxEvalStack)
-      vm_SetArrayFromPragma("globalstack", gVar, gGlobalStack)
-      vm_SetArrayFromPragma("localstack", gLocal, gLocalStack)
+      ; V1.035.0: Separate eval stack and pointer array
+      vm_SetIntFromPragma("evalstack", gMaxEvalStack)
+      vm_SetIntFromPragma("globalstack", gGlobalStack)
+      ; V1.034.65: RecursionFrame pragma for frame pool size
+      vm_SetIntFromPragma("recursionframe", gRecursionFrame)
+      ; V1.035.0: Resize arrays for new architecture
+      ReDim *gVar.stVar(gGlobalStack)
+      ReDim gEvalStack.stVT(gMaxEvalStack)
+      ReDim gFuncActive.b(gGlobalStack)
+      ReDim *gFramePool.stVar(gRecursionFrame)   ; V1.034.65: Resize frame pool
       gFunctionDepth = gFunctionStack - 1
      
       If mapPragmas("floattolerance")
@@ -1553,14 +1648,20 @@ Module C2VM
             filename = "./Examples/" + GetGadgetItemText(#lstExamples, i)
          CompilerEndIf
 
-         ; Clear console (V1.031.84: SetGadgetText for EditorGadget)
-         SetGadgetText(#edConsole, "")
-         ClearDebugOutput()
-
          ; V1.033.33: Stop thread FIRST before clearing VM state to avoid race condition
          If gRunThreaded = #True And IsThread( gthRun )
             vmStopVMThread( gthRun )
          EndIf
+
+         ; V1.034.53: Clear GUI message queue BEFORE clearing console
+         ; This prevents old messages from being processed after console clear
+         LockMutex(gGUIQueueMutex)
+         ClearList(gGUIQueue())
+         UnlockMutex(gGUIQueueMutex)
+
+         ; Clear console AFTER queue is cleared (V1.031.84: SetGadgetText for EditorGadget)
+         SetGadgetText(#edConsole, "")
+         ClearDebugOutput()
 
          ; Clear VM state (now safe since thread is stopped)
          vmClearRun()
@@ -1744,10 +1845,10 @@ Module C2VM
 EndModule
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 1191
-; FirstLine = 1169
-; Folding = --------------
-; Markers = 1303,1398
+; CursorPosition = 79
+; FirstLine = 62
+; Folding = ---------------
+; Markers = 1307,1402
 ; EnableAsm
 ; EnableThread
 ; EnableXP

@@ -1,0 +1,7 @@
+struct Point {
+    x.f;
+    y.f;
+}
+
+pt.Point = { };
+print("Struct created");

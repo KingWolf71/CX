@@ -1,4 +1,4 @@
-; -- lexical parser to VM for a simplified C Language 
+﻿; -- lexical parser to VM for a simplified C Language 
 ; Tested in UTF8
 ; PBx64 v6.20
 ;
@@ -17,12 +17,12 @@
 ; ======================================================================================================
 
 DisableDebugger
-;EnableDebugger  ; V1.031.109: Disabled for performance - Debug statements now suppressed
+EnableDebugger  ; V1.031.109: Disabled for performance - Debug statements now suppressed
 
 DeclareModule C2Common
 
    ;#DEBUG = 0
-   XIncludeFile         "c2-inc-v17.pbi"
+   XIncludeFile         "c2-inc-v18.pbi"
 EndDeclareModule
 
 Module C2Common
@@ -108,8 +108,10 @@ Module C2Lang
       bTypesLocked.i  ; Flag: Types locked on first call
       returnType.w    ; Return type flags (INT/FLOAT/STR)
       List paramTypes.w()  ; Parameter type flags (INT/FLOAT/STR) in order
+      isRecursive.b   ; V1.034.8: Flag: Function calls itself (directly or indirectly)
+      recurseDepth.i  ; V1.034.8: Max recursion depth from #pragma FunctionStack (default 1)
    EndStructure
-   
+
    Structure stMacro
       name.s
       body.s
@@ -160,6 +162,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Global NewMap        mapModules.stModInfo()
    Global NewMap        mapBuiltins.stBuiltinDef()
    Global NewMap        mapVariableTypes.w()  ; Track variable types during parsing (name → type flags)
+   Global NewMap        MapCodeElements.stCodeElement()  ; V1.034.0: Unified code element map for O(1) lookup
+   Global NewMap        MapLocalByOffset.i()  ; V1.034.0: func_offset → slot for local variable lookup
 
    Global               gLineNumber
    Global               gStack
@@ -210,10 +214,132 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    ;- =====================================
    ;- Add compiler parts
    ;- =====================================
+
+   ;- V1.034.1: O(1) Variable Lookup Functions (must be before typeinfer include)
+   ; Find local variable slot by paramOffset (stack position)
+   ; This is O(1) using MapLocalByOffset, with O(N) fallback
+   ; Returns slot index or -1 if not found
+   Procedure.i          FindVariableSlotByOffset(paramOffset.i, functionContext.s)
+      Protected key.s, i.i
+
+      If functionContext = ""
+         ProcedureReturn -1
+      EndIf
+
+      ; Build key: function_offset
+      key = LCase(functionContext) + "_" + Str(paramOffset)
+
+      ; O(1) lookup
+      CompilerIf #DEBUG : Debug "FindVariableSlotByOffset: key=" + key : CompilerEndIf
+      If FindMapElement(MapLocalByOffset(), key)
+         CompilerIf #DEBUG : Debug "  O(1) found slot=" + Str(MapLocalByOffset()) : CompilerEndIf
+         ProcedureReturn MapLocalByOffset()
+      EndIf
+      CompilerIf #DEBUG : Debug "  O(1) miss, falling back to O(N)" : CompilerEndIf
+
+      ; Fallback O(N) scan for variables not yet in map
+      CompilerIf #DEBUG : Debug "FindVariableSlotByOffset: Looking for paramOffset=" + Str(paramOffset) + " func=" + functionContext + " (key=" + key + ")" : CompilerEndIf
+      For i = 0 To gnLastVariable - 1
+         If gVarMeta(i)\paramOffset = paramOffset
+            CompilerIf #DEBUG : Debug "  Found slot " + Str(i) + " name=" + gVarMeta(i)\name + " paramOffset=" + Str(gVarMeta(i)\paramOffset) : CompilerEndIf
+            ; V1.033.42: Handle leading underscore in variable names
+            If LCase(Left(gVarMeta(i)\name, Len(functionContext) + 1)) = LCase(functionContext + "_") Or LCase(Left(gVarMeta(i)\name, Len(functionContext) + 2)) = LCase("_" + functionContext + "_")
+               ProcedureReturn i
+            EndIf
+            ; Synthetic temps ($) also match
+            If Left(gVarMeta(i)\name, 1) = "$"
+               ProcedureReturn i
+            EndIf
+         EndIf
+      Next
+
+      ProcedureReturn -1
+   EndProcedure
+
+   ; V1.034.2: Find variable slot by name with optional function context
+   ; This is O(1) using MapCodeElements, with O(N) fallback
+   ; Returns slot index or -1 if not found
+   Procedure.i          FindVariableSlotByName(name.s, functionContext.s = "")
+      Protected key.s, mangledKey.s, i.i
+
+      ; Try function-local name first (if in function context)
+      If functionContext <> ""
+         mangledKey = LCase(functionContext + "_" + name)
+         If FindMapElement(MapCodeElements(), mangledKey)
+            ProcedureReturn MapCodeElements()\varSlot
+         EndIf
+      EndIf
+
+      ; Try global name
+      key = LCase(name)
+      If FindMapElement(MapCodeElements(), key)
+         ProcedureReturn MapCodeElements()\varSlot
+      EndIf
+
+      ; Fallback O(N) scan for variables not yet in map
+      If functionContext <> ""
+         For i = 0 To gnLastVariable - 1
+            If LCase(gVarMeta(i)\name) = mangledKey
+               ProcedureReturn i
+            EndIf
+         Next
+      EndIf
+
+      For i = 0 To gnLastVariable - 1
+         If LCase(gVarMeta(i)\name) = key
+            ProcedureReturn i
+         EndIf
+      Next
+
+      ProcedureReturn -1
+   EndProcedure
+
+   ; V1.034.2: Find struct variable slot by name (requires #C2FLAG_STRUCT)
+   ; Searches local first, then global. Returns slot index or -1 if not found
+   Procedure.i          FindStructSlotByName(name.s, functionContext.s = "")
+      Protected key.s, mangledKey.s, i.i, mangledName.s
+
+      ; Try function-local mangled name first
+      If functionContext <> ""
+         mangledName = functionContext + "_" + name
+         mangledKey = LCase(mangledName)
+         ; Try O(1) map lookup
+         If FindMapElement(MapCodeElements(), mangledKey)
+            If gVarMeta(MapCodeElements()\varSlot)\flags & #C2FLAG_STRUCT
+               ProcedureReturn MapCodeElements()\varSlot
+            EndIf
+         EndIf
+         ; O(N) fallback for local
+         For i = 1 To gnLastVariable - 1  ; Skip slot 0
+            If LCase(gVarMeta(i)\name) = mangledKey And (gVarMeta(i)\flags & #C2FLAG_STRUCT)
+               ProcedureReturn i
+            EndIf
+         Next
+      EndIf
+
+      ; Try global name
+      key = LCase(name)
+      ; Try O(1) map lookup
+      If FindMapElement(MapCodeElements(), key)
+         If gVarMeta(MapCodeElements()\varSlot)\flags & #C2FLAG_STRUCT
+            ProcedureReturn MapCodeElements()\varSlot
+         EndIf
+      EndIf
+
+      ; O(N) fallback for global
+      For i = 1 To gnLastVariable - 1  ; Skip slot 0
+         If LCase(gVarMeta(i)\name) = key And (gVarMeta(i)\flags & #C2FLAG_STRUCT)
+            ProcedureReturn i
+         EndIf
+      Next
+
+      ProcedureReturn -1
+   EndProcedure
+
    ; V1.033.23: TypeInference + PostProcessor V10 (debugging)
-   XIncludeFile         "c2-typeinfer-V01.pbi"
-   XIncludeFile         "c2-postprocessor-V10.pbi"
-   XIncludeFile         "c2-optimizer-V01.pbi"
+   XIncludeFile         "c2-typeinfer-V02.pbi"
+   XIncludeFile         "c2-postprocessor-V11.pbi"
+   XIncludeFile         "c2-optimizer-V02.pbi"
 
    CreateRegularExpression( #C2REG_FLOATS, gszFloating )
    
@@ -441,30 +567,11 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       gVarMeta(0)\paramOffset = -1  ; Global variable
       gnGlobalVariables = 1  ; V1.020.059: Count slot 0 as first global variable
 
-      ;Read tokens
-      gnTotalTokens = 0
-      Restore c2tokens
-      
-      Repeat
-         Read.s temp
-         If temp = "-" : Break : EndIf
-         gszATR(gnTotalTokens)\s = temp
-         Read m
-         Read n
-         
-         gszATR(gnTotalTokens)\strtoken = n
-         gszATR(gnTotalTokens)\flttoken = m
-         
-         gnTotalTokens + 1
-      ForEver
-
-      ; Ensure arrays are large enough for both runtime count and compile-time enum values
-      If gnTotalTokens < #C2TOKENCOUNT
-         gnTotalTokens = #C2TOKENCOUNT
-      EndIf
-
+      ; V1.034.21: Initialize opcode names inline (replaces DataSection)
+      gnTotalTokens = #C2TOKENCOUNT
       ReDim gPreTable.stPrec(gnTotalTokens)
       ReDim gszATR(gnTotalTokens)
+      _INIT_OPCODE_NAMES  ; Opcode names now defined inline with enum constants
    
       par_SetPre2( #ljEOF, -1 )
       par_SetPre( #ljMULTIPLY,     0, 1, 0, 13 )
@@ -472,6 +579,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       par_SetPre( #ljMOD,          0, 1, 0, 13 )
       par_SetPre( #ljADD,          0, 1, 0, 12 )
       par_SetPre( #ljSUBTRACT,     0, 1, 0, 12 )
+      par_SetPre( #ljSHL,          0, 1, 0, 11 )  ; V1.034.4: Left shift (<<) precedence 11
+      par_SetPre( #ljSHR,          0, 1, 0, 11 )  ; V1.034.4: Right shift (>>) precedence 11
       par_SetPre( #ljNEGATE,       0, 0, 1, 14 )
       par_SetPre( #ljNOT,          0, 0, 1, 14 )
 
@@ -538,6 +647,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       ClearMap( mapMacros() )
       ClearMap( mapModules() )
       ClearMap( mapVariableTypes() )
+      ClearMap( MapCodeElements() )  ; V1.034.0: Clear unified code element map
+      ClearMap( MapLocalByOffset() )  ; V1.034.0: Clear local variable offset map
 
       ; V1.033.47: Reset gGlobalTemplate to match gnLastVariable reset
       ; This prevents stale template data from previous compilations
@@ -608,6 +719,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
 
       ; V1.024.0: C-style control flow
       install( "for", #ljFOR )
+      install( "foreach", #ljFOREACH )  ; V1.034.6: foreach for lists/maps
       install( "switch", #ljSWITCH )
       install( "case", #ljCASE )
       install( "default", #ljDEFAULT_CASE )
@@ -663,8 +775,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    EndProcedure
 
    XIncludeFile         "c2-scanner-v05.pbi"
-   XIncludeFile         "c2-ast-v06.pbi"
-   XIncludeFile         "c2-codegen-v06.pbi"
+   XIncludeFile         "c2-ast-v07.pbi"
+   XIncludeFile         "c2-codegen-v07.pbi"
 
    ;- =====================================
    ;- Preprocessors
@@ -1617,6 +1729,11 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       EndIf
 
       If gExit >= 0
+         ; V1.034.0: Mark function-end NOOPIFs BEFORE jump tracking
+         ; This ensures backward jumps correctly target implicit returns
+         Debug " -- MarkImplicitReturns: Marking function-end NOOPIFs..."
+         MarkImplicitReturns()
+
          ; V1.020.077: Initialize jump tracker BEFORE optimization passes
          ; This allows PostProcessor to call AdjustJumpsForNOOP() with populated tracker
          Debug " -- InitJumpTracker: Calculating initial jump offsets..."
@@ -1794,6 +1911,9 @@ CompilerIf #PB_Compiler_IsMainFile
       Debug "Executing: " + filename
       Debug "==========================================="
 
+      ; V1.034.64: Initialize VM state (including frame pool) BEFORE loading/compiling
+      C2VM::vmClearRun()
+
       If C2Lang::LoadLJ( filename )
          Debug "Error: " + C2Lang::Error( @err )
          If C2VM::gTestMode : PrintN("LOAD ERROR: " + C2Lang::Error( @err )) : EndIf
@@ -1810,16 +1930,19 @@ CompilerIf #PB_Compiler_IsMainFile
             C2VM::RunVM()
          Else
             Debug "Compilation failed - VM not started"
-            If C2VM::gTestMode : PrintN("COMPILATION FAILED - VM not started") : EndIf
+            If C2VM::gTestMode
+               PrintN("COMPILATION FAILED - VM not started")
+               PrintN("Error: " + C2Lang::gszlastError)
+            EndIf
          EndIf
       EndIf
    EndIf
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 1744
-; FirstLine = 1717
-; Folding = --------
+; CursorPosition = 25
+; FirstLine = 16
+; Folding = 0---------
 ; Markers = 569,718
 ; Optimizer
 ; EnableThread
@@ -1828,7 +1951,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2452
+; EnableCompileCount = 2522
 ; EnableBuildCount = 0
 ; EnableExeConstant
 ; IncludeVersionInfo

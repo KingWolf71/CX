@@ -1,22 +1,22 @@
 # LJ2 Implementation Status
-Version: 1.033.57
+Version: 1.034.80
 Date: December 2025
 
 ## Current File Versions
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Main compiler | `c2-modules-V21.pb` | Scanner, preprocessor, main entry |
+| Main compiler | `c2-modules-V22.pb` | Scanner, preprocessor, main entry |
 | Definitions | `c2-inc-v17.pbi` | Constants, opcodes, structures |
-| AST parser | `c2-ast-v06.pbi` | Recursive descent parser |
-| Code generator | `c2-codegen-v06.pbi` | AST to bytecode |
+| AST parser | `c2-ast-v07.pbi` | Recursive descent parser |
+| Code generator | `c2-codegen-v07.pbi` | AST to bytecode (includes FOREACH) |
 | Scanner | `c2-scanner-v05.pbi` | Tokenizer |
-| Type inference | `c2-typeinfer-V01.pbi` | Unified type resolution (NEW) |
-| Postprocessor | `c2-postprocessor-V10.pbi` | Correctness passes only |
-| Optimizer | `c2-optimizer-V01.pbi` | Peephole and fusion optimizations |
+| Type inference | `c2-typeinfer-V02.pbi` | Unified type resolution |
+| Postprocessor | `c2-postprocessor-V11.pbi` | Correctness passes only |
+| Optimizer | `c2-optimizer-V02.pbi` | Consolidated peephole/fusion (5 passes) |
 | VM core | `c2-vm-V16.pb` | Virtual machine execution |
 | VM commands | `c2-vm-commands-v14.pb` | Opcode implementations |
-| Arrays | `c2-arrays-v05.pbi` | Array operations |
+| Arrays | `c2-arrays-v06.pbi` | Array operations (Pointer Array Arch) |
 | Pointers | `c2-pointers-v05.pbi` | Pointer operations |
 | Collections | `c2-collections-v03.pbi` | Lists and Maps |
 | Built-ins | `c2-builtins-v06.pbi` | Built-in functions |
@@ -110,13 +110,16 @@ Date: December 2025
    - Phase B2: Array variant specialization (36 variants)
    - Phase B3: PTRFETCH specialization
    - Phase B4: Print type fixups
-2. **PostProcessor** (c2-postprocessor-V10.pbi) - Correctness passes:
+2. **PostProcessor** (c2-postprocessor-V11.pbi) - Correctness passes:
    - Implicit returns
    - Return value type conversions
    - Collection opcode typing
-3. **Optimizer** (c2-optimizer-V01.pbi) - Performance optimizations:
-   - Peephole optimization
-   - Instruction fusion (LLMOV, etc.)
+3. **Optimizer** (c2-optimizer-V02.pbi) - Consolidated 5-pass optimization:
+   - Pass 1: Array instruction fusion
+   - Pass 2: Unified peephole (dead code, constant folding, MOV fusion, jump opts)
+   - Pass 3: Compound assignment optimization
+   - Pass 4: Preload optimization
+   - Pass 5: PUSH_IMM conversion (must be last)
 
 ## Test Suite
 
@@ -127,7 +130,46 @@ Located in `Examples/`:
 - Mandelbrot set renderer (19)
 - Julia set renderer (21)
 
-## Recent Changes (v1.031.x - v1.033.x)
+## Recent Changes (v1.031.x - v1.034.x)
+
+### v1.034.80
+- **Optimizer V02**: Consolidated optimization passes from 8+ to 5 clean passes
+- **FETCH+STORE → MOV Fusion**: New unified MOV fusion handles all locality combinations:
+  - `FETCH(j=0) + STORE(j=0)` → `MOV(n=0)` (Global→Global)
+  - `FETCH(j=1) + STORE(j=0)` → `MOV(n=1)` (Local→Global)
+  - `FETCH(j=0) + STORE(j=1)` → `MOV(n=2)` (Global→Local)
+  - `FETCH(j=1) + STORE(j=1)` → `MOV(n=3)` (Local→Local)
+- Self-assignment elimination (FETCH x + STORE x → NOOP)
+- ~15% performance improvement on tight integer loops (Test 112: 0.07s → 0.06s)
+- Unified peephole pass includes: dead code, constant folding, MOV fusion, jump opts, double negation, comparison flipping
+
+### v1.034.79
+- Fixed FOREACH opcodes not in VM jump table (runtime crash)
+- Added 12 FOREACH opcode handlers to c2-vm-V16.pb
+- Fixed FOREACH codegen missing from c2-codegen-v07.pbi
+
+### v1.034.77
+- Fixed DEBUG=1 silent crash (empty CompilerIf block in vm_PushInt)
+- Removed debug traces from CALL0/RETURN opcodes
+
+### v1.034.73-76
+- Fixed vm_PushInt/vm_PushFloat macros (removed erroneous pc+1)
+- Added explicit pc+1 to builtin functions
+- Changed PrintN to Debug in bounds checking (GUI mode fix)
+
+### v1.034.0
+- **Major Architecture: Unified Code Element Map**: Added MapCodeElements for O(1) variable lookups
+- New eElementType enumeration (VARIABLE, CONSTANT, FUNCTION, PARAMETER, STRUCT_FIELD, ARRAY)
+- New stCodeElement structure with full metadata including:
+  - Expression chain traversal pointers (*Left, *Right)
+  - Usage flow tracking pointers (*AssignedFrom, *UsedBy)
+  - Type info, flags, scope information
+- O(1) lookup functions: GetCodeElement(), FindVariableSlot(), FindVariableSlotCompat()
+- RegisterCodeElement() syncs gVarMeta entries to map
+- **Fixed Implicit Return Hole Tracking**: MarkImplicitReturns() pre-marks function-end NOOPIFs
+- Added #INST_FLAG_IMPLICIT_RETURN flag to prevent skipping in jump tracking
+- Modified InitJumpTracker LOOPBACK/FORLOOP/CONTINUE skip logic
+- All 66 tests pass
 
 ### v1.033.57
 - **Large Function Support**: Added #C2MAXFUNCTIONS = 8192 constant for function-indexed arrays

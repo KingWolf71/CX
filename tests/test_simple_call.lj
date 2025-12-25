@@ -1,0 +1,5 @@
+// Test simplest possible call
+#pragma console on
+#pragma appname "SimpleCall"
+
+print("Hello");

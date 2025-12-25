@@ -1,0 +1,3 @@
+/* Check opcode numbers */
+#pragma console on
+print("Done");

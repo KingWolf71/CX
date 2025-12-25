@@ -11,8 +11,12 @@
 ;
 ;
 ; Pointer Operations Module
-; Version: 01
+; Version: 05
 ;
+; V1.035.0: POINTER ARRAY ARCHITECTURE
+; - Uses *gVar(gCurrentFuncSlot)\var(offset) for local variable access
+; - Uses gEvalStack[] for evaluation stack
+; - NOTE: C2CALLFUNCPTR needs runtime PC-to-funcSlot lookup (TODO)
 
 ;- Pointer Operations
 
@@ -38,7 +42,7 @@ EndProcedure
 Procedure PeekString(*field, *dest.stVTSimple)
    ; Peek function for string fields - *field is actually slot index as pointer
    Protected slot.i = *field
-   *dest\ss = gVar(slot)\ss
+   *dest\ss = *gVar(slot)\var(0)\ss
 EndProcedure
 
 Procedure PokeInt(*field, *src.stVTSimple)
@@ -54,38 +58,38 @@ EndProcedure
 Procedure PokeString(*field, *src.stVTSimple)
    ; Poke function for string fields - *field is actually slot index as pointer
    Protected slot.i = *field
-   gVar(slot)\ss = *src\ss
+   *gVar(slot)\var(0)\ss = *src\ss
 EndProcedure
 
 ;- Peek/Poke functions for array element dereferencing
 Procedure PeekArrayInt(arraySlot.i, elementIndex.i, *dest.stVTSimple)
    ; Peek function for integer array elements
-   *dest\i = gVar(arraySlot)\dta\ar(elementIndex)\i
+   *dest\i = *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\i
 EndProcedure
 
 Procedure PeekArrayFloat(arraySlot.i, elementIndex.i, *dest.stVTSimple)
    ; Peek function for float array elements
-   *dest\f = gVar(arraySlot)\dta\ar(elementIndex)\f
+   *dest\f = *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\f
 EndProcedure
 
 Procedure PeekArrayString(arraySlot.i, elementIndex.i, *dest.stVTSimple)
    ; Peek function for string array elements
-   *dest\ss = gVar(arraySlot)\dta\ar(elementIndex)\ss
+   *dest\ss = *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\ss
 EndProcedure
 
 Procedure PokeArrayInt(arraySlot.i, elementIndex.i, *src.stVTSimple)
    ; Poke function for integer array elements
-   gVar(arraySlot)\dta\ar(elementIndex)\i = *src\i
+   *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\i = *src\i
 EndProcedure
 
 Procedure PokeArrayFloat(arraySlot.i, elementIndex.i, *src.stVTSimple)
    ; Poke function for float array elements
-   gVar(arraySlot)\dta\ar(elementIndex)\f = *src\f
+   *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\f = *src\f
 EndProcedure
 
 Procedure PokeArrayString(arraySlot.i, elementIndex.i, *src.stVTSimple)
    ; Poke function for string array elements
-   gVar(arraySlot)\dta\ar(elementIndex)\ss = *src\ss
+   *gVar(arraySlot)\var(0)\dta\ar(elementIndex)\ss = *src\ss
 EndProcedure
 
 ;- Initialize function pointers (call once at VM startup)
@@ -105,7 +109,7 @@ Procedure               C2GETADDR()
    vm_DebugFunctionName()
 
    gEvalStack(sp)\i = _AR()\i
-   gEvalStack(sp)\ptr = @gVar(_AR()\i)\i
+   gEvalStack(sp)\ptr = @*gVar(_AR()\i)\var(0)\i
    gEvalStack(sp)\ptrtype = #PTR_INT
 
    sp + 1
@@ -119,7 +123,7 @@ Procedure               C2GETADDRF()
    vm_DebugFunctionName()
 
    gEvalStack(sp)\i = _AR()\i
-   gEvalStack(sp)\ptr = @gVar(_AR()\i)\f
+   gEvalStack(sp)\ptr = @*gVar(_AR()\i)\var(0)\f
    gEvalStack(sp)\ptrtype = #PTR_FLOAT
 
    sp + 1
@@ -143,60 +147,59 @@ EndProcedure
 
 ;- V1.027.2: Local Variable Address Operations (localBase-relative)
 
-; V1.031.26: Fixed to use gLocalBase (current frame) and gLocal[] instead of gStack(gStackDepth)\localBase and gVar[]
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 ; V1.031.34: Use PTR_LOCAL_INT to distinguish local from global pointers
+; V1.035.0: POINTER ARRAY ARCHITECTURE - use *gVar(gCurrentFuncSlot)\var(offset)
 Procedure               C2GETLOCALADDR()
    ; Get address of local integer variable - &localVar
-   ; _AR()\i = paramOffset (local variable's offset from localBase)
-   ; Actual slot = gLocalBase + paramOffset (index into gLocal[])
+   ; _AR()\i = paramOffset (local variable's offset within function)
+   ; V1.035.0: Direct memory address of *gVar(gCurrentFuncSlot)\var(offset)\i
 
    vm_DebugFunctionName()
 
-   Protected actualSlot.i = gLocalBase + _AR()\i
+   Protected localOffset.i = _AR()\i
 
-   gEvalStack(sp)\i = actualSlot
-   gEvalStack(sp)\ptr = @gLocal(actualSlot)\i
+   gEvalStack(sp)\i = localOffset  ; Store offset for reference
+   gEvalStack(sp)\ptr = @*gVar(gCurrentFuncSlot)\var(localOffset)\i
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_INT  ; V1.031.34: Use local pointer type
 
    sp + 1
    pc + 1
 EndProcedure
 
-; V1.031.26: Fixed to use gLocalBase (current frame) and gLocal[] instead of gStack(gStackDepth)\localBase and gVar[]
 ; V1.031.34: Use PTR_LOCAL_FLOAT to distinguish local from global pointers
+; V1.035.0: POINTER ARRAY ARCHITECTURE - use *gVar(gCurrentFuncSlot)\var(offset)
 Procedure               C2GETLOCALADDRF()
    ; Get address of local float variable - &localVar.f
-   ; _AR()\i = paramOffset (local variable's offset from localBase)
-   ; Actual slot = gLocalBase + paramOffset (index into gLocal[])
+   ; _AR()\i = paramOffset (local variable's offset within function)
+   ; V1.035.0: Direct memory address of *gVar(gCurrentFuncSlot)\var(offset)\f
 
    vm_DebugFunctionName()
 
-   Protected actualSlot.i = gLocalBase + _AR()\i
+   Protected localOffset.i = _AR()\i
 
-   gEvalStack(sp)\i = actualSlot
-   gEvalStack(sp)\ptr = @gLocal(actualSlot)\f
+   gEvalStack(sp)\i = localOffset  ; Store offset for reference
+   gEvalStack(sp)\ptr = @*gVar(gCurrentFuncSlot)\var(localOffset)\f
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_FLOAT  ; V1.031.34: Use local pointer type
 
    sp + 1
    pc + 1
 EndProcedure
 
-; V1.031.26: Fixed to use gLocalBase (current frame) and gLocal[] instead of gStack(gStackDepth)\localBase and gVar[]
 ; V1.031.34: Use PTR_LOCAL_STRING to distinguish local from global pointers
+; V1.035.0: POINTER ARRAY ARCHITECTURE - use *gVar(gCurrentFuncSlot)\var(offset)
 Procedure               C2GETLOCALADDRS()
    ; Get address of local string variable - &localVar.s
-   ; _AR()\i = paramOffset (local variable's offset from localBase)
-   ; Actual slot = gLocalBase + paramOffset (index into gLocal[])
-   ; Note: For strings, we store slot index not memory address (managed type)
-   ; V1.031.34: Copy string value for safety (avoids dangling pointer issues)
+   ; _AR()\i = paramOffset (local variable's offset within function)
+   ; V1.035.0: Store offset; strings are managed types, copy value for safety
 
    vm_DebugFunctionName()
 
-   Protected actualSlot.i = gLocalBase + _AR()\i
+   Protected localOffset.i = _AR()\i
 
-   gEvalStack(sp)\i = actualSlot
-   gEvalStack(sp)\ptr = actualSlot
-   gEvalStack(sp)\ss = gLocal(actualSlot)\ss  ; V1.031.34: Copy string value for safety
+   gEvalStack(sp)\i = localOffset  ; Store offset for reference
+   gEvalStack(sp)\ptr = localOffset  ; For strings, ptr holds offset (managed type)
+   gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(localOffset)\ss  ; Copy string value for safety
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_STRING  ; V1.031.34: Use local pointer type
 
    sp + 1
@@ -222,25 +225,25 @@ Procedure               C2PTRFETCH()
 
       Case #PTR_STRING
          ; V1.19.4: Cross-populate \i with string length for assertEqual detection
-         gEvalStack(sp)\ss = gVar(gEvalStack(sp)\ptr)\ss
+         gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\ptr)\var(0)\ss
          gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
 
       Case #PTR_ARRAY_INT
-         gEvalStack(sp)\i = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i
+         gEvalStack(sp)\i = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\i
 
       Case #PTR_ARRAY_FLOAT
-         gEvalStack(sp)\f = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f
+         gEvalStack(sp)\f = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\f
 
       Case #PTR_ARRAY_STRING
          ; V1.19.4: Cross-populate \i with string length for assertEqual detection
-         gEvalStack(sp)\ss = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
+         gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\ss
          gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
 
       Default
          ; V1.021.11: When ptrtype=0 (metadata not copied by FETCH), use slot-based dereference
          ; This happens when generic PTRFETCH is used instead of typed PTRFETCH_INT
          ; The \i field contains the slot index of the target variable
-         gEvalStack(sp)\i = gVar(gEvalStack(sp)\i)\i
+         gEvalStack(sp)\i = *gVar(gEvalStack(sp)\i)\var(0)\i
 
    EndSelect
 
@@ -262,10 +265,10 @@ Procedure               C2PTRFETCH_INT()
    ; Check pointer type to determine fetch strategy
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_INT
       ; Global array element pointer: use ptr field for array slot, i field for index
-      gEvalStack(sp)\i = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i
+      gEvalStack(sp)\i = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\i
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_INT
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
-      gEvalStack(sp)\i = gLocal(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i
+      ; V1.035.0: Local array element pointer: use *gVar(gCurrentFuncSlot)\var(offset)
+      gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_INT
       ; V1.031.34: Local simple variable pointer: use PeekI on actual memory address
       gEvalStack(sp)\i = PeekI(gEvalStack(sp)\ptr)
@@ -283,7 +286,7 @@ Procedure               C2PTRFETCH_INT()
          EndIf
       CompilerEndIf
 
-      gEvalStack(sp)\i = gVar(gEvalStack(sp)\i)\i
+      gEvalStack(sp)\i = *gVar(gEvalStack(sp)\i)\var(0)\i
    EndIf
 
    sp + 1
@@ -304,10 +307,10 @@ Procedure               C2PTRFETCH_FLOAT()
    ; Check pointer type to determine fetch strategy
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_FLOAT
       ; Global array element pointer: use ptr field for array slot, i field for index
-      gEvalStack(sp)\f = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f
+      gEvalStack(sp)\f = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\f
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_FLOAT
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
-      gEvalStack(sp)\f = gLocal(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f
+      ; V1.031.22: Local array element pointer: use gStorage[] instead of gVar[]
+      gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_FLOAT
       ; V1.031.34: Local simple variable pointer: use PeekD on actual memory address
       gEvalStack(sp)\f = PeekD(gEvalStack(sp)\ptr)
@@ -325,7 +328,7 @@ Procedure               C2PTRFETCH_FLOAT()
          EndIf
       CompilerEndIf
 
-      gEvalStack(sp)\f = gVar(gEvalStack(sp)\i)\f
+      gEvalStack(sp)\f = *gVar(gEvalStack(sp)\i)\var(0)\f
    EndIf
 
    sp + 1
@@ -337,7 +340,7 @@ Procedure               C2PTRFETCH_STR()
    ; Top of stack contains pointer (slot index or array pointer)
    ; V1.20.24: Handle both PTR_STRING and PTR_ARRAY_STRING
    ; V1.031.22: Handle PTR_LOCAL_ARRAY_STRING
-   ; V1.031.34: Handle PTR_LOCAL_STRING using gLocal[] or pre-copied \ss
+   ; V1.031.34: Handle PTR_LOCAL_STRING using gStorage[] or pre-copied \ss
 
    vm_DebugFunctionName()
 
@@ -346,21 +349,21 @@ Procedure               C2PTRFETCH_STR()
    ; Check pointer type to determine fetch strategy
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_STRING
       ; Global array element pointer: use ptr field for array slot, i field for index
-      gEvalStack(sp)\ss = gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
+      gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\ss
       gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)  ; Cross-populate for assertEqual
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_STRING
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
-      gEvalStack(sp)\ss = gLocal(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
+      ; V1.031.22: Local array element pointer: use gStorage[] instead of gVar[]
+      gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
       gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)  ; Cross-populate for assertEqual
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_STRING
-      ; V1.031.35: Local simple string variable: fetch from gLocal[] using stored slot index
-      ; \i contains the actual slot (gLocalBase + paramOffset from GETLOCALADDRS)
+      ; V1.031.35: Local simple string variable: fetch from gStorage[] using stored slot index
+      ; V1.035.0: \i contains the paramOffset (for local variable access via gCurrentFuncSlot)
       ; Note: This is safe as long as we're still in the same function scope
-      gEvalStack(sp)\ss = gLocal(gEvalStack(sp)\i)\ss
+      gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(gEvalStack(sp)\i)\ss
       gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)  ; Cross-populate for assertEqual
    ElseIf gEvalStack(sp)\ptrtype = #PTR_STRING
-      ; Global simple string variable: use gVar[]
-      gEvalStack(sp)\ss = gVar(gEvalStack(sp)\i)\ss
+      ; Global simple string variable: use *gVar(slot)\var(0)
+      gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\i)\var(0)\ss
       gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)  ; Cross-populate for assertEqual
    Else
       ; Fallback for unknown types: use slot-based access (legacy)
@@ -373,7 +376,7 @@ Procedure               C2PTRFETCH_STR()
          EndIf
       CompilerEndIf
 
-      gEvalStack(sp)\ss = gVar(gEvalStack(sp)\i)\ss
+      gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\i)\var(0)\ss
       gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)  ; Cross-populate for assertEqual
    EndIf
 
@@ -403,36 +406,36 @@ Procedure               C2PTRSTORE()
 
       Case #PTR_STRING
          sp - 1
-         gVar(gEvalStack(sp + 1)\ptr)\ss = gEvalStack(sp)\ss
+         *gVar(gEvalStack(sp + 1)\ptr)\var(0)\ss = gEvalStack(sp)\ss
 
-      Case #PTR_LOCAL_STRING  ; V1.031.34: Local string pointer stores to gLocal[]
+      Case #PTR_LOCAL_STRING  ; V1.031.34: Local string pointer stores to gStorage[]
          sp - 1
-         gLocal(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+         *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
 
       Case #PTR_ARRAY_INT
          sp - 1
-         gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
+         *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
 
       Case #PTR_ARRAY_FLOAT
          sp - 1
-         gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
+         *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
 
       Case #PTR_ARRAY_STRING
          sp - 1
-         gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+         *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
 
       ; V1.031.22: Local array pointer types
       Case #PTR_LOCAL_ARRAY_INT
          sp - 1
-         gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
+         *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
 
       Case #PTR_LOCAL_ARRAY_FLOAT
          sp - 1
-         gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
+         *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
 
       Case #PTR_LOCAL_ARRAY_STRING
          sp - 1
-         gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+         *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
 
       Default
          CompilerIf #DEBUG
@@ -460,11 +463,11 @@ Procedure               C2PTRSTORE_INT()
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_INT
       ; Global array element pointer: use ptr field for array slot, i field for index
       sp - 1
-      gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
+      *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_INT
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
+      ; V1.031.22: Local array element pointer: use gStorage[] instead of gVar[]
       sp - 1
-      gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
+      *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_INT Or gEvalStack(sp)\ptrtype = #PTR_INT
       ; V1.031.34: Simple variable pointer: use PokeI on actual memory address
       sp - 1
@@ -481,7 +484,7 @@ Procedure               C2PTRSTORE_INT()
       CompilerEndIf
 
       sp - 1
-      gVar(gEvalStack(sp + 1)\i)\i = gEvalStack(sp)\i
+      *gVar(gEvalStack(sp + 1)\i)\var(0)\i = gEvalStack(sp)\i
    EndIf
 
    pc + 1
@@ -502,11 +505,11 @@ Procedure               C2PTRSTORE_FLOAT()
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_FLOAT
       ; Global array element pointer: use ptr field for array slot, i field for index
       sp - 1
-      gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
+      *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_FLOAT
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
+      ; V1.031.22: Local array element pointer: use gStorage[] instead of gVar[]
       sp - 1
-      gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
+      *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_FLOAT Or gEvalStack(sp)\ptrtype = #PTR_FLOAT
       ; V1.031.34: Simple variable pointer: use PokeD on actual memory address
       sp - 1
@@ -523,7 +526,7 @@ Procedure               C2PTRSTORE_FLOAT()
       CompilerEndIf
 
       sp - 1
-      gVar(gEvalStack(sp + 1)\i)\f = gEvalStack(sp)\f
+      *gVar(gEvalStack(sp + 1)\i)\var(0)\f = gEvalStack(sp)\f
    EndIf
 
    pc + 1
@@ -534,7 +537,7 @@ Procedure               C2PTRSTORE_STR()
    ; Stack: [value] [pointer]
    ; V1.20.24: Handle both PTR_STRING and PTR_ARRAY_STRING
    ; V1.031.22: Handle PTR_LOCAL_ARRAY_STRING
-   ; V1.031.34: Handle PTR_LOCAL_STRING using gLocal[]
+   ; V1.031.34: Handle PTR_LOCAL_STRING using gStorage[]
 
    vm_DebugFunctionName()
 
@@ -544,19 +547,19 @@ Procedure               C2PTRSTORE_STR()
    If gEvalStack(sp)\ptrtype = #PTR_ARRAY_STRING
       ; Global array element pointer: use ptr field for array slot, i field for index
       sp - 1
-      gVar(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+      *gVar(gEvalStack(sp + 1)\ptr)\var(0)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_STRING
-      ; V1.031.22: Local array element pointer: use gLocal[] instead of gVar[]
+      ; V1.031.22: Local array element pointer: use gStorage[] instead of gVar[]
       sp - 1
-      gLocal(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+      *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\ptr)\dta\ar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
    ElseIf gEvalStack(sp)\ptrtype = #PTR_LOCAL_STRING
-      ; V1.031.34: Local simple string variable: use gLocal[]
+      ; V1.031.34: Local simple string variable: use gStorage[]
       sp - 1
-      gLocal(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+      *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
    ElseIf gEvalStack(sp)\ptrtype = #PTR_STRING
-      ; Global simple string variable: use gVar[]
+      ; Global simple string variable: use *gVar(slot)\var(0)
       sp - 1
-      gVar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+      *gVar(gEvalStack(sp + 1)\i)\var(0)\ss = gEvalStack(sp)\ss
    Else
       ; Fallback for unknown types: use slot-based access (legacy)
       ; Bounds check
@@ -569,7 +572,7 @@ Procedure               C2PTRSTORE_STR()
       CompilerEndIf
 
       sp - 1
-      gVar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+      *gVar(gEvalStack(sp + 1)\i)\var(0)\ss = gEvalStack(sp)\ss
    EndIf
 
    pc + 1
@@ -645,26 +648,26 @@ Procedure               C2PTRINC()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
          ; Array pointer (global or local): increment element index
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
 
       Case #PTR_INT
          ; Integer pointer: increment memory address by 8 bytes (sizeof Integer)
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
 
       Case #PTR_FLOAT
          ; Float pointer: increment memory address by 8 bytes (sizeof Double)
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
 
       Case #PTR_STRING
          ; String pointer: increment slot index by 1
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
 
    EndSelect
 
@@ -681,26 +684,26 @@ Procedure               C2PTRDEC()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
          ; Array pointer (global or local): decrement element index
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
 
       Case #PTR_INT
          ; Integer pointer: decrement memory address by 8 bytes
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
 
       Case #PTR_FLOAT
          ; Float pointer: decrement memory address by 8 bytes
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
 
       Case #PTR_STRING
          ; String pointer: decrement slot index by 1
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
 
    EndSelect
 
@@ -717,25 +720,25 @@ Procedure               C2PTRINC_PRE()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Increment pointer
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
       Case #PTR_INT
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
       Case #PTR_FLOAT
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
       Case #PTR_STRING
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
    EndSelect
 
    ; Push new pointer value to stack
-   gEvalStack(sp)\i = gVar(varSlot)\i
-   gEvalStack(sp)\ptr = gVar(varSlot)\ptr
+   gEvalStack(sp)\i = *gVar(varSlot)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(varSlot)\var(0)\ptr
    gEvalStack(sp)\ptrtype = ptrType
    sp + 1
 
@@ -752,25 +755,25 @@ Procedure               C2PTRDEC_PRE()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Decrement pointer
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
       Case #PTR_INT
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
       Case #PTR_FLOAT
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
       Case #PTR_STRING
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
    EndSelect
 
    ; Push new pointer value to stack
-   gEvalStack(sp)\i = gVar(varSlot)\i
-   gEvalStack(sp)\ptr = gVar(varSlot)\ptr
+   gEvalStack(sp)\i = *gVar(varSlot)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(varSlot)\var(0)\ptr
    gEvalStack(sp)\ptrtype = ptrType
    sp + 1
 
@@ -787,26 +790,26 @@ Procedure               C2PTRINC_POST()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Push old pointer value to stack
-   gEvalStack(sp)\i = gVar(varSlot)\i
-   gEvalStack(sp)\ptr = gVar(varSlot)\ptr
+   gEvalStack(sp)\i = *gVar(varSlot)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(varSlot)\var(0)\ptr
    gEvalStack(sp)\ptrtype = ptrType
    sp + 1
 
    ; Increment pointer
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
       Case #PTR_INT
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
       Case #PTR_FLOAT
-         gVar(varSlot)\i + 1
-         gVar(varSlot)\ptr + 8
+         *gVar(varSlot)\var(0)\i + 1
+         *gVar(varSlot)\var(0)\ptr + 8
       Case #PTR_STRING
-         gVar(varSlot)\i + 1
+         *gVar(varSlot)\var(0)\i + 1
    EndSelect
 
    pc + 1
@@ -822,26 +825,26 @@ Procedure               C2PTRDEC_POST()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Push old pointer value to stack
-   gEvalStack(sp)\i = gVar(varSlot)\i
-   gEvalStack(sp)\ptr = gVar(varSlot)\ptr
+   gEvalStack(sp)\i = *gVar(varSlot)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(varSlot)\var(0)\ptr
    gEvalStack(sp)\ptrtype = ptrType
    sp + 1
 
    ; Decrement pointer
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
       Case #PTR_INT
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
       Case #PTR_FLOAT
-         gVar(varSlot)\i - 1
-         gVar(varSlot)\ptr - 8
+         *gVar(varSlot)\var(0)\i - 1
+         *gVar(varSlot)\var(0)\ptr - 8
       Case #PTR_STRING
-         gVar(varSlot)\i - 1
+         *gVar(varSlot)\var(0)\i - 1
    EndSelect
 
    pc + 1
@@ -860,7 +863,7 @@ Procedure               C2PTRADD_ASSIGN()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Pop offset from stack
    sp - 1
@@ -870,21 +873,21 @@ Procedure               C2PTRADD_ASSIGN()
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
          ; Array pointer (global or local): add to element index
-         gVar(varSlot)\i + offset
+         *gVar(varSlot)\var(0)\i + offset
 
       Case #PTR_INT
          ; Integer pointer: add offset * 8 to memory address
-         gVar(varSlot)\i + offset
-         gVar(varSlot)\ptr + (offset * 8)
+         *gVar(varSlot)\var(0)\i + offset
+         *gVar(varSlot)\var(0)\ptr + (offset * 8)
 
       Case #PTR_FLOAT
          ; Float pointer: add offset * 8 to memory address
-         gVar(varSlot)\i + offset
-         gVar(varSlot)\ptr + (offset * 8)
+         *gVar(varSlot)\var(0)\i + offset
+         *gVar(varSlot)\var(0)\ptr + (offset * 8)
 
       Case #PTR_STRING
          ; String pointer: add to slot index
-         gVar(varSlot)\i + offset
+         *gVar(varSlot)\var(0)\i + offset
 
    EndSelect
 
@@ -902,7 +905,7 @@ Procedure               C2PTRSUB_ASSIGN()
    vm_DebugFunctionName()
 
    varSlot = _AR()\i
-   ptrType = gVar(varSlot)\ptrtype
+   ptrType = *gVar(varSlot)\var(0)\ptrtype
 
    ; Pop offset from stack
    sp - 1
@@ -912,21 +915,21 @@ Procedure               C2PTRSUB_ASSIGN()
    Select ptrType
       Case #PTR_ARRAY_INT, #PTR_ARRAY_FLOAT, #PTR_ARRAY_STRING, #PTR_LOCAL_ARRAY_INT, #PTR_LOCAL_ARRAY_FLOAT, #PTR_LOCAL_ARRAY_STRING
          ; Array pointer (global or local): subtract from element index
-         gVar(varSlot)\i - offset
+         *gVar(varSlot)\var(0)\i - offset
 
       Case #PTR_INT
          ; Integer pointer: subtract offset * 8 from memory address
-         gVar(varSlot)\i - offset
-         gVar(varSlot)\ptr - (offset * 8)
+         *gVar(varSlot)\var(0)\i - offset
+         *gVar(varSlot)\var(0)\ptr - (offset * 8)
 
       Case #PTR_FLOAT
          ; Float pointer: subtract offset * 8 from memory address
-         gVar(varSlot)\i - offset
-         gVar(varSlot)\ptr - (offset * 8)
+         *gVar(varSlot)\var(0)\i - offset
+         *gVar(varSlot)\var(0)\ptr - (offset * 8)
 
       Case #PTR_STRING
          ; String pointer: subtract from slot index
-         gVar(varSlot)\i - offset
+         *gVar(varSlot)\var(0)\i - offset
 
    EndSelect
 
@@ -947,8 +950,14 @@ Procedure               C2GETFUNCADDR()
 EndProcedure
 
 Procedure               C2CALLFUNCPTR()
-   ; V1.31.0: Updated for Isolated Variable System
-   ; Call function through pointer
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE - TODO
+   ; Function pointer calls need runtime funcSlot lookup (PC -> funcSlot mapping)
+   ; This is currently NOT IMPLEMENTED - will print warning and continue
+   ;
+   ; For proper implementation, we need either:
+   ; 1. Store funcSlot alongside PC in the pointer (requires modifying GETFUNCADDR)
+   ; 2. Create a PC-to-funcSlot lookup table during code generation
+   ;
    ; _AR()\j = parameter count
    ; _AR()\n = local variable count
    ; _AR()\ndx = local array count
@@ -956,8 +965,8 @@ Procedure               C2CALLFUNCPTR()
    ; Stack layout: [param1] [param2] ... [paramN] [funcPtr]
 
    Protected      nParams.l, nLocals.l, totalVars.l, nLocalArrays.l
-   Protected      i.l, funcPc.l
-   Protected      savedLocalBase.l
+   Protected      i.l, funcPc.l, funcSlot.l, funcId.l
+   Protected      *newFrame.stVar
    vm_DebugFunctionName()
 
    ; Read parameters from instruction
@@ -979,6 +988,23 @@ Procedure               C2CALLFUNCPTR()
       EndIf
    CompilerEndIf
 
+   ; V1.035.0: Look up funcSlot from PC
+   ; Scan gFuncTemplates to find which function this PC belongs to
+   funcSlot = -1
+   For funcId = 0 To gnFuncTemplateCount - 1
+      If gFuncTemplates(funcId)\funcSlot >= 0
+         ; Check if PC matches (would need to store startPC in template - approximate for now)
+         funcSlot = gFuncTemplates(funcId)\funcSlot
+         ; TODO: Proper PC matching - for now use last matched as fallback
+      EndIf
+   Next
+
+   ; If we couldn't find funcSlot, report error
+   If funcSlot < 0
+      Debug "*** ERROR: CALLFUNCPTR cannot determine funcSlot for pc=" + Str(funcPc) + " - using slot 0 as fallback"
+      funcSlot = gnGlobalVariables  ; First function slot as fallback
+   EndIf
+
    ; Create stack frame
    gStackDepth = gStackDepth + 1
 
@@ -988,32 +1014,36 @@ Procedure               C2CALLFUNCPTR()
          gExitApplication = #True
          ProcedureReturn
       EndIf
-      If gLocalTop + totalVars >= gLocalStack
-         Debug "*** FATAL ERROR: Local variable overflow in function pointer call at pc=" + Str(pc)
-         gExitApplication = #True
-         ProcedureReturn
-      EndIf
    CompilerEndIf
-
-   ; V1.31.0: Save caller's localBase and set new frame base
-   savedLocalBase = gLocalBase
-   gLocalBase = gLocalTop
 
    ; Save stack frame info
    gStack(gStackDepth)\pc = pc + 1
    gStack(gStackDepth)\sp = sp - nParams
-   gStack(gStackDepth)\localBase = savedLocalBase
+   gStack(gStackDepth)\funcSlot = funcSlot
    gStack(gStackDepth)\localCount = totalVars
 
-   ; V1.31.0: Copy parameters from gEvalStack[] to gLocal[] in reverse order
-   ; Codegen assigns: last declared param → LOCAL[0], first declared → LOCAL[N-1]
-   ; Caller pushes in declaration order, so we copy last pushed to LOCAL[0]
+   ; V1.035.0: Check if function slot is already active (recursion)
+   If gFuncActive(funcSlot)
+      ; Recursion: allocate new frame and swap pointer
+      *newFrame = AllocateStructure(stVar)
+      ReDim *newFrame\var(totalVars - 1)
+      gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
+      gStack(gStackDepth)\isAllocated = #True
+      *gVar(funcSlot) = *newFrame
+   Else
+      ; First call: allocate/resize existing slot
+      If Not *gVar(funcSlot)
+         *gVar(funcSlot) = AllocateStructure(stVar)
+      EndIf
+      ReDim *gVar(funcSlot)\var(totalVars - 1)
+      gStack(gStackDepth)\savedFrame = #Null
+      gStack(gStackDepth)\isAllocated = #False
+      gFuncActive(funcSlot) = #True
+   EndIf
+
+   ; Copy parameters from eval stack to function locals (reverse order)
    For i = 0 To nParams - 1
-      gLocal(gLocalBase + i)\i = gEvalStack(sp - 1 - i)\i
-      gLocal(gLocalBase + i)\f = gEvalStack(sp - 1 - i)\f
-      gLocal(gLocalBase + i)\ss = gEvalStack(sp - 1 - i)\ss
-      gLocal(gLocalBase + i)\ptr = gEvalStack(sp - 1 - i)\ptr
-      gLocal(gLocalBase + i)\ptrtype = gEvalStack(sp - 1 - i)\ptrtype
+      CopyStructure(gEvalStack(sp - 1 - i), *gVar(funcSlot)\var(i), stVTSimple)
    Next
 
    ; Pop parameters from evaluation stack
@@ -1024,8 +1054,8 @@ Procedure               C2CALLFUNCPTR()
       Debug "*** WARNING: Function pointer calls do not support local arrays at pc=" + Str(pc)
    EndIf
 
-   ; V1.31.0: Allocate local slots
-   gLocalTop = gLocalTop + totalVars
+   ; Set current function slot for local variable access
+   gCurrentFuncSlot = funcSlot
 
    pc = funcPc
    gFunctionDepth = gFunctionDepth + 1
@@ -1051,8 +1081,8 @@ Procedure               C2GETARRAYADDR()
 
    ; Bounds check
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gVar(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETARRAYADDR: " + Str(elementIndex) + " (size: " + Str(gVar(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(arraySlot)\var(0)\dta\size
+         Debug "Array index out of bounds in GETARRAYADDR: " + Str(elementIndex) + " (size: " + Str(*gVar(arraySlot)\var(0)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
@@ -1084,8 +1114,8 @@ Procedure               C2GETARRAYADDRF()
 
    ; Bounds check
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gVar(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETARRAYADDRF: " + Str(elementIndex) + " (size: " + Str(gVar(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(arraySlot)\var(0)\dta\size
+         Debug "Array index out of bounds in GETARRAYADDRF: " + Str(elementIndex) + " (size: " + Str(*gVar(arraySlot)\var(0)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
@@ -1117,8 +1147,8 @@ Procedure               C2GETARRAYADDRS()
 
    ; Bounds check
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gVar(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETARRAYADDRS: " + Str(elementIndex) + " (size: " + Str(gVar(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(arraySlot)\var(0)\dta\size
+         Debug "Array index out of bounds in GETARRAYADDRS: " + Str(elementIndex) + " (size: " + Str(*gVar(arraySlot)\var(0)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
@@ -1137,35 +1167,35 @@ EndProcedure
 
 ;- V1.027.2: Local Array Pointer GETADDR Operations (localBase-relative)
 
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure               C2GETLOCALARRAYADDR()
    ; Get address of local integer array element - &localArr[i]
    ; _AR()\i = array paramOffset (offset from localBase)
    ; Stack top = element index
-   ; Actual array slot = gLocalBase + paramOffset (index into gLocal[])
-   ; V1.031.22: Fixed to use gLocal[] and PTR_LOCAL_ARRAY_INT
+   ; V1.035.0: arraySlot = paramOffset (index into *gVar(gCurrentFuncSlot)\var())
+   ; V1.031.22: Fixed to use gStorage[] and PTR_LOCAL_ARRAY_INT
 
    Protected arraySlot.i, elementIndex.i
 
    vm_DebugFunctionName()
 
-   arraySlot = gLocalBase + _AR()\i
+   arraySlot = _AR()\i
 
    ; Pop index from stack
    sp - 1
    elementIndex = gEvalStack(sp)\i
 
-   ; Bounds check - V1.031.22: Use gLocal[] not gVar[]
+   ; Bounds check - V1.031.22: Use gStorage[] not gVar[]
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gLocal(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETLOCALARRAYADDR: " + Str(elementIndex) + " (size: " + Str(gLocal(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size
+         Debug "Array index out of bounds in GETLOCALARRAYADDR: " + Str(elementIndex) + " (size: " + Str(*gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
 
    ; Set up pointer structure
-   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gLocal[])
+   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gStorage[])
    gEvalStack(sp)\i = elementIndex ; Store current element index
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_INT  ; V1.031.22: Use LOCAL type
 
@@ -1173,35 +1203,35 @@ Procedure               C2GETLOCALARRAYADDR()
    pc + 1
 EndProcedure
 
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure               C2GETLOCALARRAYADDRF()
    ; Get address of local float array element - &localArr.f[i]
    ; _AR()\i = array paramOffset (offset from localBase)
    ; Stack top = element index
-   ; Actual array slot = gLocalBase + paramOffset (index into gLocal[])
-   ; V1.031.22: Fixed to use gLocal[] and PTR_LOCAL_ARRAY_FLOAT
+   ; V1.035.0: arraySlot = paramOffset (index into *gVar(gCurrentFuncSlot)\var())
+   ; V1.031.22: Fixed to use gStorage[] and PTR_LOCAL_ARRAY_FLOAT
 
    Protected arraySlot.i, elementIndex.i
 
    vm_DebugFunctionName()
 
-   arraySlot = gLocalBase + _AR()\i
+   arraySlot = _AR()\i
 
    ; Pop index from stack
    sp - 1
    elementIndex = gEvalStack(sp)\i
 
-   ; Bounds check - V1.031.22: Use gLocal[] not gVar[]
+   ; Bounds check - V1.031.22: Use gStorage[] not gVar[]
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gLocal(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETLOCALARRAYADDRF: " + Str(elementIndex) + " (size: " + Str(gLocal(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size
+         Debug "Array index out of bounds in GETLOCALARRAYADDRF: " + Str(elementIndex) + " (size: " + Str(*gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
 
    ; Set up pointer structure
-   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gLocal[])
+   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gStorage[])
    gEvalStack(sp)\i = elementIndex ; Store current element index
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_FLOAT  ; V1.031.22: Use LOCAL type
 
@@ -1209,35 +1239,35 @@ Procedure               C2GETLOCALARRAYADDRF()
    pc + 1
 EndProcedure
 
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure               C2GETLOCALARRAYADDRS()
    ; Get address of local string array element - &localArr.s[i]
    ; _AR()\i = array paramOffset (offset from localBase)
    ; Stack top = element index
-   ; Actual array slot = gLocalBase + paramOffset (index into gLocal[])
-   ; V1.031.22: Fixed to use gLocal[] and PTR_LOCAL_ARRAY_STRING
+   ; V1.035.0: arraySlot = paramOffset (index into *gVar(gCurrentFuncSlot)\var())
+   ; V1.031.22: Fixed to use gStorage[] and PTR_LOCAL_ARRAY_STRING
 
    Protected arraySlot.i, elementIndex.i
 
    vm_DebugFunctionName()
 
-   arraySlot = gLocalBase + _AR()\i
+   arraySlot = _AR()\i
 
    ; Pop index from stack
    sp - 1
    elementIndex = gEvalStack(sp)\i
 
-   ; Bounds check - V1.031.22: Use gLocal[] not gVar[]
+   ; Bounds check - V1.031.22: Use gStorage[] not gVar[]
    CompilerIf #DEBUG
-      If elementIndex < 0 Or elementIndex >= gLocal(arraySlot)\dta\size
-         Debug "Array index out of bounds in GETLOCALARRAYADDRS: " + Str(elementIndex) + " (size: " + Str(gLocal(arraySlot)\dta\size) + ") at pc=" + Str(pc)
+      If elementIndex < 0 Or elementIndex >= *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size
+         Debug "Array index out of bounds in GETLOCALARRAYADDRS: " + Str(elementIndex) + " (size: " + Str(*gVar(gCurrentFuncSlot)\var(arraySlot)\dta\size) + ") at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
 
    ; Set up pointer structure
-   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gLocal[])
+   gEvalStack(sp)\ptr = arraySlot  ; Store actual array slot as pointer value (into gStorage[])
    gEvalStack(sp)\i = elementIndex ; Store current element index
    gEvalStack(sp)\ptrtype = #PTR_LOCAL_ARRAY_STRING  ; V1.031.22: Use LOCAL type
 
@@ -1253,83 +1283,100 @@ EndProcedure
 ; This keeps general opcodes (MOV, FETCH, STORE, etc.) clean and fast
 
 Procedure               C2PMOV()
-   ; Pointer-only MOV - Always copies pointer metadata
+   ; V1.034.32: Unified PMOV using n field for locality encoding
+   ; n=0: GG (both global), n=1: LG (local src, global dst), n=2: GL (global src, local dst), n=3: LL (both local)
+   ; i = destination slot/paramOffset, j = source slot/paramOffset
    vm_DebugFunctionName()
 
-   gVar( _AR()\i )\i = gVar( _AR()\j )\i
-   gVar( _AR()\i )\ptr = gVar( _AR()\j )\ptr
-   gVar( _AR()\i )\ptrtype = gVar( _AR()\j )\ptrtype
+   Select _AR()\n
+      Case 0 ; GG: both global
+         *gVar( _AR()\i )\var(0)\i = *gVar( _AR()\j )\var(0)\i
+         *gVar( _AR()\i )\var(0)\ptr = *gVar( _AR()\j )\var(0)\ptr
+         *gVar( _AR()\i )\var(0)\ptrtype = *gVar( _AR()\j )\var(0)\ptrtype
+      Case 1 ; LG: local source -> global dest
+         *gVar( _AR()\i )\var(0)\i = *gVar(gCurrentFuncSlot)\var(_AR()\j)\i
+         *gVar( _AR()\i )\var(0)\ptr = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptr
+         *gVar( _AR()\i )\var(0)\ptrtype = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptrtype
+      Case 2 ; GL: global source -> local dest
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar( _AR()\j )\var(0)\i
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr = *gVar( _AR()\j )\var(0)\ptr
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype = *gVar( _AR()\j )\var(0)\ptrtype
+      Case 3 ; LL: both local
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar(gCurrentFuncSlot)\var(_AR()\j)\i
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptr
+         *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptrtype
+   EndSelect
 
    pc + 1
 EndProcedure
 
 Procedure               C2PFETCH()
-   ; V1.31.0: Pointer-only FETCH - gVar[] to gEvalStack[]
+   ; V1.034.24: Unified pointer FETCH using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
 
-   gEvalStack(sp)\i = gVar( _AR()\i )\i
-   gEvalStack(sp)\ptr = gVar( _AR()\i )\ptr
-   gEvalStack(sp)\ptrtype = gVar( _AR()\i )\ptrtype
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
 
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PSTORE()
-   ; V1.31.0: Pointer-only STORE - gEvalStack[] to gVar[]
+   ; V1.034.24: Unified pointer STORE using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
    sp - 1
 
-   gVar( _AR()\i )\i = gEvalStack(sp)\i
-   gVar( _AR()\i )\ptr = gEvalStack(sp)\ptr
-   gVar( _AR()\i )\ptrtype = gEvalStack(sp)\ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\ptr
+   _SLOT(_AR()\j, _AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
 
    pc + 1
 EndProcedure
 
 Procedure               C2PPOP()
-   ; V1.31.0: Pointer-only POP - gEvalStack[] to gVar[]
+   ; V1.034.24: Unified pointer POP using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
    sp - 1
 
-   gVar( _AR()\i )\i = gEvalStack(sp)\i
-   gVar( _AR()\i )\ptr = gEvalStack(sp)\ptr
-   gVar( _AR()\i )\ptrtype = gEvalStack(sp)\ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\ptr
+   _SLOT(_AR()\j, _AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
 
    pc + 1
 EndProcedure
 
 Procedure               C2PLFETCH()
-   ; V1.31.0: Pointer-only local FETCH - gLocal[] to gEvalStack[]
+   ; V1.31.0: Pointer-only local FETCH - gStorage[] to gStorage[]
    vm_DebugFunctionName()
 
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
-   gEvalStack(sp)\ptr = gLocal(gLocalBase + _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = gLocal(gLocalBase + _AR()\i)\ptrtype
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
+   gEvalStack(sp)\ptr = *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype
 
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PLSTORE()
-   ; V1.31.0: Pointer-only local STORE - gEvalStack[] to gLocal[]
+   ; V1.31.0: Pointer-only local STORE - gStorage[] to gStorage[]
    vm_DebugFunctionName()
    sp - 1
 
-   gLocal(gLocalBase + _AR()\i)\i = gEvalStack(sp)\i
-   gLocal(gLocalBase + _AR()\i)\ptr = gEvalStack(sp)\ptr
-   gLocal(gLocalBase + _AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = gEvalStack(sp)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr = gEvalStack(sp)\ptr
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
 
    pc + 1
 EndProcedure
 
 Procedure               C2PLMOV()
-   ; V1.31.0: Pointer-only local MOV (GL) - gVar[] to gLocal[]
+   ; V1.31.0: Pointer-only local MOV (GL) - *gVar(global)\var(0) to *gVar(func)\var(local)
    vm_DebugFunctionName()
 
-   gLocal(gLocalBase + _AR()\i)\i = gVar( _AR()\j )\i
-   gLocal(gLocalBase + _AR()\i)\ptr = gVar( _AR()\j )\ptr
-   gLocal(gLocalBase + _AR()\i)\ptrtype = gVar( _AR()\j )\ptrtype
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar( _AR()\j )\var(0)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr = *gVar( _AR()\j )\var(0)\ptr
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype = *gVar( _AR()\j )\var(0)\ptrtype
 
    pc + 1
 EndProcedure
@@ -1360,11 +1407,11 @@ Procedure               C2PTRSTRUCTFETCH_INT()
 
    ; V1.033.37: Handle local pointer slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr   ; Get struct base slot from pointer
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr   ; Get struct base slot from pointer
    EndIf
-   *structPtr = gVar(baseSlot)\ptr ; Get actual struct memory pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr ; Get actual struct memory pointer
    byteOffset = _AR()\n * 8       ; Convert slot offset to byte offset
 
    gEvalStack(sp)\i = PeekQ(*structPtr + byteOffset)
@@ -1380,11 +1427,11 @@ Procedure               C2PTRSTRUCTFETCH_FLOAT()
 
    ; V1.033.37: Handle local pointer slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr
    EndIf
-   *structPtr = gVar(baseSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
    gEvalStack(sp)\f = PeekD(*structPtr + byteOffset)
@@ -1400,11 +1447,11 @@ Procedure               C2PTRSTRUCTFETCH_STR()
 
    ; V1.033.37: Handle local pointer slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr
    EndIf
-   *structPtr = gVar(baseSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
    *strPtr = PeekQ(*structPtr + byteOffset)
@@ -1426,17 +1473,17 @@ Procedure               C2PTRSTRUCTSTORE_INT()
 
    ; V1.033.37: Handle local pointer and value slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr
    EndIf
-   *structPtr = gVar(baseSlot)\ptr ; Get actual struct memory pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr ; Get actual struct memory pointer
    byteOffset = _AR()\n * 8       ; Convert slot offset to byte offset
 
    If _AR()\ndx < -1
-      value = gLocal(_LARRAY(-(_AR()\ndx + 2)))\i
+      value = _LVAR(-(_AR()\ndx + 2))\i
    Else
-      value = gVar(_AR()\ndx)\i
+      value = *gVar(_AR()\ndx)\var(0)\i
    EndIf
    PokeQ(*structPtr + byteOffset, value)
    pc + 1
@@ -1451,17 +1498,17 @@ Procedure               C2PTRSTRUCTSTORE_FLOAT()
 
    ; V1.033.37: Handle local pointer and value slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr
    EndIf
-   *structPtr = gVar(baseSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
    If _AR()\ndx < -1
-      value = gLocal(_LARRAY(-(_AR()\ndx + 2)))\f
+      value = _LVAR(-(_AR()\ndx + 2))\f
    Else
-      value = gVar(_AR()\ndx)\f
+      value = *gVar(_AR()\ndx)\var(0)\f
    EndIf
    PokeD(*structPtr + byteOffset, value)
    pc + 1
@@ -1477,16 +1524,16 @@ Procedure               C2PTRSTRUCTSTORE_STR()
 
    ; V1.033.37: Handle local pointer and value slots (negative = local offset encoded as -(offset+2))
    If _AR()\i < -1
-      baseSlot = gLocal(_LARRAY(-(_AR()\i + 2)))\ptr
+      baseSlot = _LVAR(-(_AR()\i + 2))\ptr
    Else
-      baseSlot = gVar(_AR()\i)\ptr
+      baseSlot = *gVar(_AR()\i)\var(0)\ptr
    EndIf
-   *structPtr = gVar(baseSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
    If _AR()\ndx < -1
-      value = gLocal(_LARRAY(-(_AR()\ndx + 2)))\ss
+      value = _LVAR(-(_AR()\ndx + 2))\ss
    Else
-      value = gVar(_AR()\ndx)\ss
+      value = *gVar(_AR()\ndx)\var(0)\ss
    EndIf
 
    ; Free old string if exists
@@ -1510,12 +1557,12 @@ Procedure               C2PTRSTRUCTSTORE_INT_LOPT()
    vm_DebugFunctionName()
    Protected baseSlot.i, *structPtr, byteOffset.i, valSlot.i
 
-   baseSlot = gVar(_AR()\i)\ptr   ; Get struct base slot from pointer
-   *structPtr = gVar(baseSlot)\ptr ; Get actual struct memory pointer
+   baseSlot = *gVar(_AR()\i)\var(0)\ptr   ; Get struct base slot from pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr ; Get actual struct memory pointer
    byteOffset = _AR()\n * 8       ; Convert slot offset to byte offset
    valSlot = _LARRAY(_AR()\ndx)   ; Get actual gVar index from local offset
 
-   PokeQ(*structPtr + byteOffset, gVar(valSlot)\i)  ; Value from LOCAL slot
+   PokeQ(*structPtr + byteOffset, *gVar(valSlot)\var(0)\i)  ; Value from LOCAL slot
    pc + 1
 EndProcedure
 
@@ -1526,12 +1573,12 @@ Procedure               C2PTRSTRUCTSTORE_FLOAT_LOPT()
    vm_DebugFunctionName()
    Protected baseSlot.i, *structPtr, byteOffset.i, valSlot.i
 
-   baseSlot = gVar(_AR()\i)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   baseSlot = *gVar(_AR()\i)\var(0)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
    valSlot = _LARRAY(_AR()\ndx)
 
-   PokeD(*structPtr + byteOffset, gVar(valSlot)\f)  ; Value from LOCAL slot
+   PokeD(*structPtr + byteOffset, *gVar(valSlot)\var(0)\f)  ; Value from LOCAL slot
    pc + 1
 EndProcedure
 
@@ -1543,11 +1590,11 @@ Procedure               C2PTRSTRUCTSTORE_STR_LOPT()
    Protected baseSlot.i, *structPtr, byteOffset.i, valSlot.i
    Protected *oldStr, *newStr, strLen.i, value.s
 
-   baseSlot = gVar(_AR()\i)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   baseSlot = *gVar(_AR()\i)\var(0)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
    valSlot = _LARRAY(_AR()\ndx)
-   value = gVar(valSlot)\ss
+   value = *gVar(valSlot)\var(0)\ss
 
    ; Free old string if exists
    *oldStr = PeekQ(*structPtr + byteOffset)
@@ -1570,10 +1617,10 @@ Procedure               C2PTRSTRUCTFETCH_INT_LPTR()
    vm_DebugFunctionName()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i
 
-   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gLocal[] index)
-   ; V1.031.24: Fixed to use gLocal() - ptrSlot is a gLocal[] index, not gVar[] index
-   baseSlot = gLocal(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
-   *structPtr = gVar(baseSlot)\ptr          ; Get actual struct memory pointer (structs in gVar)
+   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gStorage[] index)
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE - ptrSlot is a gStorage[] index, not gVar[] index
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr          ; Get actual struct memory pointer (structs in *gVar)
    byteOffset = _AR()\n * 8                 ; Convert slot offset to byte offset
 
    gEvalStack(sp)\i = PeekQ(*structPtr + byteOffset)
@@ -1588,9 +1635,9 @@ Procedure               C2PTRSTRUCTFETCH_FLOAT_LPTR()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal()
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
    gEvalStack(sp)\f = PeekD(*structPtr + byteOffset)
@@ -1605,9 +1652,9 @@ Procedure               C2PTRSTRUCTFETCH_STR_LPTR()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i, *strPtr
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal()
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
    *strPtr = PeekQ(*structPtr + byteOffset)
@@ -1629,13 +1676,13 @@ Procedure               C2PTRSTRUCTSTORE_INT_LPTR()
    vm_DebugFunctionName()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i
 
-   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gLocal[] index)
-   ; V1.031.24: Fixed to use gLocal() - ptrSlot is a gLocal[] index
-   baseSlot = gLocal(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
-   *structPtr = gVar(baseSlot)\ptr          ; Get actual struct memory pointer (structs in gVar)
+   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gStorage[] index)
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE - ptrSlot is a gStorage[] index
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr          ; Get actual struct memory pointer (structs in *gVar)
    byteOffset = _AR()\n * 8                 ; Convert slot offset to byte offset
 
-   PokeQ(*structPtr + byteOffset, gVar(_AR()\ndx)\i)   ; Value from global slot
+   PokeQ(*structPtr + byteOffset, *gVar(_AR()\ndx)\var(0)\i)   ; Value from global slot
    pc + 1
 EndProcedure
 
@@ -1646,12 +1693,12 @@ Procedure               C2PTRSTRUCTSTORE_FLOAT_LPTR()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal()
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
 
-   PokeD(*structPtr + byteOffset, gVar(_AR()\ndx)\f)   ; Value from global slot
+   PokeD(*structPtr + byteOffset, *gVar(_AR()\ndx)\var(0)\f)   ; Value from global slot
    pc + 1
 EndProcedure
 
@@ -1663,11 +1710,11 @@ Procedure               C2PTRSTRUCTSTORE_STR_LPTR()
    Protected *oldStr, *newStr, strLen.i, value.s
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal()
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
-   value = gVar(_AR()\ndx)\ss
+   value = *gVar(_AR()\ndx)\var(0)\ss
 
    ; Free old string if exists
    *oldStr = PeekQ(*structPtr + byteOffset)
@@ -1690,14 +1737,14 @@ Procedure               C2PTRSTRUCTSTORE_INT_LPTR_LOPT()
    vm_DebugFunctionName()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i, valSlot.i
 
-   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gLocal[] index)
-   ; V1.031.24: Fixed to use gLocal() for both pointer and value
-   baseSlot = gLocal(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
-   *structPtr = gVar(baseSlot)\ptr          ; Get actual struct memory pointer (structs in gVar)
+   ptrSlot = _LARRAY(_AR()\i)              ; Get runtime pointer slot (gStorage[] index)
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE for both pointer and value
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr           ; Get struct base slot from LOCAL pointer
+   *structPtr = *gVar(baseSlot)\var(0)\ptr          ; Get actual struct memory pointer (structs in *gVar)
    byteOffset = _AR()\n * 8                 ; Convert slot offset to byte offset
-   valSlot = _LARRAY(_AR()\ndx)             ; Get runtime value slot (gLocal[] index)
+   valSlot = _LARRAY(_AR()\ndx)             ; Get runtime value slot (gStorage[] index)
 
-   PokeQ(*structPtr + byteOffset, gLocal(valSlot)\i)   ; Value from LOCAL slot (gLocal, not gVar!)
+   PokeQ(*structPtr + byteOffset, *gVar(gCurrentFuncSlot)\var(valSlot)\i)   ; Value from LOCAL slot (gLocal, not gVar!)
    pc + 1
 EndProcedure
 
@@ -1708,13 +1755,13 @@ Procedure               C2PTRSTRUCTSTORE_FLOAT_LPTR_LOPT()
    Protected ptrSlot.i, baseSlot.i, *structPtr, byteOffset.i, valSlot.i
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal() for both pointer and value
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE for both pointer and value
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
    valSlot = _LARRAY(_AR()\ndx)
 
-   PokeD(*structPtr + byteOffset, gLocal(valSlot)\f)   ; Value from LOCAL slot (gLocal, not gVar!)
+   PokeD(*structPtr + byteOffset, *gVar(gCurrentFuncSlot)\var(valSlot)\f)   ; Value from LOCAL slot (gLocal, not gVar!)
    pc + 1
 EndProcedure
 
@@ -1726,12 +1773,12 @@ Procedure               C2PTRSTRUCTSTORE_STR_LPTR_LOPT()
    Protected *oldStr, *newStr, strLen.i, value.s
 
    ptrSlot = _LARRAY(_AR()\i)
-   ; V1.031.24: Fixed to use gLocal() for both pointer and value
-   baseSlot = gLocal(ptrSlot)\ptr
-   *structPtr = gVar(baseSlot)\ptr
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE for both pointer and value
+   baseSlot = *gVar(gCurrentFuncSlot)\var(ptrSlot)\ptr
+   *structPtr = *gVar(baseSlot)\var(0)\ptr
    byteOffset = _AR()\n * 8
    valSlot = _LARRAY(_AR()\ndx)
-   value = gLocal(valSlot)\ss   ; Value from LOCAL slot (gLocal, not gVar!)
+   value = *gVar(gCurrentFuncSlot)\var(valSlot)\ss   ; Value from LOCAL slot (gLocal, not gVar!)
 
    ; Free old string if exists
    *oldStr = PeekQ(*structPtr + byteOffset)
@@ -1761,8 +1808,8 @@ Procedure               C2STRUCTCOPY()
    slotCount = _AR()\n
    byteSize = slotCount * 8
 
-   *destPtr = gVar(destSlot)\ptr
-   *srcPtr = gVar(srcSlot)\ptr
+   *destPtr = *gVar(destSlot)\var(0)\ptr
+   *srcPtr = *gVar(srcSlot)\var(0)\ptr
 
    CompilerIf #DEBUG
       Debug "COPYST: d=" + Str(destSlot) + " s=" + Str(srcSlot) + " n=" + Str(slotCount) + " sz=" + Str(byteSize) + " dp=" + Str(*destPtr) + " sp=" + Str(*srcPtr)
@@ -1781,7 +1828,7 @@ Procedure               C2STRUCTCOPY()
 EndProcedure
 
 ;- V1.029.36: Struct Pointer Operations - unified \ptr storage
-; All struct variables use gVar(slot)\ptr for contiguous memory storage
+; All struct variables use *gVar(slot)\var(0)\ptr for contiguous memory storage
 ; Field offset = field_index * 8 (8 bytes per field)
 
 ; Global struct allocation: _AR()\i = slot, _AR()\j = byte size
@@ -1793,23 +1840,23 @@ Procedure C2STRUCT_ALLOC()
 EndProcedure
 
 ; Local struct allocation: _AR()\i = paramOffset, _AR()\j = byte size
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
-; V1.031.26: Fixed to use StructAllocLocal (gLocal[]) instead of StructAlloc (gVar[])
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
+; V1.031.26: Fixed to use StructAllocLocal (gStorage[]) instead of StructAlloc (gVar[])
 ; V1.031.28: Added bounds checking for diagnostics
 Procedure C2STRUCT_ALLOC_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected byteSize.i = _AR()\j
    CompilerIf #DEBUG
-      Debug "VM STRUCT_ALLOC_LOCAL: gLocalBase=" + Str(gLocalBase) + " paramOffset=" + Str(_AR()\i) + " -> slot=" + Str(slot) + " bytes=" + Str(byteSize)
-      If slot < 0 Or slot >= gLocalStack
-         Debug "*** STRUCT_ALLOC_LOCAL ERROR: slot=" + Str(slot) + " (gLocalBase=" + Str(gLocalBase) + " offset=" + Str(_AR()\i) + ") out of bounds [0.." + Str(gLocalStack-1) + "] at pc=" + Str(pc)
+      Debug "VM STRUCT_ALLOC_LOCAL: gCurrentFuncSlot=" + Str(gCurrentFuncSlot) + " paramOffset=" + Str(_AR()\i) + " -> slot=" + Str(slot) + " bytes=" + Str(byteSize)
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
+         Debug "*** STRUCT_ALLOC_LOCAL ERROR: slot=" + Str(slot) + " (offset=" + Str(_AR()\i) + ") is negative at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
    StructAllocLocal(slot, byteSize)
    CompilerIf #DEBUG
-      Debug "VM STRUCT_ALLOC_LOCAL: after alloc, gLocal(" + Str(slot) + ")\ptr=" + Str(gLocal(slot)\ptr)
+      Debug "VM STRUCT_ALLOC_LOCAL: after alloc, *gVar(funcSlot)\var(" + Str(slot) + ")\ptr=" + Str(*gVar(gCurrentFuncSlot)\var(slot)\ptr)
    CompilerEndIf
    pc + 1
 EndProcedure
@@ -1818,9 +1865,9 @@ EndProcedure
 ; Different from C2STRUCT_FREE in collections (which handles string cleanup)
 Procedure C2STRUCT_FREE_VAR()
    Protected slot.i = _AR()\i
-   If gVar(slot)\ptr
-      FreeMemory(gVar(slot)\ptr)
-      gVar(slot)\ptr = 0
+   If *gVar(slot)\var(0)\ptr
+      FreeMemory(*gVar(slot)\var(0)\ptr)
+      *gVar(slot)\var(0)\ptr = 0
    EndIf
    pc + 1
 EndProcedure
@@ -1844,13 +1891,13 @@ Procedure C2STRUCT_FETCH_FLOAT()
 EndProcedure
 
 ; Fetch int from local struct: _AR()\i = paramOffset, _AR()\j = byte offset
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 ; V1.031.28: Added bounds checking for diagnostics
 Procedure C2STRUCT_FETCH_INT_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_FETCH_INT_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
@@ -1858,7 +1905,7 @@ Procedure C2STRUCT_FETCH_INT_LOCAL()
    CompilerEndIf
    Protected value.i = StructGetIntLocal(slot, offset)
    CompilerIf #DEBUG
-      Debug "VM STRUCT_FETCH_INT_LOCAL: slot=" + Str(slot) + " offset=" + Str(offset) + " value=" + Str(value) + " (ptr=" + Str(gLocal(slot)\ptr) + ")"
+      Debug "VM STRUCT_FETCH_INT_LOCAL: slot=" + Str(slot) + " offset=" + Str(offset) + " value=" + Str(value) + " (ptr=" + Str(*gVar(gCurrentFuncSlot)\var(slot)\ptr) + ")"
    CompilerEndIf
    gEvalStack(sp)\i = value
    sp + 1
@@ -1866,17 +1913,22 @@ Procedure C2STRUCT_FETCH_INT_LOCAL()
 EndProcedure
 
 ; Fetch float from local struct: _AR()\i = paramOffset, _AR()\j = byte offset
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure C2STRUCT_FETCH_FLOAT_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_FETCH_FLOAT_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
+   ; V1.034.48: Check for NULL ptr before dereferencing
+   If *gVar(gCurrentFuncSlot)\var(slot)\ptr = 0
+      gExitApplication = #True
+      ProcedureReturn
+   EndIf
    Protected value.d = StructGetFloatLocal(slot, offset)
    gEvalStack(sp)\f = value
    sp + 1
@@ -1902,49 +1954,56 @@ Procedure C2STRUCT_STORE_FLOAT()
 EndProcedure
 
 ; Store int to local struct: _AR()\i = paramOffset, _AR()\j = byte offset, value on stack
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure C2STRUCT_STORE_INT_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    sp - 1
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_STORE_INT_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
-      If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** STRUCT_STORE_INT_LOCAL ERROR: sp=" + Str(sp) + " out of bounds at pc=" + Str(pc)
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
+      If sp < gGlobalStack Or sp >= gGlobalStack + gMaxEvalStack
+         Debug "*** STRUCT_STORE_INT_LOCAL ERROR: sp=" + Str(sp) + " out of bounds [" + Str(gGlobalStack) + ".." + Str(gGlobalStack + gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
    Protected value.i = gEvalStack(sp)\i
    CompilerIf #DEBUG
-      Debug "VM STRUCT_STORE_INT_LOCAL: slot=" + Str(slot) + " offset=" + Str(offset) + " value=" + Str(value) + " (ptr=" + Str(gLocal(slot)\ptr) + ")"
+      Debug "VM STRUCT_STORE_INT_LOCAL: slot=" + Str(slot) + " offset=" + Str(offset) + " value=" + Str(value) + " (ptr=" + Str(*gVar(gCurrentFuncSlot)\var(slot)\ptr) + ")"
    CompilerEndIf
    StructSetIntLocal(slot, offset, value)
    pc + 1
 EndProcedure
 
 ; Store float to local struct: _AR()\i = paramOffset, _AR()\j = byte offset, value on stack
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure C2STRUCT_STORE_FLOAT_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    sp - 1
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_STORE_FLOAT_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
-      If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** STRUCT_STORE_FLOAT_LOCAL ERROR: sp=" + Str(sp) + " out of bounds at pc=" + Str(pc)
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
+      If sp < gGlobalStack Or sp >= gGlobalStack + gMaxEvalStack
+         Debug "*** STRUCT_STORE_FLOAT_LOCAL ERROR: sp=" + Str(sp) + " out of bounds [" + Str(gGlobalStack) + ".." + Str(gGlobalStack + gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
+   ; V1.034.48: Check for NULL ptr before writing
+   If *gVar(gCurrentFuncSlot)\var(slot)\ptr = 0
+      gExitApplication = #True
+      ProcedureReturn
+   EndIf
    Protected value.d = gEvalStack(sp)\f
    StructSetFloatLocal(slot, offset, value)
    pc + 1
@@ -1961,12 +2020,12 @@ Procedure C2STRUCT_FETCH_STR()
 EndProcedure
 
 ; Fetch string from local struct: _AR()\i = paramOffset, _AR()\j = byte offset
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure C2STRUCT_FETCH_STR_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_FETCH_STR_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
@@ -1985,43 +2044,44 @@ Procedure C2STRUCT_STORE_STR()
    Protected *oldStr, *newStr, strLen.i
    sp - 1
    ; Free old string if exists
-   *oldStr = PeekQ(gVar(slot)\ptr + offset)
+   *oldStr = PeekQ(*gVar(slot)\var(0)\ptr + offset)
    If *oldStr : FreeMemory(*oldStr) : EndIf
    ; Allocate and copy new string
    strLen = StringByteLength(gEvalStack(sp)\ss) + SizeOf(Character)
    *newStr = AllocateMemory(strLen)
    PokeS(*newStr, gEvalStack(sp)\ss)
-   PokeQ(gVar(slot)\ptr + offset, *newStr)
+   PokeQ(*gVar(slot)\var(0)\ptr + offset, *newStr)
    pc + 1
 EndProcedure
 
 ; Store string to local struct: _AR()\i = paramOffset, _AR()\j = byte offset, value on stack
-; V1.031.26: Fixed to use gLocalBase (current frame) instead of gStack(gStackDepth)\localBase (caller's saved base)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - uses *gVar(gCurrentFuncSlot)\var(offset) directly
 Procedure C2STRUCT_STORE_STR_LOCAL()
-   Protected slot.i = gLocalBase + _AR()\i
+   Protected slot.i = _AR()\i
    Protected offset.i = _AR()\j
    Protected *oldStr, *newStr, strLen.i
    sp - 1
    CompilerIf #DEBUG
-      If slot < 0 Or slot >= gLocalStack
+      If slot < 0  ; V1.035.0: POINTER ARRAY - upper bound check obsolete
          Debug "*** STRUCT_STORE_STR_LOCAL ERROR: slot=" + Str(slot) + " out of bounds at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
-      If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** STRUCT_STORE_STR_LOCAL ERROR: sp=" + Str(sp) + " out of bounds at pc=" + Str(pc)
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
+      If sp < gGlobalStack Or sp >= gGlobalStack + gMaxEvalStack
+         Debug "*** STRUCT_STORE_STR_LOCAL ERROR: sp=" + Str(sp) + " out of bounds [" + Str(gGlobalStack) + ".." + Str(gGlobalStack + gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
    ; Free old string if exists
-   *oldStr = PeekQ(gLocal(slot)\ptr + offset)
+   *oldStr = PeekQ(*gVar(gCurrentFuncSlot)\var(slot)\ptr + offset)
    If *oldStr : FreeMemory(*oldStr) : EndIf
    ; Allocate and copy new string
    strLen = StringByteLength(gEvalStack(sp)\ss) + SizeOf(Character)
    *newStr = AllocateMemory(strLen)
    PokeS(*newStr, gEvalStack(sp)\ss)
-   PokeQ(gLocal(slot)\ptr + offset, *newStr)
+   PokeQ(*gVar(gCurrentFuncSlot)\var(slot)\ptr + offset, *newStr)
    pc + 1
 EndProcedure
 
@@ -2032,13 +2092,13 @@ Procedure C2STRUCT_COPY_PTR()
    Protected byteSize.i = _AR()\n
 
    ; Ensure dest has memory allocated
-   If Not gVar(destSlot)\ptr
-      gVar(destSlot)\ptr = AllocateMemory(byteSize)
+   If Not *gVar(destSlot)\var(0)\ptr
+      *gVar(destSlot)\var(0)\ptr = AllocateMemory(byteSize)
    EndIf
 
    ; Copy if both pointers valid
-   If gVar(srcSlot)\ptr And gVar(destSlot)\ptr
-      StructCopy(gVar(srcSlot)\ptr, gVar(destSlot)\ptr, byteSize)
+   If *gVar(srcSlot)\var(0)\ptr And *gVar(destSlot)\var(0)\ptr
+      StructCopy(*gVar(srcSlot)\var(0)\ptr, *gVar(destSlot)\var(0)\ptr, byteSize)
    EndIf
 
    pc + 1
@@ -2046,28 +2106,22 @@ EndProcedure
 
 ; V1.029.38: Fetch global struct for parameter passing - copies BOTH \i AND \ptr
 ; This ensures struct pointers are properly passed to callees
+; V1.034.24: Unified FETCH_STRUCT - uses j=1 for local, j=0 for global
 Procedure C2FETCH_STRUCT()
-   Protected srcSlot.i = _AR()\i
-   gEvalStack(sp)\i = gVar(srcSlot)\i
-   gEvalStack(sp)\ptr = gVar(srcSlot)\ptr
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
    sp + 1
    pc + 1
 EndProcedure
 
-; V1.029.38: Fetch local struct for parameter passing - copies BOTH \i AND \ptr
-; Uses localBase + paramOffset for local structs
-; V1.031.26: Fixed to use gLocalBase and gLocal[] instead of gStack(gStackDepth)\localBase and gVar[]
+; V1.034.24: LFETCH_STRUCT now just calls unified FETCH_STRUCT (jump table compatibility)
+; Kept for backward compatibility with existing bytecode
 Procedure C2LFETCH_STRUCT()
-   Protected srcSlot.i = gLocalBase + _AR()\i
-   CompilerIf #DEBUG
-      If srcSlot < 0 Or srcSlot >= gLocalStack
-         Debug "*** LFETCH_STRUCT ERROR: srcSlot=" + Str(srcSlot) + " out of bounds at pc=" + Str(pc)
-         gExitApplication = #True
-         ProcedureReturn
-      EndIf
-   CompilerEndIf
-   gEvalStack(sp)\i = gLocal(srcSlot)\i
-   gEvalStack(sp)\ptr = gLocal(srcSlot)\ptr
+   ; Note: For local structs, j should be 1 (set by codegen), but old bytecode uses this opcode
+   ; with j=0, so we hardcode local access for compatibility
+   Protected srcSlot.i = _AR()\i
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(srcSlot)\i
+   gEvalStack(sp)\ptr = *gVar(gCurrentFuncSlot)\var(srcSlot)\ptr
    sp + 1
    pc + 1
 EndProcedure
@@ -2084,10 +2138,10 @@ Procedure               C2PRTPTR_INT()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + Str(gVar(gEvalStack(sp)\i)\i)
-      Print(Str(gVar(gEvalStack(sp)\i)\i))
+      gBatchOutput + Str(*gVar(gEvalStack(sp)\i)\var(0)\i)
+      Print(Str(*gVar(gEvalStack(sp)\i)\var(0)\i))
    CompilerElse
-      cline = cline + Str(gVar(gEvalStack(sp)\i)\i)
+      cline = cline + Str(*gVar(gEvalStack(sp)\i)\var(0)\i)
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2100,10 +2154,10 @@ Procedure               C2PRTPTR_FLOAT()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + StrD(gVar(gEvalStack(sp)\i)\f, gDecs)
-      Print(StrD(gVar(gEvalStack(sp)\i)\f, gDecs))
+      gBatchOutput + StrD(*gVar(gEvalStack(sp)\i)\var(0)\f, gDecs)
+      Print(StrD(*gVar(gEvalStack(sp)\i)\var(0)\f, gDecs))
    CompilerElse
-      cline = cline + StrD(gVar(gEvalStack(sp)\i)\f, gDecs)
+      cline = cline + StrD(*gVar(gEvalStack(sp)\i)\var(0)\f, gDecs)
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2116,10 +2170,10 @@ Procedure               C2PRTPTR_STR()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + gVar(gEvalStack(sp)\i)\ss
-      Print(gVar(gEvalStack(sp)\i)\ss)
+      gBatchOutput + *gVar(gEvalStack(sp)\i)\var(0)\ss
+      Print(*gVar(gEvalStack(sp)\i)\var(0)\ss)
    CompilerElse
-      cline = cline + gVar(gEvalStack(sp)\i)\ss
+      cline = cline + *gVar(gEvalStack(sp)\i)\var(0)\ss
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2132,10 +2186,10 @@ Procedure               C2PRTPTR_ARRAY_INT()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + Str(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i)
-      Print(Str(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i))
+      gBatchOutput + Str(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\i)
+      Print(Str(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\i))
    CompilerElse
-      cline = cline + Str(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\i)
+      cline = cline + Str(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\i)
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2148,10 +2202,10 @@ Procedure               C2PRTPTR_ARRAY_FLOAT()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + StrD(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f, gDecs)
-      Print(StrD(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f, gDecs))
+      gBatchOutput + StrD(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\f, gDecs)
+      Print(StrD(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\f, gDecs))
    CompilerElse
-      cline = cline + StrD(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\f, gDecs)
+      cline = cline + StrD(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\f, gDecs)
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2164,10 +2218,10 @@ Procedure               C2PRTPTR_ARRAY_STR()
    vm_DebugFunctionName()
    sp - 1
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
-      gBatchOutput + gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
-      Print(gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss)
+      gBatchOutput + *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\ss
+      Print(*gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\ss)
    CompilerElse
-      cline = cline + gVar(gEvalStack(sp)\ptr)\dta\ar(gEvalStack(sp)\i)\ss
+      cline = cline + *gVar(gEvalStack(sp)\ptr)\var(0)\dta\ar(gEvalStack(sp)\i)\ss
       If gFastPrint = #False
          vm_SetGadgetText(#edConsole, cy, cline)
       EndIf
@@ -2202,7 +2256,7 @@ Procedure               C2PTRFETCH_VAR_STR()
    ; Fetch string from simple variable pointer (no array check)
    vm_DebugFunctionName()
    sp - 1
-   gEvalStack(sp)\ss = gVar(gEvalStack(sp)\i)\ss
+   gEvalStack(sp)\ss = *gVar(gEvalStack(sp)\i)\var(0)\ss
    gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
@@ -2218,7 +2272,7 @@ Procedure               C2PTRFETCH_ARREL_INT()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\i = gVar(arraySlot)\dta\ar(elementIdx)\i
+   gEvalStack(sp)\i = *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\i
    sp + 1
    pc + 1
 EndProcedure
@@ -2231,7 +2285,7 @@ Procedure               C2PTRFETCH_ARREL_FLOAT()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\f = gVar(arraySlot)\dta\ar(elementIdx)\f
+   gEvalStack(sp)\f = *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\f
    sp + 1
    pc + 1
 EndProcedure
@@ -2244,7 +2298,7 @@ Procedure               C2PTRFETCH_ARREL_STR()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\ss = gVar(arraySlot)\dta\ar(elementIdx)\ss
+   gEvalStack(sp)\ss = *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\ss
    gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
@@ -2279,7 +2333,7 @@ Procedure               C2PTRSTORE_VAR_STR()
    vm_DebugFunctionName()
    sp - 1
    sp - 1
-   gVar(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+   *gVar(gEvalStack(sp + 1)\i)\var(0)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
@@ -2295,7 +2349,7 @@ Procedure               C2PTRSTORE_ARREL_INT()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gVar(arraySlot)\dta\ar(elementIdx)\i = gEvalStack(sp)\i
+   *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
@@ -2308,7 +2362,7 @@ Procedure               C2PTRSTORE_ARREL_FLOAT()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gVar(arraySlot)\dta\ar(elementIdx)\f = gEvalStack(sp)\f
+   *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
@@ -2321,11 +2375,11 @@ Procedure               C2PTRSTORE_ARREL_STR()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gVar(arraySlot)\dta\ar(elementIdx)\ss = gEvalStack(sp)\ss
+   *gVar(arraySlot)\var(0)\dta\ar(elementIdx)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
-;- V1.033.5: Local Variable Pointer FETCH (no If check, uses gLocal[])
+;- V1.033.5: Local Variable Pointer FETCH (no If check, uses gStorage[])
 
 Procedure               C2PTRFETCH_LVAR_INT()
    ; Fetch int from local simple variable pointer (no array check)
@@ -2349,10 +2403,10 @@ EndProcedure
 
 Procedure               C2PTRFETCH_LVAR_STR()
    ; Fetch string from local simple variable pointer (no array check)
-   ; \i contains actual slot in gLocal[]
+   ; \i contains actual slot in gStorage[]
    vm_DebugFunctionName()
    sp - 1
-   gEvalStack(sp)\ss = gLocal(gEvalStack(sp)\i)\ss
+   gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(gEvalStack(sp)\i)\ss
    sp + 1
    pc + 1
 EndProcedure
@@ -2361,14 +2415,14 @@ EndProcedure
 
 Procedure               C2PTRFETCH_LARREL_INT()
    ; Fetch int from local array element pointer (no If check)
-   ; \ptr = array slot in gLocal[], \i = element index
+   ; \ptr = array slot in gStorage[], \i = element index
    ; V1.033.34: Use local vars to avoid \ptr/\i read-write conflict
    Define arraySlot.i, elementIdx.i
    vm_DebugFunctionName()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\i = gLocal(arraySlot)\dta\ar(elementIdx)\i
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\i
    sp + 1
    pc + 1
 EndProcedure
@@ -2381,7 +2435,7 @@ Procedure               C2PTRFETCH_LARREL_FLOAT()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\f = gLocal(arraySlot)\dta\ar(elementIdx)\f
+   gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\f
    sp + 1
    pc + 1
 EndProcedure
@@ -2394,7 +2448,7 @@ Procedure               C2PTRFETCH_LARREL_STR()
    sp - 1
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
-   gEvalStack(sp)\ss = gLocal(arraySlot)\dta\ar(elementIdx)\ss
+   gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\ss
    sp + 1
    pc + 1
 EndProcedure
@@ -2424,11 +2478,11 @@ EndProcedure
 
 Procedure               C2PTRSTORE_LVAR_STR()
    ; Store string to local simple variable pointer (no array check)
-   ; \i contains actual slot in gLocal[]
+   ; \i contains actual slot in gStorage[]
    vm_DebugFunctionName()
    sp - 1
    sp - 1
-   gLocal(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
+   *gVar(gCurrentFuncSlot)\var(gEvalStack(sp + 1)\i)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
@@ -2444,7 +2498,7 @@ Procedure               C2PTRSTORE_LARREL_INT()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gLocal(arraySlot)\dta\ar(elementIdx)\i = gEvalStack(sp)\i
+   *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
@@ -2457,7 +2511,7 @@ Procedure               C2PTRSTORE_LARREL_FLOAT()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gLocal(arraySlot)\dta\ar(elementIdx)\f = gEvalStack(sp)\f
+   *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
@@ -2470,7 +2524,7 @@ Procedure               C2PTRSTORE_LARREL_STR()
    arraySlot = gEvalStack(sp)\ptr
    elementIdx = gEvalStack(sp)\i
    sp - 1
-   gLocal(arraySlot)\dta\ar(elementIdx)\ss = gEvalStack(sp)\ss
+   *gVar(gCurrentFuncSlot)\var(arraySlot)\dta\ar(elementIdx)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
@@ -2549,30 +2603,30 @@ EndProcedure
 Procedure               C2PTRINC_INT()
    ; Increment int pointer (memory address)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
+   *gVar(_AR()\i)\var(0)\i + 1
+   *gVar(_AR()\i)\var(0)\ptr + 8
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_FLOAT()
    ; Increment float pointer (memory address)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
+   *gVar(_AR()\i)\var(0)\i + 1
+   *gVar(_AR()\i)\var(0)\ptr + 8
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_STRING()
    ; Increment string pointer (slot index)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
+   *gVar(_AR()\i)\var(0)\i + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_ARRAY()
    ; Increment array pointer (element index)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
+   *gVar(_AR()\i)\var(0)\i + 1
    pc + 1
 EndProcedure
 
@@ -2581,30 +2635,30 @@ EndProcedure
 Procedure               C2PTRDEC_INT()
    ; Decrement int pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
+   *gVar(_AR()\i)\var(0)\i - 1
+   *gVar(_AR()\i)\var(0)\ptr - 8
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_FLOAT()
    ; Decrement float pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
+   *gVar(_AR()\i)\var(0)\i - 1
+   *gVar(_AR()\i)\var(0)\ptr - 8
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_STRING()
    ; Decrement string pointer (slot index)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
+   *gVar(_AR()\i)\var(0)\i - 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_ARRAY()
    ; Decrement array pointer (element index)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
+   *gVar(_AR()\i)\var(0)\i - 1
    pc + 1
 EndProcedure
 
@@ -2613,10 +2667,10 @@ EndProcedure
 Procedure               C2PTRINC_PRE_INT()
    ; Pre-increment int pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
+   *gVar(_AR()\i)\var(0)\i + 1
+   *gVar(_AR()\i)\var(0)\ptr + 8
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
    gEvalStack(sp)\ptrtype = #PTR_INT
    sp + 1
    pc + 1
@@ -2625,10 +2679,10 @@ EndProcedure
 Procedure               C2PTRINC_PRE_FLOAT()
    ; Pre-increment float pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
+   *gVar(_AR()\i)\var(0)\i + 1
+   *gVar(_AR()\i)\var(0)\ptr + 8
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
    gEvalStack(sp)\ptrtype = #PTR_FLOAT
    sp + 1
    pc + 1
@@ -2637,8 +2691,8 @@ EndProcedure
 Procedure               C2PTRINC_PRE_STRING()
    ; Pre-increment string pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   *gVar(_AR()\i)\var(0)\i + 1
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
    sp + 1
    pc + 1
@@ -2647,10 +2701,10 @@ EndProcedure
 Procedure               C2PTRINC_PRE_ARRAY()
    ; Pre-increment array pointer (preserves original ptrtype)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = gVar(_AR()\i)\ptrtype
+   *gVar(_AR()\i)\var(0)\i + 1
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
+   gEvalStack(sp)\ptrtype = *gVar(_AR()\i)\var(0)\ptrtype
    sp + 1
    pc + 1
 EndProcedure
@@ -2660,10 +2714,10 @@ EndProcedure
 Procedure               C2PTRDEC_PRE_INT()
    ; Pre-decrement int pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
+   *gVar(_AR()\i)\var(0)\i - 1
+   *gVar(_AR()\i)\var(0)\ptr - 8
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
    gEvalStack(sp)\ptrtype = #PTR_INT
    sp + 1
    pc + 1
@@ -2672,10 +2726,10 @@ EndProcedure
 Procedure               C2PTRDEC_PRE_FLOAT()
    ; Pre-decrement float pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
+   *gVar(_AR()\i)\var(0)\i - 1
+   *gVar(_AR()\i)\var(0)\ptr - 8
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
    gEvalStack(sp)\ptrtype = #PTR_FLOAT
    sp + 1
    pc + 1
@@ -2684,8 +2738,8 @@ EndProcedure
 Procedure               C2PTRDEC_PRE_STRING()
    ; Pre-decrement string pointer
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   *gVar(_AR()\i)\var(0)\i - 1
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
    sp + 1
    pc + 1
@@ -2694,10 +2748,10 @@ EndProcedure
 Procedure               C2PTRDEC_PRE_ARRAY()
    ; Pre-decrement array pointer (preserves original ptrtype)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = gVar(_AR()\i)\ptrtype
+   *gVar(_AR()\i)\var(0)\i - 1
+   gEvalStack(sp)\i = *gVar(_AR()\i)\var(0)\i
+   gEvalStack(sp)\ptr = *gVar(_AR()\i)\var(0)\ptr
+   gEvalStack(sp)\ptrtype = *gVar(_AR()\i)\var(0)\ptrtype
    sp + 1
    pc + 1
 EndProcedure
@@ -2705,46 +2759,57 @@ EndProcedure
 ;- Typed Pointer Post-Increment (no Select)
 
 Procedure               C2PTRINC_POST_INT()
-   ; Post-increment int pointer
+   ; V1.034.33: Post-increment int pointer - unified using _SLOT(j, offset)
+   ; j=0: global pointer, j=1: local pointer
+   ; V1.034.39: Fix ptrtype preservation and conditional ptr increment
+   ; - For PTR_ARRAY_*: only increment i (element index), ptr is array slot
+   ; - For PTR_INT/PTR_LOCAL_INT: increment ptr by 8 (memory address)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = #PTR_INT
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i + 1
+   ; Only increment ptr for non-array pointers (PTR_INT, PTR_LOCAL_INT)
+   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_INT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_INT
+      _SLOT(_AR()\j, _AR()\i)\ptr + 8
+   EndIf
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_POST_FLOAT()
-   ; Post-increment float pointer
+   ; V1.034.33: Post-increment float pointer - unified using _SLOT(j, offset)
+   ; V1.034.39: Fix ptrtype preservation and conditional ptr increment
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = #PTR_FLOAT
-   gVar(_AR()\i)\i + 1
-   gVar(_AR()\i)\ptr + 8
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i + 1
+   ; Only increment ptr for non-array pointers
+   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_FLOAT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_FLOAT
+      _SLOT(_AR()\j, _AR()\i)\ptr + 8
+   EndIf
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_POST_STRING()
-   ; Post-increment string pointer
+   ; V1.034.33: Post-increment string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
-   gVar(_AR()\i)\i + 1
+   _SLOT(_AR()\j, _AR()\i)\i + 1
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRINC_POST_ARRAY()
-   ; Post-increment array pointer (preserves original ptrtype)
+   ; V1.034.33: Post-increment array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = gVar(_AR()\i)\ptrtype
-   gVar(_AR()\i)\i + 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i + 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2752,46 +2817,54 @@ EndProcedure
 ;- Typed Pointer Post-Decrement (no Select)
 
 Procedure               C2PTRDEC_POST_INT()
-   ; Post-decrement int pointer
+   ; V1.034.33: Post-decrement int pointer - unified using _SLOT(j, offset)
+   ; V1.034.39: Fix ptrtype preservation and conditional ptr decrement
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = #PTR_INT
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i - 1
+   ; Only decrement ptr for non-array pointers
+   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_INT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_INT
+      _SLOT(_AR()\j, _AR()\i)\ptr - 8
+   EndIf
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_POST_FLOAT()
-   ; Post-decrement float pointer
+   ; V1.034.33: Post-decrement float pointer - unified using _SLOT(j, offset)
+   ; V1.034.39: Fix ptrtype preservation and conditional ptr decrement
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = #PTR_FLOAT
-   gVar(_AR()\i)\i - 1
-   gVar(_AR()\i)\ptr - 8
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i - 1
+   ; Only decrement ptr for non-array pointers
+   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_FLOAT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_FLOAT
+      _SLOT(_AR()\j, _AR()\i)\ptr - 8
+   EndIf
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_POST_STRING()
-   ; Post-decrement string pointer
+   ; V1.034.33: Post-decrement string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
-   gVar(_AR()\i)\i - 1
+   _SLOT(_AR()\j, _AR()\i)\i - 1
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PTRDEC_POST_ARRAY()
-   ; Post-decrement array pointer (preserves original ptrtype)
+   ; V1.034.33: Post-decrement array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gEvalStack(sp)\ptr = gVar(_AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = gVar(_AR()\i)\ptrtype
-   gVar(_AR()\i)\i - 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
+   _SLOT(_AR()\j, _AR()\i)\i - 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2799,70 +2872,70 @@ EndProcedure
 ;- Typed Pointer Compound Assignment (no Select)
 
 Procedure               C2PTRADD_ASSIGN_INT()
-   ; ptr += offset for int pointer
+   ; V1.034.33: ptr += offset for int pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i + gEvalStack(sp)\i
-   gVar(_AR()\i)\ptr + (gEvalStack(sp)\i * 8)
+   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr + (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_FLOAT()
-   ; ptr += offset for float pointer
+   ; V1.034.33: ptr += offset for float pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i + gEvalStack(sp)\i
-   gVar(_AR()\i)\ptr + (gEvalStack(sp)\i * 8)
+   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr + (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_STRING()
-   ; ptr += offset for string pointer
+   ; V1.034.33: ptr += offset for string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i + gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_ARRAY()
-   ; ptr += offset for array pointer
+   ; V1.034.33: ptr += offset for array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i + gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_INT()
-   ; ptr -= offset for int pointer
+   ; V1.034.33: ptr -= offset for int pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i - gEvalStack(sp)\i
-   gVar(_AR()\i)\ptr - (gEvalStack(sp)\i * 8)
+   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr - (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_FLOAT()
-   ; ptr -= offset for float pointer
+   ; V1.034.33: ptr -= offset for float pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i - gEvalStack(sp)\i
-   gVar(_AR()\i)\ptr - (gEvalStack(sp)\i * 8)
+   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr - (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_STRING()
-   ; ptr -= offset for string pointer
+   ; V1.034.33: ptr -= offset for string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i - gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_ARRAY()
-   ; ptr -= offset for array pointer
+   ; V1.034.33: ptr -= offset for array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i - gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 

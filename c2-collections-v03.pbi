@@ -1,8 +1,12 @@
 ; ======================================================================================================
-; c2-collections-v02.pbi - Unified Collection Operations for LJ2 VM
+; c2-collections-v03.pbi - Unified Collection Operations for LJ2 VM
 ; ======================================================================================================
+; V1.035.0 - POINTER ARRAY ARCHITECTURE
+;   - Locals at *gVar(gCurrentFuncSlot)\var(offset)
+;   - Globals at *gVar(slot)\var(0)
+;   - Uses gEvalStack[] for evaluation stack
 ; V1.028.0 - New unified approach: Lists and Maps directly in gVar structure
-;            No separate pool - gVar(slot)\ll() and gVar(slot)\map() hold the data
+;            No separate pool - gVar(slot)\ll() and *gVar(slot)\var(0)\map() hold the data
 ;            Uses stVTSimple for elements - supports int, float, string, and struct pointers
 ;
 ; V1.028.1 - Removed ptrtype from collections (unused with typed opcodes)
@@ -17,8 +21,8 @@
 ;            Memory layout: 8 bytes per field, strings allocated separately
 ;
 ; Key change from V1:
-;   - OLD: gVar(slot)\i = poolSlot, used gListPool(poolSlot)\dataInt()
-;   - NEW: gVar(slot)\i = slot, uses gVar(slot)\ll()\i directly
+;   - OLD: *gVar(slot)\var(0)\i = poolSlot, used gListPool(poolSlot)\dataInt()
+;   - NEW: *gVar(slot)\var(0)\i = slot, uses gVar(slot)\ll()\i directly
 ;
 ; Advantages:
 ;   - Simpler: No pool management
@@ -46,24 +50,22 @@
 ; The ll() list is already initialized by PureBasic (empty by default)
 ; _AR()\i = slot, _AR()\j = valueType (unused in V2), _AR()\n = isLocal flag
 ; V1.028.1: Removed ptrtype storage - type known at compile time via typed opcodes
-; V1.031.26: Fixed to use gLocalBase and gLocal[] for local collections
-; V1.031.31: Store local flag in slot value so LIST_ADD etc. know which array to use
+; V1.031.26: Fixed to use gFrameBase and gLocal[] for local collections
+; V1.035.0: POINTER ARRAY ARCHITECTURE - store offset with local flag
 Procedure C2LIST_NEW()
-   Protected slot.i, isLocal.i, targetSlot.i
+   Protected slot.i, isLocal.i
 
    slot = _AR()\i
    isLocal = _AR()\n
 
    If isLocal
-      ; Store to local variable: gLocal[gLocalBase + offset]
-      targetSlot = gLocalBase + slot
-      ; V1.031.31: Set local flag so LIST_ADD operations know to use gLocal
-      gLocal(targetSlot)\i = targetSlot | #C2_LOCAL_COLLECTION_FLAG
-      ClearList(gLocal(targetSlot)\ll())   ; Ensure fresh list
+      ; V1.035.0: Store local offset with flag in *gVar(gCurrentFuncSlot)\var(slot)
+      *gVar(gCurrentFuncSlot)\var(slot)\i = slot | #C2_LOCAL_COLLECTION_FLAG
+      ClearList(*gVar(gCurrentFuncSlot)\var(slot)\ll())   ; Ensure fresh list
    Else
       ; Store to global variable
-      gVar(slot)\i = slot                ; Store slot itself for FETCH
-      ClearList(gVar(slot)\ll())         ; Ensure fresh list
+      *gVar(slot)\var(0)\i = slot                ; Store slot itself for FETCH
+      ClearList(*gVar(slot)\var(0)\ll())         ; Ensure fresh list
    EndIf
 
    pc + 1
@@ -76,24 +78,24 @@ EndProcedure
 ; LIST_ADD_INT: Add integer element to list
 ; Stack: [varSlot, value] -> []
 ; The varSlot is the gVar/gLocal index where the list is stored
-; V1.031.31: Check local flag to determine which array to use
+; V1.035.0: POINTER ARRAY ARCHITECTURE - realSlot is local offset
 Procedure C2LIST_ADD_INT()
    Protected varSlot.i, val.i, realSlot.i
 
    sp - 1 : val = gEvalStack(sp)\i
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   ; V1.031.31: Check if local collection flag is set
+   ; V1.035.0: Check if local collection flag is set
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      LastElement(gLocal(realSlot)\ll())
-      AddElement(gLocal(realSlot)\ll())
-      gLocal(realSlot)\ll()\i = val
+      LastElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      AddElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\i = val
    Else
       ; Global list
-      LastElement(gVar(varSlot)\ll())
-      AddElement(gVar(varSlot)\ll())
-      gVar(varSlot)\ll()\i = val
+      LastElement(*gVar(varSlot)\var(0)\ll())
+      AddElement(*gVar(varSlot)\var(0)\ll())
+      *gVar(varSlot)\var(0)\ll()\i = val
    EndIf
 
    pc + 1
@@ -110,13 +112,13 @@ Procedure C2LIST_ADD_FLOAT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      LastElement(gLocal(realSlot)\ll())
-      AddElement(gLocal(realSlot)\ll())
-      gLocal(realSlot)\ll()\f = val
+      LastElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      AddElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\f = val
    Else
-      LastElement(gVar(varSlot)\ll())
-      AddElement(gVar(varSlot)\ll())
-      gVar(varSlot)\ll()\f = val
+      LastElement(*gVar(varSlot)\var(0)\ll())
+      AddElement(*gVar(varSlot)\var(0)\ll())
+      *gVar(varSlot)\var(0)\ll()\f = val
    EndIf
 
    pc + 1
@@ -133,13 +135,13 @@ Procedure C2LIST_ADD_STR()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      LastElement(gLocal(realSlot)\ll())
-      AddElement(gLocal(realSlot)\ll())
-      gLocal(realSlot)\ll()\ss = val
+      LastElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      AddElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ss = val
    Else
-      LastElement(gVar(varSlot)\ll())
-      AddElement(gVar(varSlot)\ll())
-      gVar(varSlot)\ll()\ss = val
+      LastElement(*gVar(varSlot)\var(0)\ll())
+      AddElement(*gVar(varSlot)\var(0)\ll())
+      *gVar(varSlot)\var(0)\ll()\ss = val
    EndIf
 
    pc + 1
@@ -182,9 +184,9 @@ Procedure C2LIST_ADD_STRUCT()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    ; Add to list
-   LastElement(gVar(varSlot)\ll())
-   AddElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\ptr = *mem
+   LastElement(*gVar(varSlot)\var(0)\ll())
+   AddElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\ptr = *mem
 
    pc + 1
 EndProcedure
@@ -205,18 +207,18 @@ Procedure C2LIST_GET_STRUCT()
    typeBitmap = _AR()\n
    If structSize < 1 : structSize = 1 : EndIf
 
-   *mem = gVar(varSlot)\ll()\ptr
+   *mem = *gVar(varSlot)\var(0)\ll()\ptr
 
    If *mem And destSlot > 0
       ; V1.029.35: Restore fields based on type bitmap (8 bytes per field)
       For i = 0 To structSize - 1
          fieldType = (typeBitmap >> (i * 2)) & 3
          If fieldType = 1      ; Float
-            gVar(destSlot + i)\f = PeekD(*mem + i * 8)
+            *gVar(destSlot + i)\var(0)\f = PeekD(*mem + i * 8)
          ElseIf fieldType = 2  ; String
-            gVar(destSlot + i)\i = PeekQ(*mem + i * 8)
+            *gVar(destSlot + i)\var(0)\i = PeekQ(*mem + i * 8)
          Else                  ; Int (default)
-            gVar(destSlot + i)\i = PeekQ(*mem + i * 8)
+            *gVar(destSlot + i)\var(0)\i = PeekQ(*mem + i * 8)
          EndIf
       Next
    ElseIf destSlot > 0
@@ -224,9 +226,9 @@ Procedure C2LIST_GET_STRUCT()
       For i = 0 To structSize - 1
          fieldType = (typeBitmap >> (i * 2)) & 3
          If fieldType = 1
-            gVar(destSlot + i)\f = 0.0
+            *gVar(destSlot + i)\var(0)\f = 0.0
          Else
-            gVar(destSlot + i)\i = 0
+            *gVar(destSlot + i)\var(0)\i = 0
          EndIf
       Next
    Else
@@ -307,8 +309,8 @@ Procedure C2LIST_INSERT_INT()
    sp - 1 : val = gEvalStack(sp)\i
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   InsertElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\i = val
+   InsertElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\i = val
 
    pc + 1
 EndProcedure
@@ -321,8 +323,8 @@ Procedure C2LIST_INSERT_FLOAT()
    sp - 1 : val = gEvalStack(sp)\f
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   InsertElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\f = val
+   InsertElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\f = val
 
    pc + 1
 EndProcedure
@@ -335,8 +337,8 @@ Procedure C2LIST_INSERT_STR()
    sp - 1 : val = gEvalStack(sp)\ss
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   InsertElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\ss = val
+   InsertElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\ss = val
 
    pc + 1
 EndProcedure
@@ -351,14 +353,14 @@ Procedure C2LIST_GET_INT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gEvalStack(sp)\i = gLocal(realSlot)\ll()\i
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\i
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gEvalStack(sp)\i = gVar(varSlot)\ll()\i
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         gEvalStack(sp)\i = *gVar(varSlot)\var(0)\ll()\i
       Else
          gEvalStack(sp)\i = 0
       EndIf
@@ -378,14 +380,14 @@ Procedure C2LIST_GET_FLOAT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gEvalStack(sp)\f = gLocal(realSlot)\ll()\f
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\f
       Else
          gEvalStack(sp)\f = 0.0
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gEvalStack(sp)\f = gVar(varSlot)\ll()\f
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         gEvalStack(sp)\f = *gVar(varSlot)\var(0)\ll()\f
       Else
          gEvalStack(sp)\f = 0.0
       EndIf
@@ -405,14 +407,14 @@ Procedure C2LIST_GET_STR()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gEvalStack(sp)\ss = gLocal(realSlot)\ll()\ss
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ss
       Else
          gEvalStack(sp)\ss = ""
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gEvalStack(sp)\ss = gVar(varSlot)\ll()\ss
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         gEvalStack(sp)\ss = *gVar(varSlot)\var(0)\ll()\ss
       Else
          gEvalStack(sp)\ss = ""
       EndIf
@@ -433,12 +435,12 @@ Procedure C2LIST_SET_INT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gLocal(realSlot)\ll()\i = val
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\i = val
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gVar(varSlot)\ll()\i = val
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         *gVar(varSlot)\var(0)\ll()\i = val
       EndIf
    EndIf
 
@@ -456,12 +458,12 @@ Procedure C2LIST_SET_FLOAT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gLocal(realSlot)\ll()\f = val
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\f = val
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gVar(varSlot)\ll()\f = val
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         *gVar(varSlot)\var(0)\ll()\f = val
       EndIf
    EndIf
 
@@ -479,12 +481,12 @@ Procedure C2LIST_SET_STR()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If ListIndex(gLocal(realSlot)\ll()) >= 0
-         gLocal(realSlot)\ll()\ss = val
+      If ListIndex(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()) >= 0
+         *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ss = val
       EndIf
    Else
-      If ListIndex(gVar(varSlot)\ll()) >= 0
-         gVar(varSlot)\ll()\ss = val
+      If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
+         *gVar(varSlot)\var(0)\ll()\ss = val
       EndIf
    EndIf
 
@@ -500,9 +502,9 @@ Procedure C2LIST_SIZE_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\i = ListSize(gLocal(realSlot)\ll())
+      gEvalStack(sp)\i = ListSize(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
    Else
-      gEvalStack(sp)\i = ListSize(gVar(varSlot)\ll())
+      gEvalStack(sp)\i = ListSize(*gVar(varSlot)\var(0)\ll())
    EndIf
    sp + 1
 
@@ -519,13 +521,13 @@ Procedure C2LIST_FIRST_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FirstElement(gLocal(realSlot)\ll())
+      If FirstElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If FirstElement(gVar(varSlot)\ll())
+      If FirstElement(*gVar(varSlot)\var(0)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -546,13 +548,13 @@ Procedure C2LIST_LAST_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If LastElement(gLocal(realSlot)\ll())
+      If LastElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If LastElement(gVar(varSlot)\ll())
+      If LastElement(*gVar(varSlot)\var(0)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -573,13 +575,13 @@ Procedure C2LIST_NEXT_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If NextElement(gLocal(realSlot)\ll())
+      If NextElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If NextElement(gVar(varSlot)\ll())
+      If NextElement(*gVar(varSlot)\var(0)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -600,13 +602,13 @@ Procedure C2LIST_PREV_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If PreviousElement(gLocal(realSlot)\ll())
+      If PreviousElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If PreviousElement(gVar(varSlot)\ll())
+      If PreviousElement(*gVar(varSlot)\var(0)\ll())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -626,9 +628,9 @@ Procedure C2LIST_RESET_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      ResetList(gLocal(realSlot)\ll())
+      ResetList(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
    Else
-      ResetList(gVar(varSlot)\ll())
+      ResetList(*gVar(varSlot)\var(0)\ll())
    EndIf
 
    pc + 1
@@ -640,7 +642,7 @@ Procedure C2LIST_INDEX_T()
    Protected varSlot.i
 
    sp - 1 : varSlot = gEvalStack(sp)\i
-   gEvalStack(sp)\i = ListIndex(gVar(varSlot)\ll())
+   gEvalStack(sp)\i = ListIndex(*gVar(varSlot)\var(0)\ll())
    sp + 1
 
    pc + 1
@@ -654,7 +656,7 @@ Procedure C2LIST_SELECT_T()
    sp - 1 : idx = gEvalStack(sp)\i
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   If SelectElement(gVar(varSlot)\ll(), idx)
+   If SelectElement(*gVar(varSlot)\var(0)\ll(), idx)
       gEvalStack(sp)\i = 1
    Else
       gEvalStack(sp)\i = 0
@@ -671,12 +673,12 @@ Procedure C2LIST_DELETE_T()
 
    sp - 1 : varSlot = gEvalStack(sp)\i
 
-   If ListIndex(gVar(varSlot)\ll()) >= 0
+   If ListIndex(*gVar(varSlot)\var(0)\ll()) >= 0
       ; Free struct memory if it's a struct pointer
-      If gVar(varSlot)\ll()\ptr
-         FreeMemory(gVar(varSlot)\ll()\ptr)
+      If *gVar(varSlot)\var(0)\ll()\ptr
+         FreeMemory(*gVar(varSlot)\var(0)\ll()\ptr)
       EndIf
-      DeleteElement(gVar(varSlot)\ll())
+      DeleteElement(*gVar(varSlot)\var(0)\ll())
    EndIf
 
    pc + 1
@@ -693,20 +695,20 @@ Procedure C2LIST_CLEAR_T()
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
       ; Free all struct memory pointers
-      ForEach gLocal(realSlot)\ll()
-         If gLocal(realSlot)\ll()\ptr
-            FreeMemory(gLocal(realSlot)\ll()\ptr)
+      ForEach *gVar(gCurrentFuncSlot)\var(realSlot)\ll()
+         If *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ptr
+            FreeMemory(*gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ptr)
          EndIf
       Next
-      ClearList(gLocal(realSlot)\ll())
+      ClearList(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
    Else
       ; Free all struct memory pointers
-      ForEach gVar(varSlot)\ll()
-         If gVar(varSlot)\ll()\ptr
-            FreeMemory(gVar(varSlot)\ll()\ptr)
+      ForEach *gVar(varSlot)\var(0)\ll()
+         If *gVar(varSlot)\var(0)\ll()\ptr
+            FreeMemory(*gVar(varSlot)\var(0)\ll()\ptr)
          EndIf
       Next
-      ClearList(gVar(varSlot)\ll())
+      ClearList(*gVar(varSlot)\var(0)\ll())
    EndIf
 
    pc + 1
@@ -721,9 +723,9 @@ Procedure C2LIST_SORT_INT()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    If ascending
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
    Else
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
    EndIf
 
    pc + 1
@@ -738,9 +740,9 @@ Procedure C2LIST_SORT_FLOAT()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    If ascending
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\f), TypeOf(stVTSimple\f))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\f), TypeOf(stVTSimple\f))
    Else
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\f), TypeOf(stVTSimple\f))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\f), TypeOf(stVTSimple\f))
    EndIf
 
    pc + 1
@@ -755,9 +757,9 @@ Procedure C2LIST_SORT_STR()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    If ascending
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\ss), TypeOf(stVTSimple\ss))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\ss), TypeOf(stVTSimple\ss))
    Else
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\ss), TypeOf(stVTSimple\ss))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\ss), TypeOf(stVTSimple\ss))
    EndIf
 
    pc + 1
@@ -774,9 +776,9 @@ Procedure C2LIST_SORT_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    If ascending
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Ascending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
    Else
-      SortStructuredList(gVar(varSlot)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
+      SortStructuredList(*gVar(varSlot)\var(0)\ll(), #PB_Sort_Descending, OffsetOf(stVTSimple\i), TypeOf(stVTSimple\i))
    EndIf
 
    pc + 1
@@ -815,22 +817,23 @@ EndProcedure
 ; The map() is already initialized by PureBasic (empty by default)
 ; _AR()\i = slot, _AR()\j = valueType (unused in V2), _AR()\n = isLocal flag
 ; V1.028.1: Removed ptrtype storage - type known at compile time via typed opcodes
-; V1.031.26: Fixed to use gLocalBase and gLocal[] for local collections
+; V1.031.26: Fixed to use gFrameBase and gLocal[] for local collections
 ; V1.031.31: Store local flag in slot value so MAP operations know which array to use
+; V1.035.0: POINTER ARRAY ARCHITECTURE - locals via *gVar(gCurrentFuncSlot)\var(offset)
 Procedure C2MAP_NEW()
-   Protected slot.i, isLocal.i, targetSlot.i
+   Protected slot.i, isLocal.i
 
    slot = _AR()\i
    isLocal = _AR()\n
 
    If isLocal
-      targetSlot = gLocalBase + slot
-      ; V1.031.31: Set local flag so MAP operations know to use gLocal
-      gLocal(targetSlot)\i = targetSlot | #C2_LOCAL_COLLECTION_FLAG
-      ClearMap(gLocal(targetSlot)\map())   ; Ensure fresh map
+      ; V1.035.0: slot is already the local offset - no gFrameBase needed
+      ; V1.031.31: Set local flag so MAP operations know to use local
+      *gVar(gCurrentFuncSlot)\var(slot)\i = slot | #C2_LOCAL_COLLECTION_FLAG
+      ClearMap(*gVar(gCurrentFuncSlot)\var(slot)\map())   ; Ensure fresh map
    Else
-      gVar(slot)\i = slot                ; Store slot itself for FETCH
-      ClearMap(gVar(slot)\map())         ; Ensure fresh map
+      *gVar(slot)\var(0)\i = slot                ; Store slot itself for FETCH
+      ClearMap(*gVar(slot)\var(0)\map())         ; Ensure fresh map
    EndIf
 
    pc + 1
@@ -852,9 +855,9 @@ Procedure C2MAP_PUT_INT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gLocal(realSlot)\map(key)\i = val
+      *gVar(gCurrentFuncSlot)\var(realSlot)\map(key)\i = val
    Else
-      gVar(varSlot)\map(key)\i = val
+      *gVar(varSlot)\var(0)\map(key)\i = val
    EndIf
 
    pc + 1
@@ -872,9 +875,9 @@ Procedure C2MAP_PUT_FLOAT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gLocal(realSlot)\map(key)\f = val
+      *gVar(gCurrentFuncSlot)\var(realSlot)\map(key)\f = val
    Else
-      gVar(varSlot)\map(key)\f = val
+      *gVar(varSlot)\var(0)\map(key)\f = val
    EndIf
 
    pc + 1
@@ -892,9 +895,9 @@ Procedure C2MAP_PUT_STR()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gLocal(realSlot)\map(key)\ss = val
+      *gVar(gCurrentFuncSlot)\var(realSlot)\map(key)\ss = val
    Else
-      gVar(varSlot)\map(key)\ss = val
+      *gVar(varSlot)\var(0)\map(key)\ss = val
    EndIf
 
    pc + 1
@@ -937,11 +940,11 @@ Procedure C2MAP_PUT_STRUCT()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    ; Free old memory if exists
-   If FindMapElement(gVar(varSlot)\map(), key) And gVar(varSlot)\map()\ptr
-      FreeMemory(gVar(varSlot)\map()\ptr)
+   If FindMapElement(*gVar(varSlot)\var(0)\map(), key) And *gVar(varSlot)\var(0)\map()\ptr
+      FreeMemory(*gVar(varSlot)\var(0)\map()\ptr)
    EndIf
 
-   gVar(varSlot)\map(key)\ptr = *mem
+   *gVar(varSlot)\var(0)\map(key)\ptr = *mem
 
    pc + 1
 EndProcedure
@@ -957,14 +960,14 @@ Procedure C2MAP_GET_INT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FindMapElement(gLocal(realSlot)\map(), key)
-         gEvalStack(sp)\i = gLocal(realSlot)\map()\i
+      If FindMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map(), key)
+         gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\i
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If FindMapElement(gVar(varSlot)\map(), key)
-         gEvalStack(sp)\i = gVar(varSlot)\map()\i
+      If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+         gEvalStack(sp)\i = *gVar(varSlot)\var(0)\map()\i
       Else
          gEvalStack(sp)\i = 0
       EndIf
@@ -985,14 +988,14 @@ Procedure C2MAP_GET_FLOAT()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FindMapElement(gLocal(realSlot)\map(), key)
-         gEvalStack(sp)\f = gLocal(realSlot)\map()\f
+      If FindMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map(), key)
+         gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\f
       Else
          gEvalStack(sp)\f = 0.0
       EndIf
    Else
-      If FindMapElement(gVar(varSlot)\map(), key)
-         gEvalStack(sp)\f = gVar(varSlot)\map()\f
+      If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+         gEvalStack(sp)\f = *gVar(varSlot)\var(0)\map()\f
       Else
          gEvalStack(sp)\f = 0.0
       EndIf
@@ -1013,14 +1016,14 @@ Procedure C2MAP_GET_STR()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FindMapElement(gLocal(realSlot)\map(), key)
-         gEvalStack(sp)\ss = gLocal(realSlot)\map()\ss
+      If FindMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map(), key)
+         gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\ss
       Else
          gEvalStack(sp)\ss = ""
       EndIf
    Else
-      If FindMapElement(gVar(varSlot)\map(), key)
-         gEvalStack(sp)\ss = gVar(varSlot)\map()\ss
+      If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+         gEvalStack(sp)\ss = *gVar(varSlot)\var(0)\map()\ss
       Else
          gEvalStack(sp)\ss = ""
       EndIf
@@ -1048,16 +1051,16 @@ Procedure C2MAP_GET_STRUCT()
    typeBitmap = _AR()\n
    If structSize < 1 : structSize = 1 : EndIf
 
-   If FindMapElement(gVar(varSlot)\map(), key)
-      *mem = gVar(varSlot)\map()\ptr
+   If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+      *mem = *gVar(varSlot)\var(0)\map()\ptr
       If *mem And destSlot > 0
          ; V1.029.35: Restore fields based on type bitmap (8 bytes per field)
          For i = 0 To structSize - 1
             fieldType = (typeBitmap >> (i * 2)) & 3
             If fieldType = 1
-               gVar(destSlot + i)\f = PeekD(*mem + i * 8)
+               *gVar(destSlot + i)\var(0)\f = PeekD(*mem + i * 8)
             Else
-               gVar(destSlot + i)\i = PeekQ(*mem + i * 8)
+               *gVar(destSlot + i)\var(0)\i = PeekQ(*mem + i * 8)
             EndIf
          Next
       ElseIf destSlot > 0
@@ -1065,9 +1068,9 @@ Procedure C2MAP_GET_STRUCT()
          For i = 0 To structSize - 1
             fieldType = (typeBitmap >> (i * 2)) & 3
             If fieldType = 1
-               gVar(destSlot + i)\f = 0.0
+               *gVar(destSlot + i)\var(0)\f = 0.0
             Else
-               gVar(destSlot + i)\i = 0
+               *gVar(destSlot + i)\var(0)\i = 0
             EndIf
          Next
       Else
@@ -1100,9 +1103,9 @@ Procedure C2MAP_GET_STRUCT()
          For i = 0 To structSize - 1
             fieldType = (typeBitmap >> (i * 2)) & 3
             If fieldType = 1
-               gVar(destSlot + i)\f = 0.0
+               *gVar(destSlot + i)\var(0)\f = 0.0
             Else
-               gVar(destSlot + i)\i = 0
+               *gVar(destSlot + i)\var(0)\i = 0
             EndIf
          Next
       Else
@@ -1134,7 +1137,7 @@ Procedure C2MAP_VALUE_STRUCT()
    typeBitmap = _AR()\n
    If structSize < 1 : structSize = 1 : EndIf
 
-   *mem = gVar(varSlot)\map()\ptr
+   *mem = *gVar(varSlot)\var(0)\map()\ptr
 
    If *mem
       ; V1.029.35: Use type bitmap to restore correct field type
@@ -1169,9 +1172,9 @@ Procedure C2MAP_SIZE_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\i = MapSize(gLocal(realSlot)\map())
+      gEvalStack(sp)\i = MapSize(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
    Else
-      gEvalStack(sp)\i = MapSize(gVar(varSlot)\map())
+      gEvalStack(sp)\i = MapSize(*gVar(varSlot)\var(0)\map())
    EndIf
    sp + 1
 
@@ -1189,13 +1192,13 @@ Procedure C2MAP_CONTAINS_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FindMapElement(gLocal(realSlot)\map(), key)
+      If FindMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map(), key)
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If FindMapElement(gVar(varSlot)\map(), key)
+      If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -1217,19 +1220,19 @@ Procedure C2MAP_DELETE_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If FindMapElement(gLocal(realSlot)\map(), key)
-         If gLocal(realSlot)\map()\ptr
-            FreeMemory(gLocal(realSlot)\map()\ptr)
+      If FindMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map(), key)
+         If *gVar(gCurrentFuncSlot)\var(realSlot)\map()\ptr
+            FreeMemory(*gVar(gCurrentFuncSlot)\var(realSlot)\map()\ptr)
          EndIf
-         DeleteMapElement(gLocal(realSlot)\map())
+         DeleteMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
       EndIf
    Else
-      If FindMapElement(gVar(varSlot)\map(), key)
+      If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
          ; Free struct memory if present
-         If gVar(varSlot)\map()\ptr
-            FreeMemory(gVar(varSlot)\map()\ptr)
+         If *gVar(varSlot)\var(0)\map()\ptr
+            FreeMemory(*gVar(varSlot)\var(0)\map()\ptr)
          EndIf
-         DeleteMapElement(gVar(varSlot)\map())
+         DeleteMapElement(*gVar(varSlot)\var(0)\map())
       EndIf
    EndIf
 
@@ -1247,20 +1250,20 @@ Procedure C2MAP_CLEAR_T()
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
       ; Free all struct memory pointers
-      ForEach gLocal(realSlot)\map()
-         If gLocal(realSlot)\map()\ptr
-            FreeMemory(gLocal(realSlot)\map()\ptr)
+      ForEach *gVar(gCurrentFuncSlot)\var(realSlot)\map()
+         If *gVar(gCurrentFuncSlot)\var(realSlot)\map()\ptr
+            FreeMemory(*gVar(gCurrentFuncSlot)\var(realSlot)\map()\ptr)
          EndIf
       Next
-      ClearMap(gLocal(realSlot)\map())
+      ClearMap(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
    Else
       ; Free all struct memory pointers
-      ForEach gVar(varSlot)\map()
-         If gVar(varSlot)\map()\ptr
-            FreeMemory(gVar(varSlot)\map()\ptr)
+      ForEach *gVar(varSlot)\var(0)\map()
+         If *gVar(varSlot)\var(0)\map()\ptr
+            FreeMemory(*gVar(varSlot)\var(0)\map()\ptr)
          EndIf
       Next
-      ClearMap(gVar(varSlot)\map())
+      ClearMap(*gVar(varSlot)\var(0)\map())
    EndIf
 
    pc + 1
@@ -1275,9 +1278,9 @@ Procedure C2MAP_RESET_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      ResetMap(gLocal(realSlot)\map())
+      ResetMap(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
    Else
-      ResetMap(gVar(varSlot)\map())
+      ResetMap(*gVar(varSlot)\var(0)\map())
    EndIf
 
    pc + 1
@@ -1293,13 +1296,13 @@ Procedure C2MAP_NEXT_T()
 
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      If NextMapElement(gLocal(realSlot)\map())
+      If NextMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
       EndIf
    Else
-      If NextMapElement(gVar(varSlot)\map())
+      If NextMapElement(*gVar(varSlot)\var(0)\map())
          gEvalStack(sp)\i = 1
       Else
          gEvalStack(sp)\i = 0
@@ -1319,9 +1322,9 @@ Procedure C2MAP_KEY_T()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\ss = MapKey(gLocal(realSlot)\map())
+      gEvalStack(sp)\ss = MapKey(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
    Else
-      gEvalStack(sp)\ss = MapKey(gVar(varSlot)\map())
+      gEvalStack(sp)\ss = MapKey(*gVar(varSlot)\var(0)\map())
    EndIf
    sp + 1
 
@@ -1337,9 +1340,9 @@ Procedure C2MAP_VALUE_INT()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\i = gLocal(realSlot)\map()\i
+      gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\i
    Else
-      gEvalStack(sp)\i = gVar(varSlot)\map()\i
+      gEvalStack(sp)\i = *gVar(varSlot)\var(0)\map()\i
    EndIf
    sp + 1
 
@@ -1355,9 +1358,9 @@ Procedure C2MAP_VALUE_FLOAT()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\f = gLocal(realSlot)\map()\f
+      gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\f
    Else
-      gEvalStack(sp)\f = gVar(varSlot)\map()\f
+      gEvalStack(sp)\f = *gVar(varSlot)\var(0)\map()\f
    EndIf
    sp + 1
 
@@ -1373,9 +1376,9 @@ Procedure C2MAP_VALUE_STR()
    sp - 1 : varSlot = gEvalStack(sp)\i
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realSlot = varSlot & #C2_SLOT_MASK
-      gEvalStack(sp)\ss = gLocal(realSlot)\map()\ss
+      gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\ss
    Else
-      gEvalStack(sp)\ss = gVar(varSlot)\map()\ss
+      gEvalStack(sp)\ss = *gVar(varSlot)\var(0)\map()\ss
    EndIf
    sp + 1
 
@@ -1517,14 +1520,14 @@ Procedure C2LIST_ADD_STRUCT_COPY()
       ; Copy each field - compiler should emit field types for proper handling
       ; For now, copy \i field (works for int, stores slot for strings to handle later)
       For i = 0 To structSize - 1
-         PokeI(*mem + i * 8, gVar(baseSlot + i)\i)
+         PokeI(*mem + i * 8, *gVar(baseSlot + i)\var(0)\i)
       Next
    EndIf
 
    ; Add to list
-   LastElement(gVar(varSlot)\ll())
-   AddElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\ptr = *mem
+   LastElement(*gVar(varSlot)\var(0)\ll())
+   AddElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\ptr = *mem
 
    pc + 1
 EndProcedure
@@ -1546,17 +1549,17 @@ Procedure C2LIST_ADD_STRUCT_TYPED()
    *mem = AllocateMemory(structSize * 8)
    If *mem
       For i = 0 To structSize - 1
-         fieldType = gVar(fieldTypesSlot + i)\i
+         fieldType = *gVar(fieldTypesSlot + i)\var(0)\i
          Select fieldType
             Case 0  ; Int
-               PokeI(*mem + i * 8, gVar(baseSlot + i)\i)
+               PokeI(*mem + i * 8, *gVar(baseSlot + i)\var(0)\i)
             Case 1  ; Float
-               PokeD(*mem + i * 8, gVar(baseSlot + i)\f)
+               PokeD(*mem + i * 8, *gVar(baseSlot + i)\var(0)\f)
             Case 2  ; String - allocate copy
-               slen = StringByteLength(gVar(baseSlot + i)\ss) + SizeOf(Character)
+               slen = StringByteLength(*gVar(baseSlot + i)\var(0)\ss) + SizeOf(Character)
                *strMem = AllocateMemory(slen)
                If *strMem
-                  PokeS(*strMem, gVar(baseSlot + i)\ss)
+                  PokeS(*strMem, *gVar(baseSlot + i)\var(0)\ss)
                EndIf
                PokeI(*mem + i * 8, *strMem)
          EndSelect
@@ -1564,9 +1567,9 @@ Procedure C2LIST_ADD_STRUCT_TYPED()
    EndIf
 
    ; Add to list
-   LastElement(gVar(varSlot)\ll())
-   AddElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\ptr = *mem
+   LastElement(*gVar(varSlot)\var(0)\ll())
+   AddElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\ptr = *mem
 
    pc + 1
 EndProcedure
@@ -1585,8 +1588,8 @@ Procedure C2MAP_PUT_STRUCT_TYPED()
    fieldTypesSlot = _AR()\n
 
    ; Free old struct if key exists
-   If FindMapElement(gVar(varSlot)\map(), key)
-      *oldMem = gVar(varSlot)\map()\ptr
+   If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+      *oldMem = *gVar(varSlot)\var(0)\map()\ptr
       If *oldMem
          ; Free string allocations first (would need field types info)
          FreeMemory(*oldMem)
@@ -1597,17 +1600,17 @@ Procedure C2MAP_PUT_STRUCT_TYPED()
    *mem = AllocateMemory(structSize * 8)
    If *mem
       For i = 0 To structSize - 1
-         fieldType = gVar(fieldTypesSlot + i)\i
+         fieldType = *gVar(fieldTypesSlot + i)\var(0)\i
          Select fieldType
             Case 0  ; Int
-               PokeI(*mem + i * 8, gVar(baseSlot + i)\i)
+               PokeI(*mem + i * 8, *gVar(baseSlot + i)\var(0)\i)
             Case 1  ; Float
-               PokeD(*mem + i * 8, gVar(baseSlot + i)\f)
+               PokeD(*mem + i * 8, *gVar(baseSlot + i)\var(0)\f)
             Case 2  ; String - allocate copy
-               slen = StringByteLength(gVar(baseSlot + i)\ss) + SizeOf(Character)
+               slen = StringByteLength(*gVar(baseSlot + i)\var(0)\ss) + SizeOf(Character)
                *strMem = AllocateMemory(slen)
                If *strMem
-                  PokeS(*strMem, gVar(baseSlot + i)\ss)
+                  PokeS(*strMem, *gVar(baseSlot + i)\var(0)\ss)
                EndIf
                PokeI(*mem + i * 8, *strMem)
          EndSelect
@@ -1615,7 +1618,7 @@ Procedure C2MAP_PUT_STRUCT_TYPED()
    EndIf
 
    ; Put in map
-   gVar(varSlot)\map(key)\ptr = *mem
+   *gVar(varSlot)\var(0)\map(key)\ptr = *mem
 
    pc + 1
 EndProcedure
@@ -1674,9 +1677,9 @@ Procedure C2LIST_ADD_STRUCT_PTR()
    EndIf
 
    ; Add to list
-   LastElement(gVar(varSlot)\ll())
-   AddElement(gVar(varSlot)\ll())
-   gVar(varSlot)\ll()\ptr = *destMem
+   LastElement(*gVar(varSlot)\var(0)\ll())
+   AddElement(*gVar(varSlot)\var(0)\ll())
+   *gVar(varSlot)\var(0)\ll()\ptr = *destMem
 
    pc + 1
 EndProcedure
@@ -1697,18 +1700,19 @@ Procedure C2LIST_GET_STRUCT_PTR()
    ; V1.031.32: Check if source list is local
    If varSlot & #C2_LOCAL_COLLECTION_FLAG
       realVarSlot = varSlot & #C2_SLOT_MASK
-      *srcMem = gLocal(realVarSlot)\ll()\ptr
+      *srcMem = *gVar(gCurrentFuncSlot)\var(realVarSlot)\ll()\ptr
    Else
-      *srcMem = gVar(varSlot)\ll()\ptr
+      *srcMem = *gVar(varSlot)\var(0)\ll()\ptr
    EndIf
 
    ; V1.031.32: Check if destination struct is local
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE - locals via *gVar(gCurrentFuncSlot)\var(offset)
    If destSlot & #C2_LOCAL_COLLECTION_FLAG
-      ; Local destination: offset needs gLocalBase added (like STRUCT_ALLOC_LOCAL)
-      realDestSlot = gLocalBase + (destSlot & #C2_SLOT_MASK)
-      *destMem = gLocal(realDestSlot)\ptr
+      ; Local destination: offset is already the local index - no gFrameBase needed
+      realDestSlot = destSlot & #C2_SLOT_MASK
+      *destMem = *gVar(gCurrentFuncSlot)\var(realDestSlot)\ptr
    Else
-      *destMem = gVar(destSlot)\ptr
+      *destMem = *gVar(destSlot)\var(0)\ptr
    EndIf
 
    ; Copy data if both valid
@@ -1739,9 +1743,9 @@ Procedure C2MAP_PUT_STRUCT_PTR()
    sp - 1 : varSlot = gEvalStack(sp)\i
 
    ; Free existing entry if present
-   If FindMapElement(gVar(varSlot)\map(), key)
-      If gVar(varSlot)\map(key)\ptr
-         FreeMemory(gVar(varSlot)\map(key)\ptr)
+   If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+      If *gVar(varSlot)\var(0)\map(key)\ptr
+         FreeMemory(*gVar(varSlot)\var(0)\map(key)\ptr)
       EndIf
    EndIf
 
@@ -1752,7 +1756,7 @@ Procedure C2MAP_PUT_STRUCT_PTR()
    EndIf
 
    ; Add to map
-   gVar(varSlot)\map(key)\ptr = *destMem
+   *gVar(varSlot)\var(0)\map(key)\ptr = *destMem
 
    pc + 1
 EndProcedure
@@ -1771,12 +1775,12 @@ Procedure C2MAP_GET_STRUCT_PTR()
 
    ; Find in map
    *srcMem = 0
-   If FindMapElement(gVar(varSlot)\map(), key)
-      *srcMem = gVar(varSlot)\map(key)\ptr
+   If FindMapElement(*gVar(varSlot)\var(0)\map(), key)
+      *srcMem = *gVar(varSlot)\var(0)\map(key)\ptr
    EndIf
 
    ; Get destination pointer
-   *destMem = gVar(destSlot)\ptr
+   *destMem = *gVar(destSlot)\var(0)\ptr
 
    ; Copy data if both valid
    If *srcMem And *destMem
@@ -1799,7 +1803,7 @@ Procedure C2STRUCT_FREE()
    If *mem
       ; Free string allocations
       For i = 0 To structSize - 1
-         fieldType = gVar(fieldTypesSlot + i)\i
+         fieldType = *gVar(fieldTypesSlot + i)\var(0)\i
          If fieldType = 2  ; String
             *strMem = PeekI(*mem + i * 8)
             If *strMem
@@ -1848,7 +1852,7 @@ Procedure.i AllocateStructCopy(baseSlot.i, structSize.i)
    If *mem
       ; Copy each field
       For i = 0 To structSize - 1
-         PokeI(*mem + i * 8, gVar(baseSlot + i)\i)
+         PokeI(*mem + i * 8, *gVar(baseSlot + i)\var(0)\i)
          ; Note: strings need special handling - store pointer or copy
       Next
    EndIf
@@ -1863,6 +1867,269 @@ EndProcedure
 
 Procedure.d PeekStructFieldFloat(*mem, offset.i)
    ProcedureReturn PeekD(*mem + offset * 8)
+EndProcedure
+
+; ======================================================================================================
+;- V1.034.6: ForEach Opcodes - Scoped Iterator for Lists and Maps
+; ======================================================================================================
+; These opcodes use a stack-based iterator position, allowing nested loops on the same collection.
+; The iterator index is stored on the VM evaluation stack, not in the list/map itself.
+; This solves the test 107 limitation where nested functions corrupted the shared iterator.
+
+; FOREACH_LIST_INIT: Initialize list iterator on stack
+; Instruction \i = varSlot (from codegen)
+; Stack: [] -> [iter]
+; Pushes initial iterator value (-1 = before first element)
+Procedure C2FOREACH_LIST_INIT()
+   gEvalStack(sp)\i = -1  ; Iterator starts at -1 (before first)
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_LIST_NEXT: Advance list iterator, push success
+; Instruction \i = varSlot (from codegen via postprocessor or from INIT)
+; Stack: [iter] -> [iter', success]
+; Increments iterator in-place, positions list at that element, pushes 1 (success) or 0 (end)
+Procedure C2FOREACH_LIST_NEXT()
+   Protected varSlot.i, iter.i, realSlot.i, listLen.i, success.i
+
+   ; Get varSlot from instruction (use _AR() macro)
+   varSlot = _AR()\i
+
+   ; Get and advance iterator from stack (update in-place)
+   iter = gEvalStack(sp - 1)\i + 1
+   gEvalStack(sp - 1)\i = iter
+
+   ; Get list size and position list at current element
+   success = 0
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      listLen = ListSize(*gVar(gCurrentFuncSlot)\var(realSlot)\ll())
+      If iter < listLen
+         SelectElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll(), iter)
+         success = 1
+      EndIf
+   Else
+      listLen = ListSize(*gVar(varSlot)\var(0)\ll())
+      If iter < listLen
+         SelectElement(*gVar(varSlot)\var(0)\ll(), iter)
+         success = 1
+      EndIf
+   EndIf
+
+   ; Push success
+   gEvalStack(sp)\i = success
+   sp + 1
+
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_INIT: Initialize map iterator on stack
+; Instruction \i = varSlot
+; Stack: [] -> [iter]
+Procedure C2FOREACH_MAP_INIT()
+   gEvalStack(sp)\i = -1  ; Iterator starts at -1 (before first)
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_NEXT: Advance map iterator, push success
+; Instruction \i = varSlot
+; Stack: [iter] -> [iter', success]
+Procedure C2FOREACH_MAP_NEXT()
+   Protected varSlot.i, iter.i, realSlot.i, success.i
+
+   ; Get varSlot from instruction (use _AR() macro)
+   varSlot = _AR()\i
+
+   ; Get current iterator
+   iter = gEvalStack(sp - 1)\i
+
+   ; For iter = -1, we need to reset and get first
+   ; For iter >= 0, we need to advance to next
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      If iter = -1
+         ResetMap(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
+      EndIf
+      success = NextMapElement(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
+   Else
+      If iter = -1
+         ResetMap(*gVar(varSlot)\var(0)\map())
+      EndIf
+      success = NextMapElement(*gVar(varSlot)\var(0)\map())
+   EndIf
+
+   ; Increment iterator in-place
+   gEvalStack(sp - 1)\i = iter + 1
+
+   ; Push success
+   gEvalStack(sp)\i = success
+   sp + 1
+
+   pc + 1
+EndProcedure
+
+; FOREACH_END: Cleanup - pop iterator from stack
+; Stack: [iter] -> []
+Procedure C2FOREACH_END()
+   sp - 1  ; Pop and discard iterator
+   pc + 1
+EndProcedure
+
+; FOREACH_LIST_GET_INT: Get list element at stack iterator position
+; Instruction \i = varSlot
+; Stack: [iter] -> [iter, value]
+; Uses SelectElement to position by index, then reads value
+Procedure C2FOREACH_LIST_GET_INT()
+   Protected varSlot.i, iter.i, realSlot.i, val.i
+
+   ; Get varSlot from instruction, iter from stack
+   varSlot = _AR()\i
+   iter = gEvalStack(sp - 1)\i
+
+   val = 0
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      If SelectElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll(), iter)
+         val = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\i
+      EndIf
+   Else
+      If SelectElement(*gVar(varSlot)\var(0)\ll(), iter)
+         val = *gVar(varSlot)\var(0)\ll()\i
+      EndIf
+   EndIf
+
+   gEvalStack(sp)\i = val
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_LIST_GET_FLOAT: Get list float element at stack iterator position
+; Instruction \i = varSlot
+Procedure C2FOREACH_LIST_GET_FLOAT()
+   Protected varSlot.i, iter.i, realSlot.i, val.d
+
+   varSlot = _AR()\i
+   iter = gEvalStack(sp - 1)\i
+
+   val = 0.0
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      If SelectElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll(), iter)
+         val = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\f
+      EndIf
+   Else
+      If SelectElement(*gVar(varSlot)\var(0)\ll(), iter)
+         val = *gVar(varSlot)\var(0)\ll()\f
+      EndIf
+   EndIf
+
+   gEvalStack(sp)\f = val
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_LIST_GET_STR: Get list string element at stack iterator position
+; Instruction \i = varSlot
+Procedure C2FOREACH_LIST_GET_STR()
+   Protected varSlot.i, iter.i, realSlot.i, val.s
+
+   varSlot = _AR()\i
+   iter = gEvalStack(sp - 1)\i
+
+   val = ""
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      If SelectElement(*gVar(gCurrentFuncSlot)\var(realSlot)\ll(), iter)
+         val = *gVar(gCurrentFuncSlot)\var(realSlot)\ll()\ss
+      EndIf
+   Else
+      If SelectElement(*gVar(varSlot)\var(0)\ll(), iter)
+         val = *gVar(varSlot)\var(0)\ll()\ss
+      EndIf
+   EndIf
+
+   gEvalStack(sp)\ss = val
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_KEY: Get current map key (map iterator maintained internally)
+; Instruction \i = varSlot
+; Stack: [iter] -> [iter, key]
+Procedure C2FOREACH_MAP_KEY()
+   Protected varSlot.i, realSlot.i, key.s
+
+   varSlot = _AR()\i
+
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      key = MapKey(*gVar(gCurrentFuncSlot)\var(realSlot)\map())
+   Else
+      key = MapKey(*gVar(varSlot)\var(0)\map())
+   EndIf
+
+   gEvalStack(sp)\ss = key
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_VALUE_INT: Get current map int value
+; Instruction \i = varSlot
+Procedure C2FOREACH_MAP_VALUE_INT()
+   Protected varSlot.i, realSlot.i, val.i
+
+   varSlot = _AR()\i
+
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      val = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\i
+   Else
+      val = *gVar(varSlot)\var(0)\map()\i
+   EndIf
+
+   gEvalStack(sp)\i = val
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_VALUE_FLOAT: Get current map float value
+; Instruction \i = varSlot
+Procedure C2FOREACH_MAP_VALUE_FLOAT()
+   Protected varSlot.i, realSlot.i, val.d
+
+   varSlot = _AR()\i
+
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      val = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\f
+   Else
+      val = *gVar(varSlot)\var(0)\map()\f
+   EndIf
+
+   gEvalStack(sp)\f = val
+   sp + 1
+   pc + 1
+EndProcedure
+
+; FOREACH_MAP_VALUE_STR: Get current map string value
+; Instruction \i = varSlot
+Procedure C2FOREACH_MAP_VALUE_STR()
+   Protected varSlot.i, realSlot.i, val.s
+
+   varSlot = _AR()\i
+
+   If varSlot & #C2_LOCAL_COLLECTION_FLAG
+      realSlot = varSlot & #C2_SLOT_MASK
+      val = *gVar(gCurrentFuncSlot)\var(realSlot)\map()\ss
+   Else
+      val = *gVar(varSlot)\var(0)\map()\ss
+   EndIf
+
+   gEvalStack(sp)\ss = val
+   sp + 1
+   pc + 1
 EndProcedure
 
 ; ======================================================================================================

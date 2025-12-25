@@ -1,4 +1,4 @@
-; -- lexical parser to VM for a simplified C Language
+﻿; -- lexical parser to VM for a simplified C Language
 ; -- lexical parser to VM for a simplified C Language
 ; Tested in UTF8
 ; PBx64 v6.20
@@ -105,6 +105,11 @@
          ProcedureReturn #False
       EndIf
 
+      ; V1.034.37: Constants are NEVER local (always global storage)
+      If gVarMeta(varIndex)\flags & #C2FLAG_CONST
+         ProcedureReturn #False
+      EndIf
+
       ; Parameters use LocalVars array
       If gVarMeta(varIndex)\flags & #C2FLAG_PARAM
          ProcedureReturn #True
@@ -131,6 +136,142 @@
       EndIf
 
       ProcedureReturn #False
+   EndProcedure
+
+   ;- V1.034.0: O(1) Code Element Lookup Functions
+   ; These functions provide fast lookup into MapCodeElements while maintaining
+   ; backwards compatibility with gVarMeta array
+
+   ; Get code element by name with optional function context
+   ; Returns pointer to stCodeElement or #Null if not found
+   Procedure.i          GetCodeElement(name.s, functionContext.s = "")
+      Protected key.s, mangledKey.s
+
+      ; Try function-local name first (if in function context)
+      If functionContext <> ""
+         mangledKey = LCase(functionContext + "_" + name)
+         If FindMapElement(MapCodeElements(), mangledKey)
+            ProcedureReturn @MapCodeElements()
+         EndIf
+      EndIf
+
+      ; Try global name
+      key = LCase(name)
+      If FindMapElement(MapCodeElements(), key)
+         ProcedureReturn @MapCodeElements()
+      EndIf
+
+      ProcedureReturn #Null
+   EndProcedure
+
+   ; Find variable slot by name using O(1) map lookup
+   ; Returns slot index or -1 if not found
+   Procedure.i          FindVariableSlot(name.s, functionContext.s = "")
+      Protected *elem.stCodeElement
+
+      *elem = GetCodeElement(name, functionContext)
+      If *elem
+         ProcedureReturn *elem\varSlot
+      EndIf
+
+      ProcedureReturn -1
+   EndProcedure
+
+   ; Compatibility wrapper: tries O(1) map first, falls back to O(N) scan
+   ; Use during migration - will be removed once all code uses map
+   Procedure.i          FindVariableSlotCompat(name.s, functionContext.s = "")
+      Protected *elem.stCodeElement, i.i, searchName.s
+
+      ; Try O(1) map lookup first
+      *elem = GetCodeElement(name, functionContext)
+      If *elem
+         ProcedureReturn *elem\varSlot
+      EndIf
+
+      ; Fall back to O(N) scan for variables not yet in map
+      If functionContext <> ""
+         searchName = LCase(functionContext + "_" + name)
+         For i = 0 To gnLastVariable - 1
+            If LCase(gVarMeta(i)\name) = searchName
+               ProcedureReturn i
+            EndIf
+         Next
+      EndIf
+
+      ; Try global name
+      searchName = LCase(name)
+      For i = 0 To gnLastVariable - 1
+         If LCase(gVarMeta(i)\name) = searchName
+            ProcedureReturn i
+         EndIf
+      Next
+
+      ProcedureReturn -1
+   EndProcedure
+
+
+   ; Register a variable in MapCodeElements (call after creating gVarMeta entry)
+   ; This syncs the map with gVarMeta for O(1) lookup
+   Procedure            RegisterCodeElement(slot.i, functionContext.s = "")
+      Protected key.s, elemType.w, offsetKey.s
+
+      If slot < 0 Or slot >= gnLastVariable
+         ProcedureReturn
+      EndIf
+
+      ; Build lookup key
+      If functionContext <> "" And gVarMeta(slot)\paramOffset >= 0
+         key = LCase(functionContext + "_" + gVarMeta(slot)\name)
+      Else
+         key = LCase(gVarMeta(slot)\name)
+      EndIf
+
+      ; Skip if already registered
+      If FindMapElement(MapCodeElements(), key)
+         ProcedureReturn
+      EndIf
+
+      ; Determine element type
+      If gVarMeta(slot)\flags & #C2FLAG_CONST
+         elemType = #ELEMENT_CONSTANT
+      ElseIf gVarMeta(slot)\flags & #C2FLAG_ARRAY
+         elemType = #ELEMENT_ARRAY
+      ElseIf gVarMeta(slot)\flags & #C2FLAG_PARAM
+         elemType = #ELEMENT_PARAMETER
+      Else
+         elemType = #ELEMENT_VARIABLE
+      EndIf
+
+      ; Create map entry
+      AddMapElement(MapCodeElements(), key)
+      MapCodeElements()\name = gVarMeta(slot)\name
+      MapCodeElements()\id = slot
+      MapCodeElements()\varSlot = slot
+      MapCodeElements()\elementType = elemType
+      MapCodeElements()\varType = gVarMeta(slot)\flags & #C2FLAG_TYPE
+      MapCodeElements()\paramOffset = gVarMeta(slot)\paramOffset
+      MapCodeElements()\functionContext = functionContext
+      MapCodeElements()\structType = gVarMeta(slot)\structType
+      MapCodeElements()\elementSize = gVarMeta(slot)\elementSize
+      MapCodeElements()\size = gVarMeta(slot)\arraySize
+
+      ; Set boolean flags
+      MapCodeElements()\isIdent = Bool(gVarMeta(slot)\flags & #C2FLAG_IDENT)
+      MapCodeElements()\isArray = Bool(gVarMeta(slot)\flags & #C2FLAG_ARRAY)
+      MapCodeElements()\isPointer = Bool(gVarMeta(slot)\flags & #C2FLAG_POINTER)
+
+      ; Copy constant values
+      MapCodeElements()\valueInt = gVarMeta(slot)\valueInt
+      MapCodeElements()\valueFloat = gVarMeta(slot)\valueFloat
+      MapCodeElements()\valueString = gVarMeta(slot)\valueString
+
+      ; V1.034.0: Also register in MapLocalByOffset for paramOffset-based lookup
+      If functionContext <> "" And gVarMeta(slot)\paramOffset >= 0
+         offsetKey = LCase(functionContext) + "_" + Str(gVarMeta(slot)\paramOffset)
+         If Not FindMapElement(MapLocalByOffset(), offsetKey)
+            MapLocalByOffset(offsetKey) = slot
+         EndIf
+      EndIf
    EndProcedure
 
    ; V1.023.0: Helper to mark variable for preloading when assigned from constant
@@ -352,23 +493,37 @@
                   EndIf
                   llObjects()\i = nVar
                Else
+                  ; V1.034.17: Unified MOV with n field for locality
                   If sourceFlags & #C2FLAG_STR
-                     llObjects()\code = #ljLMOVS
+                     llObjects()\code = #ljMOVS
                   ElseIf sourceFlags & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLMOVF
+                     llObjects()\code = #ljMOVF
                   ElseIf destFlags & #C2FLAG_POINTER
-                     ; V1.023.16: Use PLMOV for pointer types to preserve ptr/ptrtype metadata
-                     llObjects()\code = #ljPLMOV
+                     ; V1.034.20: Use unified PMOV for pointer types (n field encodes locality)
+                     llObjects()\code = #ljPMOV
                   Else
-                     llObjects()\code = #ljLMOV
+                     llObjects()\code = #ljMOV
                   EndIf
-                  llObjects()\j = savedSource  ; j = source varIndex
-                  llObjects()\i = localOffset  ; i = destination paramOffset
+                  ; Determine source locality for n field
+                  If isSourceLocal
+                     Protected srcOffset0.i = gVarMeta(savedSource)\paramOffset
+                     If srcOffset0 >= 0 And srcOffset0 < 20
+                        llObjects()\n = 3           ; n=3: LL (both local)
+                        llObjects()\j = srcOffset0  ; j = source paramOffset
+                     Else
+                        llObjects()\n = 2           ; n=2: GL (global source, local dest)
+                        llObjects()\j = savedSource ; j = source slot (global)
+                     EndIf
+                  Else
+                     llObjects()\n = 2              ; n=2: GL (global source, local dest)
+                     llObjects()\j = savedSource    ; j = source slot (global)
+                  EndIf
+                  llObjects()\i = localOffset       ; i = destination paramOffset (local)
                   ; V1.023.0: Mark for preloading if assigning from constant
                   MarkPreloadable(savedSource, nVar)
                EndIf
             Else
-               ; Global destination - use regular MOV
+               ; V1.034.17: Global destination - use unified MOV with n field for locality
                ; V1.022.18: Preserve #C2FLAG_STRUCT when updating type flags for struct base slots
                ; V1.027.8: Also preserve #C2FLAG_PRELOAD to keep preload optimization working
                ; V1.027.9: Also preserve #C2FLAG_ASSIGNED to prevent late PRELOAD marking
@@ -385,10 +540,24 @@
                   llObjects()\code = #ljMOV
                   gVarMeta( nVar )\flags = (gVarMeta( nVar )\flags & (#C2FLAG_STRUCT | #C2FLAG_PRELOAD | #C2FLAG_ASSIGNED)) | #C2FLAG_IDENT | #C2FLAG_INT
                EndIf
-               llObjects()\j = llObjects()\i  ; j = source slot
-               llObjects()\i = nVar           ; i = destination slot (V1.023.3: was missing!)
+               Protected savedSrc1.i = llObjects()\i
+               ; Determine source locality for n field
+               If isSourceLocal
+                  Protected srcOffset1.i = gVarMeta(llObjects()\i)\paramOffset
+                  If srcOffset1 >= 0 And srcOffset1 < 20
+                     llObjects()\n = 1           ; n=1: LG (local source, global dest)
+                     llObjects()\j = srcOffset1  ; j = source paramOffset
+                  Else
+                     llObjects()\n = 0           ; n=0: GG (both global)
+                     llObjects()\j = savedSrc1   ; j = source slot (global)
+                  EndIf
+               Else
+                  llObjects()\n = 0              ; n=0: GG (both global)
+                  llObjects()\j = savedSrc1      ; j = source slot (global)
+               EndIf
+               llObjects()\i = nVar              ; i = destination slot (global)
                ; V1.023.0: Mark for preloading if assigning from constant
-               MarkPreloadable(llObjects()\j, nVar)
+               MarkPreloadable(savedSrc1, nVar)
             EndIf
          Else
             ; One is a parameter - keep as PUSH+STORE but use local version if dest is local
@@ -398,18 +567,20 @@
 
                ; Safety check: Ensure paramOffset is valid (should be >= 0 and < 20)
                If localOffset3 >= 0 And localOffset3 < 20
+                  ; V1.034.19: Use unified STORE with j=1 instead of LSTORE
                   If destFlags & #C2FLAG_STR
-                     llObjects()\code = #ljLSTORES
+                     llObjects()\code = #ljSTORES
                   ElseIf destFlags & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLSTOREF
+                     llObjects()\code = #ljSTOREF
                   ElseIf destFlags & #C2FLAG_POINTER
-                     ; V1.023.16: Use PLSTORE for pointer types to preserve ptr/ptrtype metadata
-                     llObjects()\code = #ljPLSTORE
+                     ; V1.023.16: Use PSTORE for pointer types to preserve ptr/ptrtype metadata
+                     llObjects()\code = #ljPSTORE
                   Else
-                     llObjects()\code = #ljLSTORE
+                     llObjects()\code = #ljSTORE
                   EndIf
-                  ; Set the local variable index (paramOffset)
+                  ; Set the local variable index (paramOffset) and local flag
                   llObjects()\i = localOffset3
+                  llObjects()\j = 1  ; j=1 means local
                Else
                   ; paramOffset not set - use global STORE
                   If destFlags & #C2FLAG_STR
@@ -434,9 +605,19 @@
          ; Check if FETCH instruction is marked as part of ternary
          inTernary2 = (llObjects()\flags & #INST_FLAG_TERNARY)
 
-         sourceFlags2 = gVarMeta( llObjects()\i )\flags
+         ; V1.034.32: FIX - When llObjects()\j = 1, the source is a LOCAL variable.
+         ; In this case, llObjects()\i contains paramOffset, NOT a slot number!
+         ; We cannot safely look up gVarMeta(llObjects()\i) for local sources.
+         ; For local sources, treat as if PARAM flag is set to skip MOV optimization.
+         Protected isSourceLocalFetch.b = Bool(llObjects()\j = 1)
+         If isSourceLocalFetch
+            ; Source is local - cannot look up gVarMeta, assume PARAM to skip MOV
+            sourceFlags2 = #C2FLAG_PARAM
+         Else
+            sourceFlags2 = gVarMeta( llObjects()\i )\flags
+         EndIf
          destFlags2 = gVarMeta( nVar )\flags
-         isSourceLocal = IsLocalVar(llObjects()\i)
+         isSourceLocal = Bool(isSourceLocalFetch Or IsLocalVar(llObjects()\i))
          isDestLocal = IsLocalVar(nVar)
 
          If Not inTernary2 And Not ((sourceFlags2 & #C2FLAG_PARAM) Or (destFlags2 & #C2FLAG_PARAM))
@@ -461,24 +642,39 @@
                   EndIf
                   llObjects()\i = nVar
                Else
+                  ; V1.034.17: Unified MOV with n field for locality
                   If sourceFlags2 & #C2FLAG_STR
-                     llObjects()\code = #ljLMOVS
+                     llObjects()\code = #ljMOVS
                   ElseIf sourceFlags2 & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLMOVF
+                     llObjects()\code = #ljMOVF
                   ElseIf destFlags2 & #C2FLAG_POINTER
-                     ; V1.023.16: Use PLMOV for pointer types to preserve ptr/ptrtype metadata
-                     llObjects()\code = #ljPLMOV
+                     ; V1.034.20: Use unified PMOV for pointer types (n field encodes locality)
+                     llObjects()\code = #ljPMOV
                   Else
-                     llObjects()\code = #ljLMOV
+                     llObjects()\code = #ljMOV
                   EndIf
                   savedSrc2 = llObjects()\i
-                  llObjects()\i = localOffset2
-                  llObjects()\j = savedSrc2
+                  ; Determine source locality for n field
+                  If isSourceLocal
+                     ; Source is local - get its paramOffset
+                     Protected srcOffset2.i = gVarMeta(llObjects()\i)\paramOffset
+                     If srcOffset2 >= 0 And srcOffset2 < 20
+                        llObjects()\n = 3           ; n=3: LL (both local)
+                        llObjects()\j = srcOffset2  ; j = source paramOffset
+                     Else
+                        llObjects()\n = 2           ; n=2: GL (global source, local dest)
+                        llObjects()\j = savedSrc2   ; j = source slot (global)
+                     EndIf
+                  Else
+                     llObjects()\n = 2              ; n=2: GL (global source, local dest)
+                     llObjects()\j = savedSrc2      ; j = source slot (global)
+                  EndIf
+                  llObjects()\i = localOffset2      ; i = destination paramOffset (local)
                   ; V1.023.0: Mark for preloading if assigning from constant
                   MarkPreloadable(savedSrc2, nVar)
                EndIf
             Else
-               ; Use regular MOV for global destination
+               ; V1.034.17: Unified MOV for global destination with n field
                If sourceFlags2 & #C2FLAG_STR
                   llObjects()\code = #ljMOVS
                ElseIf sourceFlags2 & #C2FLAG_FLOAT
@@ -489,9 +685,25 @@
                Else
                   llObjects()\code = #ljMOV
                EndIf
-               llObjects()\j = llObjects()\i
+               Protected savedSrc3.i = llObjects()\i
+               ; Determine source locality for n field
+               If isSourceLocal
+                  ; Source is local - get its paramOffset
+                  Protected srcOffset3.i = gVarMeta(llObjects()\i)\paramOffset
+                  If srcOffset3 >= 0 And srcOffset3 < 20
+                     llObjects()\n = 1           ; n=1: LG (local source, global dest)
+                     llObjects()\j = srcOffset3  ; j = source paramOffset
+                  Else
+                     llObjects()\n = 0           ; n=0: GG (both global)
+                     llObjects()\j = savedSrc3   ; j = source slot (global)
+                  EndIf
+               Else
+                  llObjects()\n = 0              ; n=0: GG (both global)
+                  llObjects()\j = savedSrc3      ; j = source slot (global)
+               EndIf
+               llObjects()\i = nVar              ; i = destination slot (global)
                ; V1.023.0: Mark for preloading if assigning from constant
-               MarkPreloadable(llObjects()\j, nVar)
+               MarkPreloadable(savedSrc3, nVar)
             EndIf
          Else
             ; Keep as FETCH+STORE but use local version if appropriate
@@ -501,18 +713,20 @@
 
                ; Safety check: Ensure paramOffset is valid (should be >= 0 and < 20)
                If localOffset4 >= 0 And localOffset4 < 20
+                  ; V1.034.19: Use unified STORE with j=1 instead of LSTORE
                   If destFlags2 & #C2FLAG_STR
-                     llObjects()\code = #ljLSTORES
+                     llObjects()\code = #ljSTORES
                   ElseIf destFlags2 & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLSTOREF
+                     llObjects()\code = #ljSTOREF
                   ElseIf destFlags2 & #C2FLAG_POINTER
-                     ; V1.023.16: Use PLSTORE for pointer types to preserve ptr/ptrtype metadata
-                     llObjects()\code = #ljPLSTORE
+                     ; V1.023.16: Use PSTORE for pointer types to preserve ptr/ptrtype metadata
+                     llObjects()\code = #ljPSTORE
                   Else
-                     llObjects()\code = #ljLSTORE
+                     llObjects()\code = #ljSTORE
                   EndIf
-                  ; Set the local variable index (paramOffset)
+                  ; Set the local variable index (paramOffset) and local flag
                   llObjects()\i = localOffset4
+                  llObjects()\j = 1  ; j=1 means local
                Else
                   ; paramOffset not set - use global STORE
                   If destFlags2 & #C2FLAG_STR
@@ -532,7 +746,7 @@
             EndIf
          EndIf
 
-      ; V1.022.26: PUSHF+STOREF optimization → MOVF (float slot-only)
+      ; V1.022.26: PUSHF+STOREF optimization ? MOVF (float slot-only)
       ElseIf gEmitIntCmd = #ljPUSHF And op = #ljSTOREF
          Protected inTernaryF.b = (llObjects()\flags & #INST_FLAG_TERNARY)
          Protected sourceFlagsF.w = gVarMeta( llObjects()\i )\flags
@@ -550,28 +764,59 @@
                   llObjects()\code = #ljSTOREF
                   llObjects()\i = nVar
                Else
-                  llObjects()\code = #ljLMOVF
+                  ; V1.034.17: Unified MOVF with n field for locality
+                  llObjects()\code = #ljMOVF
                   Protected savedSourceF.i = llObjects()\i
-                  llObjects()\j = savedSourceF
-                  llObjects()\i = localOffsetF
+                  ; Determine source locality for n field
+                  If isSourceLocalF
+                     Protected srcOffsetF.i = gVarMeta(llObjects()\i)\paramOffset
+                     If srcOffsetF >= 0 And srcOffsetF < 20
+                        llObjects()\n = 3           ; n=3: LL (both local)
+                        llObjects()\j = srcOffsetF  ; j = source paramOffset
+                     Else
+                        llObjects()\n = 2           ; n=2: GL (global source, local dest)
+                        llObjects()\j = savedSourceF ; j = source slot (global)
+                     EndIf
+                  Else
+                     llObjects()\n = 2              ; n=2: GL (global source, local dest)
+                     llObjects()\j = savedSourceF   ; j = source slot (global)
+                  EndIf
+                  llObjects()\i = localOffsetF      ; i = destination paramOffset (local)
                   ; V1.023.0: Mark for preloading if assigning from constant
                   MarkPreloadable(savedSourceF, nVar)
                EndIf
             Else
-               ; Global destination - use MOVF
+               ; V1.034.17: Unified MOVF for global destination with n field
                llObjects()\code = #ljMOVF
-               llObjects()\j = llObjects()\i
+               Protected savedSourceF2.i = llObjects()\i
+               ; Determine source locality for n field
+               If isSourceLocalF
+                  Protected srcOffsetF2.i = gVarMeta(llObjects()\i)\paramOffset
+                  If srcOffsetF2 >= 0 And srcOffsetF2 < 20
+                     llObjects()\n = 1              ; n=1: LG (local source, global dest)
+                     llObjects()\j = srcOffsetF2    ; j = source paramOffset
+                  Else
+                     llObjects()\n = 0              ; n=0: GG (both global)
+                     llObjects()\j = savedSourceF2  ; j = source slot (global)
+                  EndIf
+               Else
+                  llObjects()\n = 0                 ; n=0: GG (both global)
+                  llObjects()\j = savedSourceF2     ; j = source slot (global)
+               EndIf
+               llObjects()\i = nVar                 ; i = destination slot (global)
                ; V1.023.0: Mark for preloading if assigning from constant
-               MarkPreloadable(llObjects()\j, nVar)
+               MarkPreloadable(savedSourceF2, nVar)
             EndIf
          Else
             ; Keep as PUSHF+STOREF
             gEmitIntLastOp = AddElement( llObjects() )
             If isDestLocalF
+               ; V1.034.19: Use unified STOREF with j=1 instead of LSTOREF
                Protected localOffsetF2.i = gVarMeta(nVar)\paramOffset
                If localOffsetF2 >= 0 And localOffsetF2 < 20
-                  llObjects()\code = #ljLSTOREF
+                  llObjects()\code = #ljSTOREF
                   llObjects()\i = localOffsetF2
+                  llObjects()\j = 1  ; j=1 means local
                Else
                   llObjects()\code = #ljSTOREF
                   llObjects()\i = nVar
@@ -582,7 +827,7 @@
             EndIf
          EndIf
 
-      ; V1.022.26: PUSHS+STORES optimization → MOVS (string slot-only)
+      ; V1.022.26: PUSHS+STORES optimization ? MOVS (string slot-only)
       ElseIf gEmitIntCmd = #ljPUSHS And op = #ljSTORES
          Protected inTernaryS.b = (llObjects()\flags & #INST_FLAG_TERNARY)
          Protected sourceFlagsS.w = gVarMeta( llObjects()\i )\flags
@@ -600,28 +845,59 @@
                   llObjects()\code = #ljSTORES
                   llObjects()\i = nVar
                Else
-                  llObjects()\code = #ljLMOVS
+                  ; V1.034.17: Unified MOVS with n field for locality
+                  llObjects()\code = #ljMOVS
                   Protected savedSourceS.i = llObjects()\i
-                  llObjects()\j = savedSourceS
-                  llObjects()\i = localOffsetS
+                  ; Determine source locality for n field
+                  If isSourceLocalS
+                     Protected srcOffsetS.i = gVarMeta(llObjects()\i)\paramOffset
+                     If srcOffsetS >= 0 And srcOffsetS < 20
+                        llObjects()\n = 3           ; n=3: LL (both local)
+                        llObjects()\j = srcOffsetS  ; j = source paramOffset
+                     Else
+                        llObjects()\n = 2           ; n=2: GL (global source, local dest)
+                        llObjects()\j = savedSourceS ; j = source slot (global)
+                     EndIf
+                  Else
+                     llObjects()\n = 2              ; n=2: GL (global source, local dest)
+                     llObjects()\j = savedSourceS   ; j = source slot (global)
+                  EndIf
+                  llObjects()\i = localOffsetS      ; i = destination paramOffset (local)
                   ; V1.023.0: Mark for preloading if assigning from constant
                   MarkPreloadable(savedSourceS, nVar)
                EndIf
             Else
-               ; Global destination - use MOVS
+               ; V1.034.17: Unified MOVS for global destination with n field
                llObjects()\code = #ljMOVS
-               llObjects()\j = llObjects()\i
+               Protected savedSourceS2.i = llObjects()\i
+               ; Determine source locality for n field
+               If isSourceLocalS
+                  Protected srcOffsetS2.i = gVarMeta(llObjects()\i)\paramOffset
+                  If srcOffsetS2 >= 0 And srcOffsetS2 < 20
+                     llObjects()\n = 1              ; n=1: LG (local source, global dest)
+                     llObjects()\j = srcOffsetS2    ; j = source paramOffset
+                  Else
+                     llObjects()\n = 0              ; n=0: GG (both global)
+                     llObjects()\j = savedSourceS2  ; j = source slot (global)
+                  EndIf
+               Else
+                  llObjects()\n = 0                 ; n=0: GG (both global)
+                  llObjects()\j = savedSourceS2     ; j = source slot (global)
+               EndIf
+               llObjects()\i = nVar                 ; i = destination slot (global)
                ; V1.023.0: Mark for preloading if assigning from constant
-               MarkPreloadable(llObjects()\j, nVar)
+               MarkPreloadable(savedSourceS2, nVar)
             EndIf
          Else
             ; Keep as PUSHS+STORES
             gEmitIntLastOp = AddElement( llObjects() )
             If isDestLocalS
+               ; V1.034.19: Use unified STORES with j=1 instead of LSTORES
                Protected localOffsetS2.i = gVarMeta(nVar)\paramOffset
                If localOffsetS2 >= 0 And localOffsetS2 < 20
-                  llObjects()\code = #ljLSTORES
+                  llObjects()\code = #ljSTORES
                   llObjects()\i = localOffsetS2
+                  llObjects()\j = 1  ; j=1 means local
                Else
                   llObjects()\code = #ljSTORES
                   llObjects()\i = nVar
@@ -637,36 +913,44 @@
          gEmitIntLastOp = AddElement( llObjects() )
 
          If nVar >= 0 And IsLocalVar(nVar)
-            ; This is a local variable - convert to local opcode and translate index
+            ; V1.034.15: Unified opcode approach - keep base opcode, set j=1 for local
+            ; This allows VM to use _SLOT(j, offset) for no-If access pattern
+            ; V1.034.31: Debug output to trace local variable detection
+            If op = #ljStore Or op = #ljSTORES Or op = #ljSTOREF
+               OSDebug("EMITINT LOCAL STORE: nVar=" + Str(nVar) + " name='" + gVarMeta(nVar)\name + "' paramOffset=" + Str(gVarMeta(nVar)\paramOffset) + " gCurrentFunctionName='" + gCurrentFunctionName + "'")
+            EndIf
             Select op
-               Case #ljFetch
-                  llObjects()\code = #ljLFETCH
-                  llObjects()\i = gVarMeta(nVar)\paramOffset
-               Case #ljFETCHS
-                  llObjects()\code = #ljLFETCHS
-                  llObjects()\i = gVarMeta(nVar)\paramOffset
-               Case #ljFETCHF
-                  llObjects()\code = #ljLFETCHF
+               Case #ljFetch, #ljFETCHS, #ljFETCHF
+                  ; Keep base opcode, mark as local with j=1
+                  llObjects()\code = op
+                  llObjects()\j = 1
                   llObjects()\i = gVarMeta(nVar)\paramOffset
                Case #ljStore
                   ; V1.023.21: Check if source is a pointer (previous opcode produces pointer)
-                  ; or destination has pointer flag - use PLSTORE to preserve ptr/ptrtype metadata
+                  ; or destination has pointer flag - use PSTORE to preserve ptr/ptrtype metadata
+                  ; V1.034.19: Use unified PSTORE with j=1 instead of PLSTORE
                   If gEmitIntCmd = #ljGETSTRUCTADDR Or gEmitIntCmd = #ljGETADDR Or gEmitIntCmd = #ljGETADDRF Or gEmitIntCmd = #ljGETADDRS Or gEmitIntCmd = #ljGETARRAYADDR Or gEmitIntCmd = #ljGETARRAYADDRF Or gEmitIntCmd = #ljGETARRAYADDRS Or gVarMeta(nVar)\flags & #C2FLAG_POINTER
-                     llObjects()\code = #ljPLSTORE
+                     llObjects()\code = #ljPSTORE
+                     llObjects()\j = 1
                   Else
-                     llObjects()\code = #ljLSTORE
+                     llObjects()\code = op
+                     llObjects()\j = 1
                   EndIf
                   llObjects()\i = gVarMeta(nVar)\paramOffset
-               Case #ljSTORES
-                  llObjects()\code = #ljLSTORES
-                  llObjects()\i = gVarMeta(nVar)\paramOffset
-               Case #ljSTOREF
-                  llObjects()\code = #ljLSTOREF
+               Case #ljSTORES, #ljSTOREF
+                  llObjects()\code = op
+                  llObjects()\j = 1
                   llObjects()\i = gVarMeta(nVar)\paramOffset
                Default
                   llObjects()\code = op
             EndSelect
          Else
+            ; V1.034.31: Debug - IsLocalVar returned false
+            If op = #ljStore Or op = #ljSTORES Or op = #ljSTOREF
+               If nVar >= 0
+                  OSDebug("EMITINT GLOBAL STORE: nVar=" + Str(nVar) + " name='" + gVarMeta(nVar)\name + "' paramOffset=" + Str(gVarMeta(nVar)\paramOffset) + " gCurrentFunctionName='" + gCurrentFunctionName + "'")
+               EndIf
+            EndIf
             llObjects()\code = op
          EndIf
       EndIf
@@ -679,16 +963,21 @@
          ; Check if this is an opcode that operates on variables
          currentCode = llObjects()\code
          Select currentCode
-            ; Local opcodes - \i already set to paramOffset in optimization code above, don't touch
-            ; V1.023.23: Added pointer-preserving local opcodes (PLSTORE, PLMOV, PLFETCH) - also use paramOffset
-            Case #ljLFETCH, #ljLFETCHS, #ljLFETCHF, #ljLSTORE, #ljLSTORES, #ljLSTOREF, #ljLMOV, #ljLMOVS, #ljLMOVF, #ljPLSTORE, #ljPLMOV, #ljPLFETCH
+            ; V1.034.24: Opcodes with \i already set (PMOV uses n field for locality)
+            ; LOCAL opcodes eliminated - now using unified opcodes with j=1
+            Case #ljPMOV
                ; Do nothing - \i already contains correct paramOffset from optimization paths
 
-            ; Global opcodes - need to set \i to variable slot
-            Case #ljFetch, #ljFETCHS, #ljFETCHF, #ljStore, #ljSTORES, #ljSTOREF, #ljSTORE_STRUCT, #ljPSTORE,
+            ; Unified opcodes - need to set \i to variable slot (unless j=1 which means local)
+            ; V1.034.24: Added FETCH_STRUCT (now unified with j=1 for locals)
+            Case #ljFetch, #ljFETCHS, #ljFETCHF, #ljStore, #ljSTORES, #ljSTOREF, #ljSTORE_STRUCT, #ljFETCH_STRUCT, #ljPSTORE,
                  #ljPush, #ljPUSHS, #ljPUSHF, #ljPOP, #ljPOPS, #ljPOPF,
-                 #ljINC_VAR_PRE, #ljINC_VAR_POST, #ljDEC_VAR_PRE, #ljDEC_VAR_POST
-               llObjects()\i = nVar
+                 #ljINC_VAR_PRE, #ljINC_VAR_POST, #ljDEC_VAR_PRE, #ljDEC_VAR_POST,
+                 #ljMOV, #ljMOVS, #ljMOVF
+               ; V1.034.16: Don't overwrite \i if j=1 (local variable - \i already has paramOffset)
+               If llObjects()\j = 0
+                  llObjects()\i = nVar
+               EndIf
                ; V1.027.9: Mark global variables as ASSIGNED when stored/modified
                ; This prevents late PRELOAD marking if a non-const store happens before const store
                ; V1.029.84: Include STORE_STRUCT for struct variable assignment tracking
@@ -1688,19 +1977,22 @@
                searchName = gCurrentFunctionName + "_" + *x\value
             EndIf
 
+            ; V1.034.66: Use case-insensitive comparison (same as FetchVarOffset)
             For n = 0 To gnLastVariable - 1
-               If gVarMeta(n)\name = searchName
+               If LCase(gVarMeta(n)\name) = LCase(searchName)
                   ; Found the variable - return its type flags
-                  ProcedureReturn gVarMeta(n)\flags & #C2FLAG_TYPE
+                  ; V1.034.65: Include POINTER flag for pointer arithmetic detection
+                  ProcedureReturn gVarMeta(n)\flags & (#C2FLAG_TYPE | #C2FLAG_POINTER)
                EndIf
             Next
 
             ; If mangled name not found and we tried mangling, try global name
             If searchName <> *x\value
                For n = 0 To gnLastVariable - 1
-                  If gVarMeta(n)\name = *x\value
+                  If LCase(gVarMeta(n)\name) = LCase(*x\value)
                      ; Found the global variable - return its type flags
-                     ProcedureReturn gVarMeta(n)\flags & #C2FLAG_TYPE
+                     ; V1.034.65: Include POINTER flag for pointer arithmetic detection
+                     ProcedureReturn gVarMeta(n)\flags & (#C2FLAG_TYPE | #C2FLAG_POINTER)
                   EndIf
                Next
             EndIf
@@ -1996,9 +2288,9 @@
       ; V1.022.50: Always returns valid slot - never -1. Complex/local values stored in temp slot.
       ; V1.022.86: When inside function, use LOCAL temps for recursion safety
       ;            Return value encoding:
-      ;            - positive or 0 = global slot → use _OPT opcodes
+      ;            - positive or 0 = global slot ? use _OPT opcodes
       ;            - -1 = reserved for STACK (not used by this function anymore)
-      ;            - < -1 = local offset encoded as -(localOffset + 2) → use _LOPT opcodes
+      ;            - < -1 = local offset encoded as -(localOffset + 2) ? use _LOPT opcodes
       ;            So -2 means LOCAL[0], -3 means LOCAL[1], etc.
 
       If Not *expr
@@ -2028,26 +2320,28 @@
                      EndIf
                   Next
 
-                  ; Emit LFETCH to push local variable value to stack
+                  ; V1.034.16: Emit FETCH with j=1 to push local variable value to stack
                   AddElement(llObjects())
                   If localExprType & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLFETCHF
+                     llObjects()\code = #ljFETCHF
                   ElseIf localExprType & #C2FLAG_STR
-                     llObjects()\code = #ljLFETCHS
+                     llObjects()\code = #ljFETCHS
                   Else
-                     llObjects()\code = #ljLFETCH
+                     llObjects()\code = #ljFetch
                   EndIf
+                  llObjects()\j = 1   ; Mark as local
                   llObjects()\i = gVarMeta(identSlot)\paramOffset
 
-                  ; Emit LSTORE to store to local temp
+                  ; V1.034.16: Emit STORE with j=1 to store to local temp
                   AddElement(llObjects())
                   If localExprType & #C2FLAG_FLOAT
-                     llObjects()\code = #ljLSTOREF
+                     llObjects()\code = #ljSTOREF
                   ElseIf localExprType & #C2FLAG_STR
-                     llObjects()\code = #ljLSTORES
+                     llObjects()\code = #ljSTORES
                   Else
-                     llObjects()\code = #ljLSTORE
+                     llObjects()\code = #ljStore
                   EndIf
+                  llObjects()\j = 1   ; Mark as local
                   llObjects()\i = localTempOffset
 
                   ; Return negative value to signal local offset (< -1 to avoid conflict with STACK=-1)
@@ -2068,15 +2362,16 @@
                EndIf
                Protected tempSlot.i = FetchVarOffset("$_idx_temp_" + Str(gnLastVariable), 0, tempSlotType)
 
-               ; Emit appropriate LFETCH variant based on type
+               ; V1.034.16: Emit FETCH with j=1 for local variable
                AddElement(llObjects())
                If localExprType & #C2FLAG_FLOAT
-                  llObjects()\code = #ljLFETCHF
+                  llObjects()\code = #ljFETCHF
                ElseIf localExprType & #C2FLAG_STR
-                  llObjects()\code = #ljLFETCHS
+                  llObjects()\code = #ljFETCHS
                Else
-                  llObjects()\code = #ljLFETCH
+                  llObjects()\code = #ljFetch
                EndIf
+               llObjects()\j = 1   ; Mark as local
                llObjects()\i = gVarMeta(identSlot)\paramOffset
 
                ; V1.022.72: Pop to temp slot with type-specific opcode
@@ -2124,21 +2419,22 @@
                Next
 
                CodeGenerator(*expr)
-               ; V1.022.101: Store result with type-correct opcode based on expression result type
+               ; V1.034.16: Store result with type-correct opcode + j=1 for local
                AddElement(llObjects())
                If exprResultType & #C2FLAG_FLOAT
-                  llObjects()\code = #ljLSTOREF
+                  llObjects()\code = #ljSTOREF
                   CompilerIf #DEBUG
-                     Debug "V1.022.101: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using LSTOREF (float)"
+                     Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STOREF j=1 (float)"
                   CompilerEndIf
                ElseIf exprResultType & #C2FLAG_STR
-                  llObjects()\code = #ljLSTORES
+                  llObjects()\code = #ljSTORES
                   CompilerIf #DEBUG
-                     Debug "V1.022.101: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using LSTORES (string)"
+                     Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STORES j=1 (string)"
                   CompilerEndIf
                Else
-                  llObjects()\code = #ljLSTORE
+                  llObjects()\code = #ljStore
                EndIf
+               llObjects()\j = 1   ; Mark as local
                llObjects()\i = complexLocalOffset
 
                ; Return negative value to signal local offset (< -1 to avoid conflict with STACK=-1)
@@ -2252,6 +2548,9 @@
       ; V1.029.39: Struct field fetch variables (for STRUCT_FETCH_* codegen)
       Protected         sfBaseSlot.i, sfByteOffset.i, sfIsLocal.b, sfFieldType.w
       Protected         sfStructByteSize.i  ; V1.029.40: For lazy STRUCT_ALLOC
+      ; V1.034.6: FOREACH variables
+      Protected         *forEachColl.stTree, *forEachBody.stTree
+      Protected         foreachIsMap.i, foreachSlot.i, foreachVarName.s
 
       ; Reset state on top-level call
       If gCodeGenRecursionDepth = 0
@@ -2460,17 +2759,21 @@
                      ; Simple local variable
                      gCodeGenLocalIndex + 1  ; Increment for next local
 
-                     ; Set type flags and emit LSTORE (not POP - locals use local frame)
+                     ; V1.034.16: Directly emit STORE with j=1 (bypass EmitInt local detection)
+                     ; We know this is a local, and we have the paramOffset directly
+                     AddElement(llObjects())
                      If *x\typeHint = #ljFLOAT
-                        EmitInt( #ljLSTOREF, localParamOffset )
+                        llObjects()\code = #ljSTOREF
                         gVarMeta( n )\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
                      ElseIf *x\typeHint = #ljSTRING
-                        EmitInt( #ljLSTORES, localParamOffset )
+                        llObjects()\code = #ljSTORES
                         gVarMeta( n )\flags = #C2FLAG_IDENT | #C2FLAG_STR
                      Else
-                        EmitInt( #ljLSTORE, localParamOffset )
+                        llObjects()\code = #ljStore
                         gVarMeta( n )\flags = #C2FLAG_IDENT | #C2FLAG_INT
                      EndIf
+                     llObjects()\j = 1   ; Mark as local
+                     llObjects()\i = localParamOffset
                   EndIf
 
                   ; Update nLocals in mapModules immediately
@@ -2531,12 +2834,16 @@
                ; The base slot contains gVar(n)\ptr which points to all struct data
                ; Callee accesses fields via STRUCT_FETCH_*/STRUCT_STORE_* using the \ptr
                ; FETCH_STRUCT copies both \i and \ptr so CALL reversal works correctly
+               ; V1.034.24: Use unified FETCH_STRUCT with j=1 for locals
+               AddElement(llObjects())
+               llObjects()\code = #ljFETCH_STRUCT
                If gVarMeta(n)\paramOffset >= 0
-                  ; Local struct (variable or parameter) - use LFETCH_STRUCT
-                  EmitInt(#ljLFETCH_STRUCT, gVarMeta(n)\paramOffset)
+                  ; Local struct (variable or parameter) - set j=1 and use paramOffset
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                Else
-                  ; Global struct - use FETCH_STRUCT
-                  EmitInt(#ljFETCH_STRUCT, n)
+                  ; Global struct - j=0 (default)
+                  llObjects()\i = n
                EndIf
                ; No extra struct slots - just 1 slot for the pointer
                ; (gExtraStructSlots stays 0)
@@ -2783,6 +3090,7 @@
 
          ; V1.20.21: Pointer field access (ptr\i, ptr\f, ptr\s)
          ; V1.20.22: Can be either simple variable (leaf) or array element (node with left child)
+         ; V1.034.66: Mark variables as pointers for arithmetic detection
          Case #ljPTRFIELD_I
             If *x\left
                ; Array element pointer field: arr[i]\i
@@ -2791,7 +3099,8 @@
                ; Simple variable pointer field: ptr\i
                n = FetchVarOffset(*x\value)
                EmitInt( #ljFetch, n )    ; Fetch pointer variable
-               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT
+               ; V1.034.66: Mark this variable as a pointer for arithmetic detection
+               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT | #C2FLAG_POINTER
             EndIf
             EmitInt( #ljPTRFETCH_INT )   ; Dereference as integer
 
@@ -2803,7 +3112,8 @@
                ; Simple variable pointer field: ptr\f
                n = FetchVarOffset(*x\value)
                EmitInt( #ljFetch, n )    ; Fetch pointer variable
-               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT
+               ; V1.034.66: Mark this variable as a pointer for arithmetic detection
+               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT | #C2FLAG_POINTER
             EndIf
             EmitInt( #ljPTRFETCH_FLOAT ) ; Dereference as float
 
@@ -2815,7 +3125,8 @@
                ; Simple variable pointer field: ptr\s
                n = FetchVarOffset(*x\value)
                EmitInt( #ljFetch, n )    ; Fetch pointer variable
-               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT
+               ; V1.034.66: Mark this variable as a pointer for arithmetic detection
+               gVarMeta( n )\flags = gVarMeta( n )\flags | #C2FLAG_IDENT | #C2FLAG_POINTER
             EndIf
             EmitInt( #ljPTRFETCH_STR )   ; Dereference as string
 
@@ -4187,11 +4498,15 @@
                ; V1.030.62: Handle struct initialization { } - allocate only, don't emit store
                ; The { } syntax just allocates the struct with default values, no actual store needed
                ; Without this check, STORE_STRUCT is emitted which pops garbage from empty stack
+               ; V1.033.59: BUGFIX - Move Protected declarations outside If blocks to avoid stack corruption
+               Protected initStructByteSize.i
+               Protected sfaFieldType.w, sfaBaseSlot.i, sfaFlatOffset.i, sfaCurrentType.s
+               Protected sfaFound.b, sfaNextType.s, sfaFieldStart.i, sfaFieldEnd.i, sfaTotalSize.i, sfaMaxIter.i
                If *x\right And *x\right\NodeType = #ljStructInit And (gVarMeta(n)\flags & #C2FLAG_STRUCT)
                   ; Emit STRUCT_ALLOC_LOCAL if not already allocated (for local structs only)
                   If gVarMeta(n)\paramOffset >= 0 And Not gVarMeta(n)\structAllocEmitted
                      ; Calculate byte size from struct definition
-                     Protected initStructByteSize.i = 8  ; Default 1 field
+                     initStructByteSize = 8  ; Default 1 field
                      If gVarMeta(n)\structType <> "" And FindMapElement(mapStructDefs(), gVarMeta(n)\structType)
                         initStructByteSize = mapStructDefs()\totalSize * 8
                      EndIf
@@ -4202,12 +4517,9 @@
                      llObjects()\j = initStructByteSize
 
                      gVarMeta(n)\structAllocEmitted = #True
-                     CompilerIf #DEBUG
-                        Debug "V1.030.62: Struct init { } - emitted STRUCT_ALLOC_LOCAL for '" + gVarMeta(n)\name + "' size=" + Str(initStructByteSize)
-                     CompilerEndIf
                   EndIf
                   ; Skip store emission - { } just allocates, doesn't store anything
-
+                  ; Global structs are allocated in vmTransferMetaToRuntime via elementSize
                ; V1.029.84: Emit appropriate STORE variant based on variable type
                ; For struct variables, use STORE_STRUCT which copies both \i and \ptr in one operation
                ; V1.030.27/29/31: Struct FIELD assignment for LOCAL structs should NOT use STORE_STRUCT
@@ -4219,18 +4531,18 @@
                   ; V1.030.31: Use field offset ranges to find primitive field type
                   ; Field range: [field.offset, nextField.offset) or [field.offset, totalSize) for last
                   ; IMPORTANT: Don't change map element inside ForEach - corrupts iterator!
-                  Protected sfaFieldType.w = 0  ; Default to INT
-                  Protected sfaBaseSlot.i = gVarMeta(n)\structFieldBase
+                  ; V1.033.59: Protected declarations moved outside If block to avoid stack corruption
+                  sfaFieldType = 0  ; Default to INT
+                  sfaBaseSlot = gVarMeta(n)\structFieldBase
                   ; V1.030.65: FIX - Convert byte offset to slot index (divide by 8)
                   ; structFieldOffset is in bytes, but mapStructDefs field offsets are in slot units
                   ; Without this conversion, field type lookup fails for non-zero offsets (y fields)
                   ; causing wrong STORE opcode type (INT instead of FLOAT) and garbage values
-                  Protected sfaFlatOffset.i = gVarMeta(n)\structFieldOffset / 8
-                  Protected sfaCurrentType.s = gVarMeta(sfaBaseSlot)\structType
-                  Protected sfaFound.b = #False
-                  Protected sfaNextType.s = ""
-                  Protected sfaFieldStart.i, sfaFieldEnd.i, sfaTotalSize.i
-                  Protected sfaMaxIter.i = 10  ; Safety limit for nested struct depth
+                  sfaFlatOffset = gVarMeta(n)\structFieldOffset / 8
+                  sfaCurrentType = gVarMeta(sfaBaseSlot)\structType
+                  sfaFound = #False
+                  sfaNextType = ""
+                  sfaMaxIter = 10  ; Safety limit for nested struct depth
 
                   ; Walk nested struct chain to find primitive field type
                   While sfaCurrentType <> "" And Not sfaFound And sfaMaxIter > 0
@@ -4292,14 +4604,17 @@
                      EmitInt( #ljSTORE, n )
                   EndIf
                ElseIf (gVarMeta(n)\flags & #C2FLAG_STRUCT) And gVarMeta(n)\paramOffset >= 0
-                  ; V1.031.32: Local struct variable - use LSTORE_STRUCT (writes to gLocal[])
+                  ; V1.034.24: Local struct variable - use unified STORE_STRUCT with j=1
                   ; The stVT structure has SEPARATE \i and \ptr fields (not a union)
                   ; Regular STORE only copies \i, but StructGetStr accesses \ptr
-                  EmitInt( #ljLSTORE_STRUCT, gVarMeta(n)\paramOffset )
+                  AddElement(llObjects())
+                  llObjects()\code = #ljSTORE_STRUCT
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                   ; Mark as allocated to prevent later field access from allocating new memory
                   gVarMeta(n)\structAllocEmitted = #True
                   CompilerIf #DEBUG
-                     Debug "V1.031.32: Emitted LSTORE_STRUCT for '" + gVarMeta(n)\name + "' at offset " + Str(gVarMeta(n)\paramOffset)
+                     Debug "V1.034.24: Emitted STORE_STRUCT j=1 for '" + gVarMeta(n)\name + "' at offset " + Str(gVarMeta(n)\paramOffset)
                   CompilerEndIf
                ElseIf gVarMeta(n)\flags & #C2FLAG_STR
                   EmitInt( #ljSTORES, n )
@@ -4310,80 +4625,79 @@
                EndIf
 
                ; Type propagation: If assigning a typed value to an untyped var, update the var
-               If llObjects()\code <> #ljMOV And llObjects()\code <> #ljMOVS And llObjects()\code <> #ljMOVF And
-                  llObjects()\code <> #ljLMOV And llObjects()\code <> #ljLMOVS And llObjects()\code <> #ljLMOVF
-                  ; Keep the variable's declared type (don't change it)
-                  ; Type checking could be added here later
+               ; V1.034.24: Only check unified MOV opcodes (LMOV eliminated)
+               ; V1.033.60: BUGFIX - Only check llObjects() if an element was actually emitted
+               ; Struct init path doesn't emit anything for global structs, so llObjects() may be invalid
+               If ListSize(llObjects()) > 0
+                  If llObjects()\code <> #ljMOV And llObjects()\code <> #ljMOVS And llObjects()\code <> #ljMOVF
+                     ; Keep the variable's declared type (don't change it)
+                     ; Type checking could be added here later
+                  EndIf
                EndIf
 
                EndIf  ; V1.022.65: End If Not scStructCopyDone
             EndIf
-
          Case #ljPRE_INC
-            ; Pre-increment: ++var (integers only)
-            ; Increments variable in place and pushes new value
-            ; Uses single efficient opcode
+            ; Pre-increment: ++var
+            ; V1.034.24: Uses unified INC_VAR_PRE with j=1 for locals
+            ; V1.034.69: Pointer conversion moved to TypeInference (mapVariableTypes not available here)
             If *x\left And *x\left\NodeType = #ljIDENT
                n = FetchVarOffset(*x\left\value)
-
-               ; Check if local or global variable
+               AddElement(llObjects())
+               llObjects()\code = #ljINC_VAR_PRE
                If gVarMeta(n)\paramOffset >= 0
-                  ; Local variable - use local increment
-                  EmitInt( #ljLINC_VAR_PRE, gVarMeta(n)\paramOffset )
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                Else
-                  ; Global variable
-                  EmitInt( #ljINC_VAR_PRE, n )
+                  llObjects()\i = n
                EndIf
             EndIf
 
          Case #ljPRE_DEC
-            ; Pre-decrement: --var (integers only)
-            ; Decrements variable in place and pushes new value
-            ; Uses single efficient opcode
+            ; Pre-decrement: --var
+            ; V1.034.24: Uses unified DEC_VAR_PRE with j=1 for locals
+            ; V1.034.69: Pointer conversion moved to TypeInference (mapVariableTypes not available here)
             If *x\left And *x\left\NodeType = #ljIDENT
                n = FetchVarOffset(*x\left\value)
-
-               ; Check if local or global variable
+               AddElement(llObjects())
+               llObjects()\code = #ljDEC_VAR_PRE
                If gVarMeta(n)\paramOffset >= 0
-                  ; Local variable - use local decrement
-                  EmitInt( #ljLDEC_VAR_PRE, gVarMeta(n)\paramOffset )
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                Else
-                  ; Global variable
-                  EmitInt( #ljDEC_VAR_PRE, n )
+                  llObjects()\i = n
                EndIf
             EndIf
 
          Case #ljPOST_INC
-            ; Post-increment: var++ (integers only)
-            ; Pushes old value to stack, then increments variable in place
-            ; Uses single efficient opcode
+            ; Post-increment: var++
+            ; V1.034.24: Uses unified INC_VAR_POST with j=1 for locals
+            ; V1.034.69: Pointer conversion moved to TypeInference (mapVariableTypes not available here)
             If *x\left And *x\left\NodeType = #ljIDENT
                n = FetchVarOffset(*x\left\value)
-
-               ; Check if local or global variable
+               AddElement(llObjects())
+               llObjects()\code = #ljINC_VAR_POST
                If gVarMeta(n)\paramOffset >= 0
-                  ; Local variable - use local increment
-                  EmitInt( #ljLINC_VAR_POST, gVarMeta(n)\paramOffset )
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                Else
-                  ; Global variable
-                  EmitInt( #ljINC_VAR_POST, n )
+                  llObjects()\i = n
                EndIf
             EndIf
 
          Case #ljPOST_DEC
-            ; Post-decrement: var-- (integers only)
-            ; Pushes old value to stack, then decrements variable in place
-            ; Uses single efficient opcode
+            ; Post-decrement: var--
+            ; V1.034.24: Uses unified DEC_VAR_POST with j=1 for locals
+            ; V1.034.69: Pointer conversion moved to TypeInference (mapVariableTypes not available here)
             If *x\left And *x\left\NodeType = #ljIDENT
                n = FetchVarOffset(*x\left\value)
-
-               ; Check if local or global variable
+               AddElement(llObjects())
+               llObjects()\code = #ljDEC_VAR_POST
                If gVarMeta(n)\paramOffset >= 0
-                  ; Local variable - use local decrement
-                  EmitInt( #ljLDEC_VAR_POST, gVarMeta(n)\paramOffset )
+                  llObjects()\i = gVarMeta(n)\paramOffset
+                  llObjects()\j = 1
                Else
-                  ; Global variable
-                  EmitInt( #ljDEC_VAR_POST, n )
+                  llObjects()\i = n
                EndIf
             EndIf
 
@@ -4448,7 +4762,7 @@
             ; *x\right = COLON node with true_expr in left, false_expr in right
             ; Using dedicated TENIF/TENELSE opcodes for cleaner implementation
             If *x\left And *x\right
-               gInTernary = #True                ; Disable PUSH/FETCH→MOV optimization
+               gInTernary = #True                ; Disable PUSH/FETCH?MOV optimization
 
                CodeGenerator( *x\left )          ; Evaluate condition
                EmitInt( #ljTENIF )               ; Ternary IF: Jump if condition false
@@ -4605,6 +4919,93 @@
             If p2
                fix(p2)
             EndIf
+
+            ; Fix all break holes to point to loop end
+            For i = 0 To llLoopContext()\breakCount - 1
+               fix(llLoopContext()\breakHoles[i])
+            Next
+            DeleteElement(llLoopContext())
+
+         ; V1.034.6: foreach loop for lists and maps
+         ; foreach collection { body }
+         ; Uses stack-based iterator so nested loops work correctly
+         Case #ljFOREACH
+            ; Get collection expression - typically an identifier
+            *forEachColl = *x\left
+            *forEachBody = *x\right
+
+            ; Determine if it's a list or map by checking variable flags
+            foreachIsMap = #False
+            foreachSlot = -1
+            foreachVarName = ""
+
+            If *forEachColl And *forEachColl\NodeType = #ljIDENT
+               foreachVarName = *forEachColl\value
+               ; Look up variable to get type info
+               foreachSlot = FindVariableSlotByName(foreachVarName, gCurrentFunctionName)
+               If foreachSlot >= 0
+                  If gVarMeta(foreachSlot)\flags & #C2FLAG_MAP
+                     foreachIsMap = #True
+                  EndIf
+               EndIf
+            EndIf
+
+            ; Initialize iterator on stack: FOREACH_*_INIT pushes iter=-1
+            ; The varSlot is stored in instruction \i field, not on stack
+            If foreachIsMap
+               EmitInt(#ljFOREACH_MAP_INIT, foreachSlot)
+            Else
+               EmitInt(#ljFOREACH_LIST_INIT, foreachSlot)
+            EndIf
+
+            ; Loop start marker
+            EmitInt(#ljNOOPIF)
+            p1 = @llObjects()
+
+            ; Push loop context for break/continue
+            AddElement(llLoopContext())
+            llLoopContext()\loopStartPtr = p1
+            llLoopContext()\breakCount = 0
+            llLoopContext()\continueCount = 0
+            llLoopContext()\isSwitch = #False
+            llLoopContext()\isForLoop = #False  ; Treat like while for continue
+
+            ; Advance iterator and check if valid
+            ; FOREACH_*_NEXT reads varSlot from instruction \i, iter from stack
+            ; Stack: [iter] -> [iter', success]
+            If foreachIsMap
+               EmitInt(#ljFOREACH_MAP_NEXT, foreachSlot)
+            Else
+               EmitInt(#ljFOREACH_LIST_NEXT, foreachSlot)
+            EndIf
+
+            ; JZ to end if iterator exhausted (success = 0)
+            EmitInt(#ljJZ)
+            p2 = Hole()
+
+            ; Generate body
+            If *forEachBody
+               CodeGenerator(*forEachBody)
+            EndIf
+
+            ; Jump back to loop start
+            EmitInt(#ljJMP)
+            *pJmp = @llObjects()
+
+            ; Create backward jump hole
+            AddElement(llHoles())
+            llHoles()\mode = #C2HOLE_LOOPBACK
+            llHoles()\location = *pJmp
+            llHoles()\src = p1
+
+            ; Loop end marker
+            EmitInt(#ljNOOPIF)
+
+            ; Fix JZ hole to point to loop end
+            fix(p2)
+
+            ; Cleanup: pop iterator from stack
+            EmitInt(#ljFOREACH_END)
 
             ; Fix all break holes to point to loop end
             For i = 0 To llLoopContext()\breakCount - 1
@@ -5080,16 +5481,12 @@
                EndIf
 
                ; Check if left operand is a pointer for pointer arithmetic
+               ; V1.034.65: Use leftType which now includes #C2FLAG_POINTER from GetExprResultType
                isPointerArithmetic = #False
                If (*x\NodeType = #ljAdd Or *x\NodeType = #ljSUBTRACT) And *x\left
-                  ; Check if left operand is an identifier with pointer flag
-                  If *x\left\NodeType = #ljIDENT
-                     ptrVarOffset = FetchVarOffset(*x\left\value)
-                     If ptrVarOffset >= 0 And ptrVarOffset < ArraySize(gVarMeta())
-                        If gVarMeta(ptrVarOffset)\flags & #C2FLAG_POINTER
-                           isPointerArithmetic = #True
-                        EndIf
-                     EndIf
+                  ; V1.034.66: Check leftType for pointer flag (includes all pointer variable types)
+                  If leftType & #C2FLAG_POINTER
+                     isPointerArithmetic = #True
                   ; Also check if left is a pointer fetch result (*ptr)
                   ElseIf *x\left\NodeType = #ljPTRFETCH
                      isPointerArithmetic = #True
@@ -5127,7 +5524,7 @@
                EndIf
             EndIf
 
-         Case #ljOr, #ljAND, #ljMOD, #ljXOR
+         Case #ljOr, #ljAND, #ljMOD, #ljXOR, #ljSHL, #ljSHR  ; V1.034.30: Added bit shift operators
             CodeGenerator( *x\left )
             CodeGenerator( *x\right )
             EmitInt( *x\NodeType)
@@ -5303,6 +5700,15 @@
             EndIf
 
          Case #ljPTRFETCH  ; Pointer dereference: *ptr
+            ; V1.034.65: Mark the underlying variable as a pointer for arithmetic detection
+            ; This allows p + 1 to correctly use PTRADD if p was dereferenced earlier
+            If *x\left And *x\left\NodeType = #ljIDENT
+               n = FetchVarOffset(*x\left\value)
+               If n >= 0 And n < ArraySize(gVarMeta())
+                  gVarMeta(n)\flags = gVarMeta(n)\flags | #C2FLAG_POINTER
+               EndIf
+            EndIf
+
             ; Emit code to evaluate pointer expression (should be slot index)
             CodeGenerator( *x\left )
 
@@ -5435,17 +5841,24 @@
                   EndIf
                Next
 
-               ; V1.033.12: Use optimized CALL opcodes for 0-2 parameters
-               Select paramCount
-                  Case 0
-                     EmitInt( #ljCALL0, funcId )
-                  Case 1
-                     EmitInt( #ljCALL1, funcId )
-                  Case 2
-                     EmitInt( #ljCALL2, funcId )
-                  Default
-                     EmitInt( #ljCall, funcId )
-               EndSelect
+               ; V1.034.65: Check for recursive call (funcId matches current function)
+               ; Recursive calls use CALL_REC which always uses frame pool
+               If funcId = gCodeGenFunction And gCodeGenFunction > 0
+                  ; Recursive call - use specialized opcode with frame pool
+                  EmitInt( #ljCALL_REC, funcId )
+               Else
+                  ; V1.033.12: Use optimized CALL opcodes for 0-2 parameters
+                  Select paramCount
+                     Case 0
+                        EmitInt( #ljCALL0, funcId )
+                     Case 1
+                        EmitInt( #ljCALL1, funcId )
+                     Case 2
+                        EmitInt( #ljCALL2, funcId )
+                     Default
+                        EmitInt( #ljCall, funcId )
+                  EndSelect
+               EndIf
 
                ; Store separately: j = nParams, n = nLocals, ndx = nLocalArrays, funcid = function ID
                llObjects()\j = paramCount

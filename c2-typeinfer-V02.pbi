@@ -1,4 +1,4 @@
-; -- LJ2 Compiler - Type Inference Module
+﻿; -- LJ2 Compiler - Type Inference Module
 ; PBx64 v6.20+
 ;
 ; Based on c2-postprocessor-V09.pbi type passes
@@ -52,8 +52,11 @@ Procedure TypeInference()
       ; V1.033.24: Track current function for local variable matching
       If llObjects()\code = #ljfunction
          funcId = llObjects()\i
-         If funcId >= 0 And funcId < 512
+         CompilerIf #DEBUG : Debug "FUNCTRACK: Found #ljfunction funcId=" + Str(funcId) : CompilerEndIf
+         ; V1.034.41: Fixed to use #C2MAXFUNCTIONS (was 512, now 8192)
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS
             currentFunctionName = gFuncNames(funcId)
+            CompilerIf #DEBUG : Debug "FUNCTRACK: Set currentFunctionName=" + currentFunctionName : CompilerEndIf
          Else
             currentFunctionName = ""
          EndIf
@@ -101,21 +104,11 @@ Procedure TypeInference()
                ElseIf llObjects()\code = #ljLSTORE Or llObjects()\code = #ljLSTORES Or llObjects()\code = #ljLSTOREF
                   ptrVarSlot = llObjects()\i  ; This is the local stack offset
                   ptrVarKey = ""
-                  ; V1.033.24: Find variable by paramOffset AND function prefix match
-                  For varIdx = 0 To gnLastVariable - 1
-                     If gVarMeta(varIdx)\paramOffset = ptrVarSlot
-                        ; Verify this variable belongs to current function
-                        ; V1.033.42: Handle leading underscore in variable names
-                        If currentFunctionName <> "" And (LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_"))
-                           ptrVarKey = gVarMeta(varIdx)\name
-                           Break
-                        ; Synthetic temps ($) also match
-                        ElseIf Left(gVarMeta(varIdx)\name, 1) = "$"
-                           ptrVarKey = gVarMeta(varIdx)\name
-                           Break
-                        EndIf
-                     EndIf
-                  Next
+                  ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+                  varIdx = FindVariableSlotByOffset(ptrVarSlot, currentFunctionName)
+                  If varIdx >= 0
+                     ptrVarKey = gVarMeta(varIdx)\name
+                  EndIf
                   If ptrVarKey <> ""
                      isArrayElementPointer = #False
                      Select getAddrType
@@ -160,19 +153,11 @@ Procedure TypeInference()
                ElseIf llObjects()\code = #ljLSTORE Or llObjects()\code = #ljLSTORES Or llObjects()\code = #ljLSTOREF
                   ptrVarSlot = llObjects()\i
                   ptrVarKey = ""
-                  ; V1.033.24: Match function prefix for local variables
-                  For varIdx = 0 To gnLastVariable - 1
-                     If gVarMeta(varIdx)\paramOffset = ptrVarSlot
-                        ; V1.033.42: Handle leading underscore in variable names
-                        If currentFunctionName <> "" And (LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_"))
-                           ptrVarKey = gVarMeta(varIdx)\name
-                           Break
-                        ElseIf Left(gVarMeta(varIdx)\name, 1) = "$"
-                           ptrVarKey = gVarMeta(varIdx)\name
-                           Break
-                        EndIf
-                     EndIf
-                  Next
+                  ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+                  varIdx = FindVariableSlotByOffset(ptrVarSlot, currentFunctionName)
+                  If varIdx >= 0
+                     ptrVarKey = gVarMeta(varIdx)\name
+                  EndIf
                   If ptrVarKey <> ""
                      mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | #C2FLAG_INT | #C2FLAG_ARRAYPTR
                   EndIf
@@ -184,41 +169,116 @@ Procedure TypeInference()
          Case #ljMOV, #ljPMOV, #ljLMOV, #ljLLMOV
             srcVar = llObjects()\j
             dstVar = llObjects()\i
+            CompilerIf #DEBUG
+               Debug "A3 DEBUG: MOV src=" + Str(srcVar) + " dst=" + Str(dstVar) + " code=" + Str(llObjects()\code)
+               If srcVar >= 0 And srcVar < gnLastVariable
+                  Debug "  srcName=[" + gVarMeta(srcVar)\name + "] srcFlags=" + Str(gVarMeta(srcVar)\flags)
+               EndIf
+               If dstVar >= 0 And dstVar < gnLastVariable
+                  Debug "  dstName=[" + gVarMeta(dstVar)\name + "] dstFlags=" + Str(gVarMeta(dstVar)\flags)
+               EndIf
+            CompilerEndIf
             sourceIsPointer = #False
             sourceIsArrayPointer = #False
-            If srcVar >= 0 And srcVar < gnLastVariable
-               searchKey = gVarMeta(srcVar)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     sourceIsPointer = #True
-                     pointerBaseType = mapVariableTypes() & #C2FLAG_TYPE
-                     sourceIsArrayPointer = Bool((mapVariableTypes() & #C2FLAG_ARRAYPTR) <> 0)
+            searchKey = ""
+
+            ; V1.034.2: Handle LLMOV (local-to-local) - use FindVariableSlotByOffset for locals
+            If llObjects()\code = #ljLLMOV
+               ; For LLMOV, srcVar is a local offset, not a gVarMeta index
+               varIdx = FindVariableSlotByOffset(srcVar, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+                  If FindMapElement(mapVariableTypes(), searchKey)
+                     If mapVariableTypes() & #C2FLAG_POINTER
+                        sourceIsPointer = #True
+                        pointerBaseType = mapVariableTypes() & #C2FLAG_TYPE
+                        sourceIsArrayPointer = Bool((mapVariableTypes() & #C2FLAG_ARRAYPTR) <> 0)
+                     EndIf
                   EndIf
+                  ; V1.034.40: Removed incorrect param=pointer assumption
+                  ; Parameters are only pointers if explicitly assigned from pointers
+                  ; or used with pointer operations (PTRFETCH/PTRSTORE)
                EndIf
-               If Not sourceIsPointer And (gVarMeta(srcVar)\flags & #C2FLAG_PARAM)
-                  sourceIsPointer = #True
-                  pointerBaseType = #C2FLAG_INT
-                  sourceIsArrayPointer = #False
+            Else
+               ; For MOV/PMOV/LMOV, srcVar is a gVarMeta slot
+               If srcVar >= 0 And srcVar < gnLastVariable
+                  searchKey = gVarMeta(srcVar)\name
+                  If FindMapElement(mapVariableTypes(), searchKey)
+                     If mapVariableTypes() & #C2FLAG_POINTER
+                        sourceIsPointer = #True
+                        pointerBaseType = mapVariableTypes() & #C2FLAG_TYPE
+                        sourceIsArrayPointer = Bool((mapVariableTypes() & #C2FLAG_ARRAYPTR) <> 0)
+                     EndIf
+                  EndIf
+                  ; V1.034.40: Removed incorrect param=pointer assumption
+                  ; Constants like "0" can have #C2FLAG_PARAM incorrectly set
+                  ; causing innocent variables like "i" to be marked as pointers
                EndIf
             EndIf
-            If sourceIsPointer And dstVar >= 0 And dstVar < gnLastVariable
-               ptrVarKey = gVarMeta(dstVar)\name
-               If sourceIsArrayPointer
-                  mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | pointerBaseType | #C2FLAG_ARRAYPTR
+
+            ; Handle destination variable
+            If sourceIsPointer
+               ptrVarKey = ""
+               ; V1.034.2: For LLMOV, dstVar is also a local offset
+               If llObjects()\code = #ljLLMOV
+                  varIdx = FindVariableSlotByOffset(dstVar, currentFunctionName)
+                  If varIdx >= 0
+                     ptrVarKey = gVarMeta(varIdx)\name
+                  EndIf
                Else
-                  mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | pointerBaseType
+                  If dstVar >= 0 And dstVar < gnLastVariable
+                     ptrVarKey = gVarMeta(dstVar)\name
+                  EndIf
+               EndIf
+
+               If ptrVarKey <> ""
+                  If sourceIsArrayPointer
+                     CompilerIf #DEBUG : Debug "A3 ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | pointerBaseType | #C2FLAG_ARRAYPTR) + " (sourceIsPointer from " + searchKey + ")" : CompilerEndIf
+                     mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | pointerBaseType | #C2FLAG_ARRAYPTR
+                  Else
+                     CompilerIf #DEBUG : Debug "A3 ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | pointerBaseType) + " (sourceIsPointer from " + searchKey + ")" : CompilerEndIf
+                     mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | pointerBaseType
+                  EndIf
+                  ; V1.034.21: Convert MOV to unified PMOV with n-field encoding
+                  ; n-field: n & 1 = source is local, n >> 1 = dest is local
+                  Select llObjects()\code
+                     Case #ljMOV
+                        llObjects()\code = #ljPMOV
+                        ; n already 0 for GG
+                     Case #ljLMOV
+                        llObjects()\code = #ljPMOV
+                        llObjects()\n = 2   ; GL: dest is local
+                     Case #ljLLMOV
+                        llObjects()\code = #ljPMOV
+                        llObjects()\n = 3   ; LL: both local
+                  EndSelect
                EndIf
             EndIf
 
          ;- A4: Variables used with PTRFETCH/PTRSTORE operations
+         ; V1.034.41: Fixed A4 to handle local variables (LFETCH and PFETCH with j=1)
+         ; For locals, use FindVariableSlotByOffset instead of treating i as gVarMeta slot
          Case #ljPTRFETCH_INT, #ljPTRFETCH_FLOAT, #ljPTRFETCH_STR, #ljPTRSTORE_INT, #ljPTRSTORE_FLOAT, #ljPTRSTORE_STR
             ptrOpcode = llObjects()\code
             If PreviousElement(llObjects())
-               If llObjects()\code = #ljFetch Or llObjects()\code = #ljPFETCH Or llObjects()\code = #ljLFETCH Or llObjects()\code = #ljPLFETCH
+               If llObjects()\code = #ljFetch Or llObjects()\code = #ljPFETCH Or llObjects()\code = #ljLFETCH
                   ptrVarSlot = llObjects()\i
                   ptrVarKey = ""
-                  If ptrVarSlot >= 0 And ptrVarSlot < gnLastVariable
-                     ptrVarKey = gVarMeta(ptrVarSlot)\name
+                  CompilerIf #DEBUG : Debug "A4 FETCH CHECK: code=" + Str(llObjects()\code) + " j=" + Str(llObjects()\j) + " #ljPFETCH=" + Str(#ljPFETCH) + " #ljLFETCH=" + Str(#ljLFETCH) : CompilerEndIf
+                  ; V1.034.41: Check if this is a local fetch (LFETCH, PFETCH with j=1, or unified Fetch with j=1)
+                  ; V1.034.42: Fixed - unified Fetch/PUSH opcodes use j=1 for locals, not separate PFETCH opcode
+                  If llObjects()\code = #ljLFETCH Or (llObjects()\code = #ljPFETCH And llObjects()\j = 1) Or (llObjects()\code = #ljFetch And llObjects()\j = 1)
+                     ; Local variable - use FindVariableSlotByOffset
+                     CompilerIf #DEBUG : Debug "A4 LOCAL BRANCH: ptrVarSlot=" + Str(ptrVarSlot) + " func=" + currentFunctionName : CompilerEndIf
+                     varIdx = FindVariableSlotByOffset(ptrVarSlot, currentFunctionName)
+                     If varIdx >= 0
+                        ptrVarKey = gVarMeta(varIdx)\name
+                     EndIf
+                  Else
+                     ; Global variable - ptrVarSlot is the gVarMeta slot
+                     If ptrVarSlot >= 0 And ptrVarSlot < gnLastVariable
+                        ptrVarKey = gVarMeta(ptrVarSlot)\name
+                     EndIf
                   EndIf
                   If ptrVarKey <> ""
                      If Not FindMapElement(mapVariableTypes(), ptrVarKey)
@@ -227,6 +287,7 @@ Procedure TypeInference()
                      If (mapVariableTypes() & #C2FLAG_POINTER) = 0
                         Select ptrOpcode
                            Case #ljPTRFETCH_INT, #ljPTRSTORE_INT
+                              CompilerIf #DEBUG : Debug "A4 ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT) + " (slot=" + Str(ptrVarSlot) + " func=" + currentFunctionName + " fetchCode=" + Str(llObjects()\code) + " j=" + Str(llObjects()\j) + ")" : CompilerEndIf
                               mapVariableTypes() = #C2FLAG_POINTER | #C2FLAG_INT
                            Case #ljPTRFETCH_FLOAT, #ljPTRSTORE_FLOAT
                               mapVariableTypes() = #C2FLAG_POINTER | #C2FLAG_FLOAT
@@ -254,25 +315,14 @@ Procedure TypeInference()
             currentFunctionName = ""
          EndIf
       EndIf
-      If llObjects()\code = #ljPLFETCH Or llObjects()\code = #ljLFETCH
+      If (llObjects()\code = #ljPFETCH And llObjects()\j = 1) Or llObjects()\code = #ljLFETCH
          srcSlot = llObjects()\i
          srcVarKey = ""
-         For varIdx = 0 To gnLastVariable - 1
-            If gVarMeta(varIdx)\paramOffset = srcSlot
-               varName = gVarMeta(varIdx)\name
-               If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                  ; V1.033.42: Handle leading underscore in variable names
-                  ; Variables can be named "funcname_varname" or "_funcname_varname"
-                  If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                     srcVarKey = varName
-                     Break
-                  EndIf
-               ElseIf currentFunctionName = ""
-                  srcVarKey = varName
-                  Break
-               EndIf
-            EndIf
-         Next
+         ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+         varIdx = FindVariableSlotByOffset(srcSlot, currentFunctionName)
+         If varIdx >= 0
+            srcVarKey = gVarMeta(varIdx)\name
+         EndIf
          If srcVarKey <> "" And NextElement(llObjects())
             Select llObjects()\code
                Case #ljPTRFETCH_INT, #ljPTRFETCH_FLOAT, #ljPTRFETCH_STR, #ljPTRSTORE_INT, #ljPTRSTORE_FLOAT, #ljPTRSTORE_STR
@@ -282,6 +332,7 @@ Procedure TypeInference()
                   If (mapVariableTypes() & #C2FLAG_POINTER) = 0
                      Select llObjects()\code
                         Case #ljPTRFETCH_INT, #ljPTRSTORE_INT
+                           CompilerIf #DEBUG : Debug "A5 ADDING TO MAP: " + srcVarKey + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT) : CompilerEndIf
                            mapVariableTypes() = #C2FLAG_POINTER | #C2FLAG_INT
                         Case #ljPTRFETCH_FLOAT, #ljPTRSTORE_FLOAT
                            mapVariableTypes() = #C2FLAG_POINTER | #C2FLAG_FLOAT
@@ -300,6 +351,7 @@ Procedure TypeInference()
    ; V1.033.42: When a known pointer is copied to another local, mark destination as pointer too
    ; This handles cases like: p = ptr (where ptr is already marked as pointer)
    ; V1.033.45: Variables declared at top (dstSlot, dstVarKey, srcPtrType)
+   ; V1.034.69: Also check for unified Fetch (j=1) and PFETCH (j=1) for locals
    currentFunctionName = ""
    ForEach llObjects()
       If llObjects()\code = #ljFUNCTION
@@ -310,55 +362,33 @@ Procedure TypeInference()
             currentFunctionName = ""
          EndIf
       EndIf
-      If llObjects()\code = #ljLFETCH
+      ; V1.034.69: Check for local fetch opcodes: LFETCH, Fetch with j=1, PFETCH with j=1
+      If llObjects()\code = #ljLFETCH Or (llObjects()\code = #ljFetch And llObjects()\j = 1) Or (llObjects()\code = #ljPFETCH And llObjects()\j = 1)
          srcSlot = llObjects()\i
          srcVarKey = ""
-         ; Find source variable by paramOffset AND function context
-         For varIdx = 0 To gnLastVariable - 1
-            If gVarMeta(varIdx)\paramOffset = srcSlot
-               varName = gVarMeta(varIdx)\name
-               If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                  ; V1.033.42: Handle leading underscore in variable names
-                  If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                     srcVarKey = varName
-                     Break
-                  EndIf
-               ElseIf currentFunctionName = ""
-                  srcVarKey = varName
-                  Break
-               EndIf
-            EndIf
-         Next
+         ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+         varIdx = FindVariableSlotByOffset(srcSlot, currentFunctionName)
+         If varIdx >= 0
+            srcVarKey = gVarMeta(varIdx)\name
+         EndIf
          ; Check if source is a known pointer
          If srcVarKey <> "" And FindMapElement(mapVariableTypes(), srcVarKey)
             If mapVariableTypes() & #C2FLAG_POINTER
                srcPtrType = mapVariableTypes()
                ; Check if next instruction is LSTORE (local-to-local copy)
                If NextElement(llObjects())
-                  If llObjects()\code = #ljLSTORE
+                  ; V1.034.43: Check for LSTORE or unified Store with j=1 (local)
+                  If llObjects()\code = #ljLSTORE Or (llObjects()\code = #ljStore And llObjects()\j = 1)
                      dstSlot = llObjects()\i
                      dstVarKey = ""
-                     ; Find destination variable
-                     For varIdx = 0 To gnLastVariable - 1
-                        If gVarMeta(varIdx)\paramOffset = dstSlot
-                           varName = gVarMeta(varIdx)\name
-                           If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                              ; V1.033.42: Handle leading underscore in variable names
-                              If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                                 dstVarKey = varName
-                                 Break
-                              EndIf
-                           ElseIf Left(varName, 1) = "$"
-                              dstVarKey = varName
-                              Break
-                           ElseIf currentFunctionName = ""
-                              dstVarKey = varName
-                              Break
-                           EndIf
-                        EndIf
-                     Next
+                     ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+                     varIdx = FindVariableSlotByOffset(dstSlot, currentFunctionName)
+                     If varIdx >= 0
+                        dstVarKey = gVarMeta(varIdx)\name
+                     EndIf
                      ; Mark destination as pointer with same type as source
                      If dstVarKey <> ""
+                        CompilerIf #DEBUG : Debug "A6 ADDING TO MAP: " + dstVarKey + " = " + Str(srcPtrType) + " (from " + srcVarKey + ")" : CompilerEndIf
                         mapVariableTypes(dstVarKey) = srcPtrType
                      EndIf
                   EndIf
@@ -390,19 +420,189 @@ Procedure TypeInference()
             ; Look for POP following LINCV/LDECV as evidence of pointer operation
             If llObjects()\code = #ljPOP
                ; This local is used as a pointer - find and mark it
-               For varIdx = 0 To gnLastVariable - 1
-                  If gVarMeta(varIdx)\paramOffset = localPtrSlot
-                     varName = gVarMeta(varIdx)\name
-                     If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                        If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                           mapVariableTypes(varName) = #C2FLAG_POINTER | #C2FLAG_INT | #C2FLAG_ARRAYPTR
-                           Break
-                        EndIf
-                     EndIf
-                  EndIf
-               Next
+               ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+               varIdx = FindVariableSlotByOffset(localPtrSlot, currentFunctionName)
+               If varIdx >= 0
+                  CompilerIf #DEBUG : Debug "A7 ADDING TO MAP: " + gVarMeta(varIdx)\name + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT | #C2FLAG_ARRAYPTR) + " (LINCV/LDECV+POP pattern)" : CompilerEndIf
+                  mapVariableTypes(gVarMeta(varIdx)\name) = #C2FLAG_POINTER | #C2FLAG_INT | #C2FLAG_ARRAYPTR
+               EndIf
             EndIf
             PreviousElement(llObjects())
+         EndIf
+      EndIf
+   Next
+
+   ;- A7b: Detect pointer locals passed as function arguments
+   ; V1.034.69: When a local is fetched right before CALL2/CALL to a function whose
+   ; corresponding parameter is used with PTRFETCH, mark that local as pointer
+   ; This handles cases like: swap(left, right) where swap uses a\i and b\i
+   ; First, collect all function parameter pointer info from A4 results
+   Protected NewMap funcParamIsPointer.i()  ; "funcName_paramOffset" -> 1 if pointer
+   currentFunctionName = ""
+   ForEach mapVariableTypes()
+      ; Parameter variables have names like "funcName_paramName"
+      ; Check if this is a pointer and extract function name
+      If mapVariableTypes() & #C2FLAG_POINTER
+         Protected ptrVarName.s = MapKey(mapVariableTypes())
+         Protected underscorePos.i = FindString(ptrVarName, "_")
+         If underscorePos > 0
+            Protected funcNamePart.s = Left(ptrVarName, underscorePos - 1)
+            ; Find the variable's offset in gVarMeta
+            For n = 0 To gnLastVariable - 1
+               If gVarMeta(n)\name = ptrVarName And gVarMeta(n)\paramOffset >= 0
+                  ; This is a parameter - record its offset within the function
+                  funcParamIsPointer(funcNamePart + "_" + Str(gVarMeta(n)\paramOffset)) = 1
+                  CompilerIf #DEBUG : Debug "A7b: funcParamIsPointer(" + funcNamePart + "_" + Str(gVarMeta(n)\paramOffset) + ") = 1" : CompilerEndIf
+                  Break
+               EndIf
+            Next
+         EndIf
+      EndIf
+   Next
+
+   ; Now scan for FETCH + CALL patterns and mark locals that are passed to pointer parameters
+   Protected callArgSlots.i
+   Protected Dim callArgs.i(8)  ; Track up to 8 arguments before CALL
+   Protected callArgCount.i
+   currentFunctionName = ""
+   ForEach llObjects()
+      If llObjects()\code = #ljFUNCTION
+         funcId = llObjects()\i
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS And gFuncNames(funcId) <> ""
+            currentFunctionName = gFuncNames(funcId)
+         Else
+            currentFunctionName = ""
+         EndIf
+      EndIf
+
+      ; When we see a CALL2, look back at the previous FETCH operations
+      If llObjects()\code = #ljCALL2 Or llObjects()\code = #ljCALL
+         Protected callTargetFuncId.i = llObjects()\j
+         Protected calledFuncName.s = ""
+         If callTargetFuncId >= 0 And callTargetFuncId < #C2MAXFUNCTIONS
+            calledFuncName = gFuncNames(callTargetFuncId)
+         EndIf
+
+         ; Look back for FETCH operations that provide arguments
+         If calledFuncName <> ""
+            Protected argIdx.i = 0
+            Protected *callPos = @llObjects()
+            While PreviousElement(llObjects()) And argIdx < 8
+               ; Stop at function boundary or other non-fetch ops
+               If llObjects()\code = #ljFUNCTION Or llObjects()\code = #ljRETURN
+                  Break
+               EndIf
+               ; Check for local FETCH (j=1) - these are arguments
+               If (llObjects()\code = #ljFetch And llObjects()\j = 1) Or llObjects()\code = #ljLFETCH Or (llObjects()\code = #ljPFETCH And llObjects()\j = 1)
+                  ; This is a local being passed as argument
+                  Protected argLocalSlot.i = llObjects()\i
+                  ; Check if corresponding parameter in called function is a pointer
+                  ; Arguments are pushed in order, so first FETCH = first param (offset 0)
+                  ; But we're scanning backwards, so we need to track position
+                  callArgs(argIdx) = argLocalSlot
+                  argIdx + 1
+               ElseIf llObjects()\code = #ljPUSH_IMM Or llObjects()\code = #ljPUSH
+                  ; Immediate or global value pushed - not a local, skip
+                  argIdx + 1
+               ElseIf llObjects()\code = #ljCALL2 Or llObjects()\code = #ljCALL
+                  ; Another call - stop looking back
+                  Break
+               EndIf
+            Wend
+            ; Restore position
+            ChangeCurrentElement(llObjects(), *callPos)
+
+            ; Now check each argument against function's parameter types
+            ; Arguments are in reverse order (last arg pushed first when scanning back)
+            Protected paramOffset.i
+            For paramOffset = 0 To argIdx - 1
+               ; Reverse index to get correct param offset
+               Protected actualArgIdx.i = argIdx - 1 - paramOffset
+               If FindMapElement(funcParamIsPointer(), calledFuncName + "_" + Str(paramOffset))
+                  ; This parameter is used as a pointer in the called function
+                  ; Mark the corresponding argument local as a pointer
+                  varIdx = FindVariableSlotByOffset(callArgs(actualArgIdx), currentFunctionName)
+                  If varIdx >= 0
+                     ptrVarKey = gVarMeta(varIdx)\name
+                     If Not FindMapElement(mapVariableTypes(), ptrVarKey)
+                        CompilerIf #DEBUG : Debug "A7b ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT) + " (passed to " + calledFuncName + " param " + Str(paramOffset) + ")" : CompilerEndIf
+                        mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | #C2FLAG_INT
+                     EndIf
+                  EndIf
+               EndIf
+            Next
+         EndIf
+      EndIf
+   Next
+
+   ;- A7c: Detect pointer locals via assignment-from-local + increment/decrement pattern
+   ; V1.034.69: If a local is assigned from another local and later incremented/decremented,
+   ; it's likely being used for pointer arithmetic (e.g., left = ptr; ... left++)
+   ; First pass: track which locals are assigned from other locals
+   Protected NewMap localFromLocal.i()  ; "funcName_localOffset" -> source local offset
+   currentFunctionName = ""
+   ForEach llObjects()
+      If llObjects()\code = #ljFUNCTION
+         funcId = llObjects()\i
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS And gFuncNames(funcId) <> ""
+            currentFunctionName = gFuncNames(funcId)
+         Else
+            currentFunctionName = ""
+         EndIf
+      EndIf
+      ; Look for FETCH local + STORE local pattern (covers all local-to-local assignments)
+      ; Check multiple FETCH opcode types that access locals
+      If (llObjects()\code = #ljFetch And llObjects()\j = 1) Or llObjects()\code = #ljLFETCH Or (llObjects()\code = #ljPFETCH And llObjects()\j = 1)
+         Protected a7cSrcSlot.i = llObjects()\i
+         If NextElement(llObjects())
+            If (llObjects()\code = #ljStore And llObjects()\j = 1) Or llObjects()\code = #ljLSTORE
+               Protected a7cDstSlot.i = llObjects()\i
+               ; Record that this local (dstSlot) was assigned from another local (srcSlot)
+               localFromLocal(currentFunctionName + "_" + Str(a7cDstSlot)) = a7cSrcSlot
+               CompilerIf #DEBUG : Debug "A7c: localFromLocal(" + currentFunctionName + "_" + Str(a7cDstSlot) + ") = " + Str(a7cSrcSlot) : CompilerEndIf
+            EndIf
+            PreviousElement(llObjects())
+         EndIf
+      EndIf
+   Next
+
+   ; Second pass: if a local that came from another local is incremented/decremented, mark it as pointer
+   ; This is a strong heuristic: local vars assigned from params and then inc/dec'd are almost always pointers
+   currentFunctionName = ""
+   ForEach llObjects()
+      If llObjects()\code = #ljFUNCTION
+         funcId = llObjects()\i
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS And gFuncNames(funcId) <> ""
+            currentFunctionName = gFuncNames(funcId)
+         Else
+            currentFunctionName = ""
+         EndIf
+      EndIf
+      ; Check for INC_VAR_POST/PRE or DEC_VAR_POST/PRE with j=1 (local)
+      ; V1.034.70: TypeInference runs BEFORE optimizer, so we see _POST/_PRE forms, not optimized INC_VAR/DEC_VAR
+      If (llObjects()\code = #ljINC_VAR_POST Or llObjects()\code = #ljINC_VAR_PRE Or llObjects()\code = #ljDEC_VAR_POST Or llObjects()\code = #ljDEC_VAR_PRE) And llObjects()\j = 1
+         Protected a7cIncSlot.i = llObjects()\i
+         If FindMapElement(localFromLocal(), currentFunctionName + "_" + Str(a7cIncSlot))
+            ; This local was assigned from another local and is being incremented/decremented
+            ; This is a strong indicator it's a pointer
+            varIdx = FindVariableSlotByOffset(a7cIncSlot, currentFunctionName)
+            If varIdx >= 0
+               ptrVarKey = gVarMeta(varIdx)\name
+               If Not FindMapElement(mapVariableTypes(), ptrVarKey)
+                  CompilerIf #DEBUG : Debug "A7c ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT) + " (assigned from local, then inc/dec)" : CompilerEndIf
+                  mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | #C2FLAG_INT
+               EndIf
+            EndIf
+            ; Also mark the source local as pointer (it's likely a parameter)
+            Protected a7cSrcLocalSlot.i = localFromLocal()
+            varIdx = FindVariableSlotByOffset(a7cSrcLocalSlot, currentFunctionName)
+            If varIdx >= 0
+               ptrVarKey = gVarMeta(varIdx)\name
+               If Not FindMapElement(mapVariableTypes(), ptrVarKey)
+                  CompilerIf #DEBUG : Debug "A7c ADDING TO MAP: " + ptrVarKey + " = " + Str(#C2FLAG_POINTER | #C2FLAG_INT) + " (source of inc/dec local)" : CompilerEndIf
+                  mapVariableTypes(ptrVarKey) = #C2FLAG_POINTER | #C2FLAG_INT
+               EndIf
+            EndIf
          EndIf
       EndIf
    Next
@@ -426,35 +626,22 @@ Procedure TypeInference()
             If llObjects()\code = #ljLSTORE
                dstSlot = llObjects()\i
                dstVarKey = ""
-               ; Find destination variable
-               For varIdx = 0 To gnLastVariable - 1
-                  If gVarMeta(varIdx)\paramOffset = dstSlot
-                     varName = gVarMeta(varIdx)\name
-                     If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                        If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                           dstVarKey = varName
-                           Break
-                        EndIf
-                     EndIf
-                  EndIf
-               Next
+               ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+               varIdx = FindVariableSlotByOffset(dstSlot, currentFunctionName)
+               If varIdx >= 0
+                  dstVarKey = gVarMeta(varIdx)\name
+               EndIf
                ; If destination is a known pointer, mark source as pointer too
                If dstVarKey <> "" And FindMapElement(mapVariableTypes(), dstVarKey)
                   If mapVariableTypes() & #C2FLAG_POINTER
                      srcVarKey = ""
-                     ; Find source variable
-                     For varIdx = 0 To gnLastVariable - 1
-                        If gVarMeta(varIdx)\paramOffset = srcSlot
-                           varName = gVarMeta(varIdx)\name
-                           If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                              If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                                 srcVarKey = varName
-                                 Break
-                              EndIf
-                           EndIf
-                        EndIf
-                     Next
+                     ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+                     varIdx = FindVariableSlotByOffset(srcSlot, currentFunctionName)
+                     If varIdx >= 0
+                        srcVarKey = gVarMeta(varIdx)\name
+                     EndIf
                      If srcVarKey <> ""
+                        CompilerIf #DEBUG : Debug "A8 ADDING TO MAP: " + srcVarKey + " = " + Str(mapVariableTypes(dstVarKey)) + " (backprop from " + dstVarKey + ")" : CompilerEndIf
                         mapVariableTypes(srcVarKey) = mapVariableTypes(dstVarKey)
                      EndIf
                   EndIf
@@ -467,6 +654,7 @@ Procedure TypeInference()
 
    ;- A9: Re-run A6 to propagate pointer types now that source params are marked
    ; V1.033.45: After A8 marks source params as pointers, propagate to all assignments
+   ; V1.034.43: Handle unified Fetch/Store opcodes with j=1 for locals
    currentFunctionName = ""
    ForEach llObjects()
       If llObjects()\code = #ljFUNCTION
@@ -477,48 +665,30 @@ Procedure TypeInference()
             currentFunctionName = ""
          EndIf
       EndIf
-      If llObjects()\code = #ljLFETCH
+      ; V1.034.43: Check for LFETCH or unified Fetch with j=1 (local)
+      If llObjects()\code = #ljLFETCH Or (llObjects()\code = #ljFetch And llObjects()\j = 1)
          srcSlot = llObjects()\i
          srcVarKey = ""
-         For varIdx = 0 To gnLastVariable - 1
-            If gVarMeta(varIdx)\paramOffset = srcSlot
-               varName = gVarMeta(varIdx)\name
-               If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                  If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                     srcVarKey = varName
-                     Break
-                  EndIf
-               ElseIf currentFunctionName = ""
-                  srcVarKey = varName
-                  Break
-               EndIf
-            EndIf
-         Next
+         ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+         varIdx = FindVariableSlotByOffset(srcSlot, currentFunctionName)
+         If varIdx >= 0
+            srcVarKey = gVarMeta(varIdx)\name
+         EndIf
          If srcVarKey <> "" And FindMapElement(mapVariableTypes(), srcVarKey)
             If mapVariableTypes() & #C2FLAG_POINTER
                srcPtrType = mapVariableTypes()
                If NextElement(llObjects())
-                  If llObjects()\code = #ljLSTORE
+                  ; V1.034.43: Check for LSTORE or unified Store with j=1 (local)
+                  If llObjects()\code = #ljLSTORE Or (llObjects()\code = #ljStore And llObjects()\j = 1)
                      dstSlot = llObjects()\i
                      dstVarKey = ""
-                     For varIdx = 0 To gnLastVariable - 1
-                        If gVarMeta(varIdx)\paramOffset = dstSlot
-                           varName = gVarMeta(varIdx)\name
-                           If currentFunctionName <> "" And Left(varName, 1) <> "$"
-                              If LCase(Left(varName, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(varName, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_")
-                                 dstVarKey = varName
-                                 Break
-                              EndIf
-                           ElseIf Left(varName, 1) = "$"
-                              dstVarKey = varName
-                              Break
-                           ElseIf currentFunctionName = ""
-                              dstVarKey = varName
-                              Break
-                           EndIf
-                        EndIf
-                     Next
+                     ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+                     varIdx = FindVariableSlotByOffset(dstSlot, currentFunctionName)
+                     If varIdx >= 0
+                        dstVarKey = gVarMeta(varIdx)\name
+                     EndIf
                      If dstVarKey <> ""
+                        CompilerIf #DEBUG : Debug "A9 ADDING TO MAP: " + dstVarKey + " = " + Str(srcPtrType) + " (re-propagate from " + srcVarKey + ")" : CompilerEndIf
                         mapVariableTypes(dstVarKey) = srcPtrType
                      EndIf
                   EndIf
@@ -529,6 +699,270 @@ Procedure TypeInference()
       EndIf
    Next
 
+   ;- A10: Convert LLMOV to LLPMOV for pointer copies
+   ; V1.034.2: Now that all pointer types are discovered (A5-A9), convert MOV opcodes
+   currentFunctionName = ""
+   ForEach llObjects()
+      If llObjects()\code = #ljFUNCTION
+         funcId = llObjects()\i
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS And gFuncNames(funcId) <> ""
+            currentFunctionName = gFuncNames(funcId)
+         Else
+            currentFunctionName = ""
+         EndIf
+      EndIf
+      If llObjects()\code = #ljLLMOV
+         srcSlot = llObjects()\j
+         srcVarKey = ""
+         varIdx = FindVariableSlotByOffset(srcSlot, currentFunctionName)
+         If varIdx >= 0
+            srcVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If srcVarKey <> "" And FindMapElement(mapVariableTypes(), srcVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               ; V1.034.21: Use unified PMOV with n=3 for LL
+               llObjects()\code = #ljPMOV
+               llObjects()\n = 3
+            EndIf
+         EndIf
+      EndIf
+   Next
+
+   ;- A11: Convert INC/DEC opcodes for pointer variables to PTRADD/PTRSUB
+   ; V1.034.69: Pointer increment/decrement must use PTRADD/PTRSUB (scales by element size)
+   ; Convert INC_VAR_POST/PRE and DEC_VAR_POST/PRE when variable is a known pointer
+   ; For locals: j=1 indicates local variable, i is the offset
+   ; For globals: j=0 (or absent), i is the gVarMeta slot
+   ; V1.034.71: Skip A11 entirely if no pointer variables were detected
+   Protected hasPointerVars.i = #False
+   ForEach mapVariableTypes()
+      If mapVariableTypes() & #C2FLAG_POINTER
+         hasPointerVars = #True
+         Break
+      EndIf
+   Next
+
+   If hasPointerVars
+   Protected ptrIncDecSlot.i, ptrIncDecVarKey.s, ptrIncDecIsLocal.i
+   Protected *insertPos, ptrIncDecType.w
+   currentFunctionName = ""
+   ForEach llObjects()
+      If llObjects()\code = #ljFUNCTION
+         funcId = llObjects()\i
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS And gFuncNames(funcId) <> ""
+            currentFunctionName = gFuncNames(funcId)
+         Else
+            currentFunctionName = ""
+         EndIf
+      EndIf
+
+      ; Check for local post-increment: INC_VAR_POST with j=1
+      If llObjects()\code = #ljINC_VAR_POST And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LINC_VAR_POST to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert INC_VAR_POST to: PFETCH (old), PFETCH, PUSH 1, PTRADD, PSTORE
+               ; First instruction becomes PFETCH (push old value for return)
+               llObjects()\code = #ljPFETCH
+               ; llObjects()\i already has the offset, llObjects()\j already 1
+               ; Add remaining instructions after this one
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPFETCH : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRADD
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+
+      ; Check for local post-decrement: DEC_VAR_POST with j=1
+      If llObjects()\code = #ljDEC_VAR_POST And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LDEC_VAR_POST to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert DEC_VAR_POST to: PFETCH (old), PFETCH, PUSH 1, PTRSUB, PSTORE
+               llObjects()\code = #ljPFETCH
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPFETCH : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRSUB
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+
+      ; Check for local pre-increment: INC_VAR_PRE with j=1
+      If llObjects()\code = #ljINC_VAR_PRE And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LINC_VAR_PRE to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert INC_VAR_PRE to: PFETCH, PUSH 1, PTRADD, DUP, PSTORE
+               llObjects()\code = #ljPFETCH
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRADD
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljDUP
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+
+      ; Check for local pre-decrement: DEC_VAR_PRE with j=1
+      If llObjects()\code = #ljDEC_VAR_PRE And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LDEC_VAR_PRE to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert DEC_VAR_PRE to: PFETCH, PUSH 1, PTRSUB, DUP, PSTORE
+               llObjects()\code = #ljPFETCH
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRSUB
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljDUP
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+
+      ; V1.034.70: INC_VAR/DEC_VAR only appear after optimizer, which runs AFTER TypeInference
+      ; So A11 only handles INC_VAR_POST/PRE and DEC_VAR_POST/PRE forms (see above)
+      ; This section kept for reference but optimizer forms won't be seen here
+      If llObjects()\code = #ljINC_VAR And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LINC_VAR to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert INC_VAR to: PFETCH, PUSH 1, PTRADD, PSTORE (no value pushed)
+               llObjects()\code = #ljPFETCH
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRADD
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+
+      ; Check for local optimized decrement: DEC_VAR with j=1
+      If llObjects()\code = #ljDEC_VAR And llObjects()\j = 1
+         ptrIncDecSlot = llObjects()\i
+         ptrIncDecVarKey = ""
+         varIdx = FindVariableSlotByOffset(ptrIncDecSlot, currentFunctionName)
+         If varIdx >= 0
+            ptrIncDecVarKey = gVarMeta(varIdx)\name
+         EndIf
+         If ptrIncDecVarKey <> "" And FindMapElement(mapVariableTypes(), ptrIncDecVarKey)
+            If mapVariableTypes() & #C2FLAG_POINTER
+               CompilerIf #DEBUG : Debug "A11: Converting LDEC_VAR to pointer ops for " + ptrIncDecVarKey : CompilerEndIf
+               ; Convert DEC_VAR to: PFETCH, PUSH 1, PTRSUB, PSTORE (no value pushed)
+               llObjects()\code = #ljPFETCH
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPUSH_IMM : llObjects()\i = 1
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPTRSUB
+               *insertPos = @llObjects()
+               AddElement(llObjects())
+               MoveElement(llObjects(), #PB_List_After, *insertPos)
+               llObjects()\code = #ljPSTORE : llObjects()\i = ptrIncDecSlot : llObjects()\j = 1
+            EndIf
+         EndIf
+      EndIf
+   Next
+   EndIf  ; V1.034.71: End of hasPointerVars check for A11
+
+   ;- ========================================
+   ;- PHASE A DEBUG: Dumping mapVariableTypes
+   ;- ========================================
+   CompilerIf #DEBUG
+      Debug "PHASE A DEBUG: Dumping mapVariableTypes after Phase A"
+      ForEach mapVariableTypes()
+         Debug "  Variable: [" + MapKey(mapVariableTypes()) + "] = " + Str(mapVariableTypes()) + " (pointer=" + Str(Bool(mapVariableTypes() & #C2FLAG_POINTER)) + ")"
+      Next
+   CompilerEndIf
+
    ;- ========================================
    ;- PHASE B: UNIFIED TYPE APPLICATION
    ;- ========================================
@@ -538,9 +972,10 @@ Procedure TypeInference()
 
    ForEach llObjects()
       ; V1.033.24: Track current function for local variable matching
+      ; V1.034.2: Fixed limit to use #C2MAXFUNCTIONS instead of 512
       If llObjects()\code = #ljfunction
          funcId = llObjects()\i
-         If funcId >= 0 And funcId < 512
+         If funcId >= 0 And funcId < #C2MAXFUNCTIONS
             currentFunctionName = gFuncNames(funcId)
          Else
             currentFunctionName = ""
@@ -576,26 +1011,48 @@ Procedure TypeInference()
             EndIf
 
          ;- B3: FETCH pointer conversion
+         ; V1.034.45: Handle both global (j=0) and local (j=1) variables
          Case #ljFetch
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     llObjects()\code = #ljPFETCH
-                  EndIf
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  llObjects()\code = #ljPFETCH
                EndIf
             EndIf
 
          ;- B4: STORE pointer conversion
+         ; V1.034.45: Handle both global (j=0) and local (j=1) variables
          Case #ljStore
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     llObjects()\code = #ljPSTORE
-                  EndIf
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  llObjects()\code = #ljPSTORE
                EndIf
             EndIf
 
@@ -662,175 +1119,193 @@ Procedure TypeInference()
                PreviousElement(llObjects())  ; Go back to LFETCH
             EndIf
 
-            ; V1.033.35: If next opcode is pointer op, convert to PLFETCH
+            ; V1.034.21: If next opcode is pointer op, convert to unified PFETCH with j=1
             If isPointer
-               llObjects()\code = #ljPLFETCH
+               llObjects()\code = #ljPFETCH
+               llObjects()\j = 1   ; local
             Else
-               ; V1.033.24: Fallback - Match function prefix for local variables
-               For varIdx = 0 To gnLastVariable - 1
-                  If gVarMeta(varIdx)\paramOffset = n
-                     ; Verify this variable belongs to current function
-                     ; V1.033.42: Handle leading underscore in variable names
-                     If currentFunctionName <> "" And (LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_"))
-                        searchKey = gVarMeta(varIdx)\name
-                        If FindMapElement(mapVariableTypes(), searchKey)
-                           If mapVariableTypes() & #C2FLAG_POINTER
-                              llObjects()\code = #ljPLFETCH
-                              Break
-                           EndIf
-                        EndIf
-                     ElseIf Left(gVarMeta(varIdx)\name, 1) = "$"
-                        searchKey = gVarMeta(varIdx)\name
-                        If FindMapElement(mapVariableTypes(), searchKey)
-                           If mapVariableTypes() & #C2FLAG_POINTER
-                              llObjects()\code = #ljPLFETCH
-                              Break
-                           EndIf
-                        EndIf
-                     EndIf
-                  EndIf
-               Next
-            EndIf
-
-         ;- B8: LSTORE pointer conversion (uses function context)
-         Case #ljLSTORE
-            n = llObjects()\i
-            ; V1.033.24: Match function prefix for local variables
-            For varIdx = 0 To gnLastVariable - 1
-               If gVarMeta(varIdx)\paramOffset = n
-                  ; Verify this variable belongs to current function
-                  ; V1.033.42: Handle leading underscore in variable names
-                  If currentFunctionName <> "" And (LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 1)) = LCase(currentFunctionName + "_") Or LCase(Left(gVarMeta(varIdx)\name, Len(currentFunctionName) + 2)) = LCase("_" + currentFunctionName + "_"))
-                     searchKey = gVarMeta(varIdx)\name
-                     If FindMapElement(mapVariableTypes(), searchKey)
-                        If mapVariableTypes() & #C2FLAG_POINTER
-                           llObjects()\code = #ljPLSTORE
-                           Break
-                        EndIf
-                     EndIf
-                  ElseIf Left(gVarMeta(varIdx)\name, 1) = "$"
-                     searchKey = gVarMeta(varIdx)\name
-                     If FindMapElement(mapVariableTypes(), searchKey)
-                        If mapVariableTypes() & #C2FLAG_POINTER
-                           llObjects()\code = #ljPLSTORE
-                           Break
-                        EndIf
+               ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+                  If FindMapElement(mapVariableTypes(), searchKey)
+                     If mapVariableTypes() & #C2FLAG_POINTER
+                        ; V1.034.21: Use unified PFETCH with j=1 for local
+                        llObjects()\code = #ljPFETCH
+                        llObjects()\j = 1
                      EndIf
                   EndIf
                EndIf
-            Next
+            EndIf
 
-         ;- B9: INC_VAR pointer specialization
-         Case #ljINC_VAR
+         ;- B8: LSTORE pointer conversion (uses function context)
+         ; V1.034.2: Fixed - now uses correct function context for local variable lookup
+         Case #ljLSTORE
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
+            ; V1.034.1: Use O(1) lookup by offset instead of O(N) scan
+            varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+            If varIdx >= 0
+               searchKey = gVarMeta(varIdx)\name
                If FindMapElement(mapVariableTypes(), searchKey)
                   If mapVariableTypes() & #C2FLAG_POINTER
-                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                        llObjects()\code = #ljPTRINC_ARRAY
-                     ElseIf mapVariableTypes() & #C2FLAG_STR
-                        llObjects()\code = #ljPTRINC_STRING
-                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                        llObjects()\code = #ljPTRINC_FLOAT
-                     Else
-                        llObjects()\code = #ljPTRINC_INT
-                     EndIf
+                     ; V1.034.21: Use unified PSTORE with j=1 for local
+                     llObjects()\code = #ljPSTORE
+                     llObjects()\j = 1
+                  EndIf
+               EndIf
+            EndIf
+
+         ;- B9: INC_VAR pointer specialization
+         ; V1.034.43: Handle both global (j=0) and local (j=1) variables
+         Case #ljINC_VAR
+            n = llObjects()\i
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                     llObjects()\code = #ljPTRINC_ARRAY
+                  ElseIf mapVariableTypes() & #C2FLAG_STR
+                     llObjects()\code = #ljPTRINC_STRING
+                  ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                     llObjects()\code = #ljPTRINC_FLOAT
+                  Else
+                     llObjects()\code = #ljPTRINC_INT
                   EndIf
                EndIf
             EndIf
 
          ;- B10: DEC_VAR pointer specialization
+         ; V1.034.43: Handle both global (j=0) and local (j=1) variables
          Case #ljDEC_VAR
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                        llObjects()\code = #ljPTRDEC_ARRAY
-                     ElseIf mapVariableTypes() & #C2FLAG_STR
-                        llObjects()\code = #ljPTRDEC_STRING
-                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                        llObjects()\code = #ljPTRDEC_FLOAT
-                     Else
-                        llObjects()\code = #ljPTRDEC_INT
-                     EndIf
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                     llObjects()\code = #ljPTRDEC_ARRAY
+                  ElseIf mapVariableTypes() & #C2FLAG_STR
+                     llObjects()\code = #ljPTRDEC_STRING
+                  ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                     llObjects()\code = #ljPTRDEC_FLOAT
+                  Else
+                     llObjects()\code = #ljPTRDEC_INT
                   EndIf
                EndIf
             EndIf
 
          ;- B11: INC_VAR_PRE/POST pointer specialization
+         ; V1.034.44: Handle both global (j=0) and local (j=1) variables
          Case #ljINC_VAR_PRE, #ljINC_VAR_POST
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     If llObjects()\code = #ljINC_VAR_PRE
-                        If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                           llObjects()\code = #ljPTRINC_PRE_ARRAY
-                        ElseIf mapVariableTypes() & #C2FLAG_STR
-                           llObjects()\code = #ljPTRINC_PRE_STRING
-                        ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                           llObjects()\code = #ljPTRINC_PRE_FLOAT
-                        Else
-                           llObjects()\code = #ljPTRINC_PRE_INT
-                        EndIf
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  If llObjects()\code = #ljINC_VAR_PRE
+                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                        llObjects()\code = #ljPTRINC_PRE_ARRAY
+                     ElseIf mapVariableTypes() & #C2FLAG_STR
+                        llObjects()\code = #ljPTRINC_PRE_STRING
+                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                        llObjects()\code = #ljPTRINC_PRE_FLOAT
                      Else
-                        If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                           llObjects()\code = #ljPTRINC_POST_ARRAY
-                        ElseIf mapVariableTypes() & #C2FLAG_STR
-                           llObjects()\code = #ljPTRINC_POST_STRING
-                        ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                           llObjects()\code = #ljPTRINC_POST_FLOAT
-                        Else
-                           llObjects()\code = #ljPTRINC_POST_INT
-                        EndIf
+                        llObjects()\code = #ljPTRINC_PRE_INT
+                     EndIf
+                  Else
+                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                        llObjects()\code = #ljPTRINC_POST_ARRAY
+                     ElseIf mapVariableTypes() & #C2FLAG_STR
+                        llObjects()\code = #ljPTRINC_POST_STRING
+                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                        llObjects()\code = #ljPTRINC_POST_FLOAT
+                     Else
+                        llObjects()\code = #ljPTRINC_POST_INT
                      EndIf
                   EndIf
                EndIf
             EndIf
 
          ;- B12: DEC_VAR_PRE/POST pointer specialization
+         ; V1.034.44: Handle both global (j=0) and local (j=1) variables
          Case #ljDEC_VAR_PRE, #ljDEC_VAR_POST
             n = llObjects()\i
-            If n >= 0 And n < gnLastVariable
-               searchKey = gVarMeta(n)\name
-               If FindMapElement(mapVariableTypes(), searchKey)
-                  If mapVariableTypes() & #C2FLAG_POINTER
-                     If llObjects()\code = #ljDEC_VAR_PRE
-                        If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                           llObjects()\code = #ljPTRDEC_PRE_ARRAY
-                        ElseIf mapVariableTypes() & #C2FLAG_STR
-                           llObjects()\code = #ljPTRDEC_PRE_STRING
-                        ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                           llObjects()\code = #ljPTRDEC_PRE_FLOAT
-                        Else
-                           llObjects()\code = #ljPTRDEC_PRE_INT
-                        EndIf
+            searchKey = ""
+            If llObjects()\j = 1
+               ; Local variable - use FindVariableSlotByOffset
+               varIdx = FindVariableSlotByOffset(n, currentFunctionName)
+               If varIdx >= 0
+                  searchKey = gVarMeta(varIdx)\name
+               EndIf
+            Else
+               ; Global variable - use slot directly
+               If n >= 0 And n < gnLastVariable
+                  searchKey = gVarMeta(n)\name
+               EndIf
+            EndIf
+            If searchKey <> "" And FindMapElement(mapVariableTypes(), searchKey)
+               If mapVariableTypes() & #C2FLAG_POINTER
+                  If llObjects()\code = #ljDEC_VAR_PRE
+                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                        llObjects()\code = #ljPTRDEC_PRE_ARRAY
+                     ElseIf mapVariableTypes() & #C2FLAG_STR
+                        llObjects()\code = #ljPTRDEC_PRE_STRING
+                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                        llObjects()\code = #ljPTRDEC_PRE_FLOAT
                      Else
-                        If mapVariableTypes() & #C2FLAG_ARRAYPTR
-                           llObjects()\code = #ljPTRDEC_POST_ARRAY
-                        ElseIf mapVariableTypes() & #C2FLAG_STR
-                           llObjects()\code = #ljPTRDEC_POST_STRING
-                        ElseIf mapVariableTypes() & #C2FLAG_FLOAT
-                           llObjects()\code = #ljPTRDEC_POST_FLOAT
-                        Else
-                           llObjects()\code = #ljPTRDEC_POST_INT
-                        EndIf
+                        llObjects()\code = #ljPTRDEC_PRE_INT
+                     EndIf
+                  Else
+                     If mapVariableTypes() & #C2FLAG_ARRAYPTR
+                        llObjects()\code = #ljPTRDEC_POST_ARRAY
+                     ElseIf mapVariableTypes() & #C2FLAG_STR
+                        llObjects()\code = #ljPTRDEC_POST_STRING
+                     ElseIf mapVariableTypes() & #C2FLAG_FLOAT
+                        llObjects()\code = #ljPTRDEC_POST_FLOAT
+                     Else
+                        llObjects()\code = #ljPTRDEC_POST_INT
                      EndIf
                   EndIf
                EndIf
             EndIf
 
-         ;- B13: Local pointer increment/decrement
-         ; V1.033.25: REMOVED conversion - there are no local typed pointer increment opcodes.
-         ; The regular LINC_VAR/LDEC_VAR opcodes increment by 1 which is correct for
-         ; array element index pointers. Local pointer arithmetic is handled by the
-         ; regular local variable increment operations.
-         ; The global typed opcodes (PTRINC_ARRAY etc) use gVar() not gLocal()
-         ; so converting local ops to those would access wrong memory.
+         ;- B13: REMOVED V1.034.45 - Duplicate Case blocks merged into B3/B4 above
+         ; B3 now handles FETCH to PFETCH for both global (j=0) and local (j=1) variables
+         ; B4 now handles STORE to PSTORE for both global (j=0) and local (j=1) variables
 
          ;- B14: ADD to pointer arithmetic conversion
          Case #ljADD
@@ -932,18 +1407,24 @@ Procedure TypeInference()
                   llObjects()\code = #ljPRTS
                   PreviousElement(llObjects())
                ElseIf llObjects()\code = #ljFetch Or llObjects()\code = #ljPush
-                  n = llObjects()\i
-                  If n >= 0 And n < gnLastVariable
-                     If gVarMeta(n)\flags & #C2FLAG_FLOAT
-                        NextElement(llObjects())
-                        llObjects()\code = #ljPRTF
-                        PreviousElement(llObjects())
-                     ElseIf gVarMeta(n)\flags & #C2FLAG_STR
-                        NextElement(llObjects())
-                        llObjects()\code = #ljPRTS
-                        PreviousElement(llObjects())
+                  ; V1.034.21: For local variables (j=1), 'i' is a local slot offset, NOT a gVarMeta index
+                  ; Only look up gVarMeta for global variables (j=0)
+                  If llObjects()\j = 0  ; Global variable
+                     n = llObjects()\i
+                     If n >= 0 And n < gnLastVariable
+                        If gVarMeta(n)\flags & #C2FLAG_FLOAT
+                           NextElement(llObjects())
+                           llObjects()\code = #ljPRTF
+                           PreviousElement(llObjects())
+                        ElseIf gVarMeta(n)\flags & #C2FLAG_STR
+                           NextElement(llObjects())
+                           llObjects()\code = #ljPRTS
+                           PreviousElement(llObjects())
+                        EndIf
                      EndIf
                   EndIf
+                  ; For local variables (j=1), the type was already set in AST from paramTypes
+                  ; No additional fixup needed - keep the original PRTI
                ElseIf llObjects()\code = #ljFLOATADD Or llObjects()\code = #ljFLOATSUB Or
                       llObjects()\code = #ljFLOATMUL Or llObjects()\code = #ljFLOATDIV Or
                       llObjects()\code = #ljFLOATNEG
@@ -1253,7 +1734,7 @@ Procedure TypeInference()
    ForEach llObjects()
       If llObjects()\code = #ljPTRFETCH
          If PreviousElement(llObjects())
-            If llObjects()\code = #ljFetch Or llObjects()\code = #ljFETCHF Or llObjects()\code = #ljFETCHS Or llObjects()\code = #ljLFETCH Or llObjects()\code = #ljLFETCHF Or llObjects()\code = #ljLFETCHS Or llObjects()\code = #ljPFETCH Or llObjects()\code = #ljPLFETCH
+            If llObjects()\code = #ljFetch Or llObjects()\code = #ljFETCHF Or llObjects()\code = #ljFETCHS Or llObjects()\code = #ljLFETCH Or llObjects()\code = #ljLFETCHF Or llObjects()\code = #ljLFETCHS Or llObjects()\code = #ljPFETCH
                varSlot = llObjects()\i
                *savedPos = @llObjects()
                foundGetAddr = #False
@@ -1262,7 +1743,7 @@ Procedure TypeInference()
                getAddrType = #ljGETADDR
 
                While PreviousElement(llObjects())
-                  If (llObjects()\code = #ljStore Or llObjects()\code = #ljPOP Or llObjects()\code = #ljLSTORE Or llObjects()\code = #ljPSTORE Or llObjects()\code = #ljPLSTORE) And llObjects()\i = varSlot
+                  If (llObjects()\code = #ljStore Or llObjects()\code = #ljPOP Or llObjects()\code = #ljLSTORE Or llObjects()\code = #ljPSTORE) And llObjects()\i = varSlot
                      If PreviousElement(llObjects())
                         ; Global variable address
                         If llObjects()\code = #ljGETADDR Or llObjects()\code = #ljGETADDRF Or llObjects()\code = #ljGETADDRS

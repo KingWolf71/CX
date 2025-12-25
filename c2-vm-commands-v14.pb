@@ -1,4 +1,4 @@
-﻿; -- lexical parser to VM for a simplified C Language 
+; -- lexical parser to VM for a simplified C Language 
 ; Tested in UTF8
 ; PBx64 v6.20
 ;
@@ -36,7 +36,7 @@ EndMacro
 ;   _ISLOCAL      - Is local flag: 0=global, 1=local (j field)
 ;   _IDXSLOT      - Index variable slot for optimized paths (ndx field)
 ;
-; STACK OPERATIONS (gEvalStack):
+; STACK OPERATIONS (gStorage):
 ;   _POPI         - Peek integer at top of stack (sp-1)
 ;   _POPF         - Peek float at top of stack
 ;   _POPS         - Peek string at top of stack
@@ -44,8 +44,8 @@ EndMacro
 ;   _STACKF(n)    - Stack float at offset n from top
 ;   _STACKS(n)    - Stack string at offset n from top
 ;
-; LOCAL VARIABLE ACCESS (gLocal with gLocalBase):
-;   _LOCALSLOT(offset) - Compute actual slot: gLocalBase + offset
+; LOCAL VARIABLE ACCESS (gLocal with gFrameBase):
+;   _LOCALSLOT(offset) - Compute actual slot: gFrameBase + offset
 ;   _LOCALI(offset)    - Local integer at offset
 ;   _LOCALF(offset)    - Local float at offset
 ;   _LOCALS(offset)    - Local string at offset
@@ -65,7 +65,24 @@ Macro _ARRSLOT : _AR()\i : EndMacro
 Macro _ISLOCAL : _AR()\j : EndMacro
 Macro _IDXSLOT : _AR()\ndx : EndMacro
 
-; Stack operation macros
+; V1.035.0: POINTER ARRAY ARCHITECTURE
+; *gVar(slot) points to stVar structure with \var() array
+; - Globals: *gVar(slot)\var(0) for single value
+; - Functions: *gVar(funcSlot)\var(localIdx) for params + locals
+; - Eval stack: gEvalStack(sp) - separate array
+; - Recursion: swap *gVar(funcSlot) to allocated frame, restore on return
+;
+; _SLOT(j, offset) - slot access:
+;   j=0 → *gVar(offset)\var(0) = global at offset
+;   j=1 → *gVar(gCurrentFuncSlot)\var(offset) = local at offset
+Macro _SLOT(j, offset)
+   *gVar(gCurrentFuncSlot * (j) + (offset) * (1 - (j)))\var((offset) * (j))
+EndMacro
+
+; V1.035.0: Global access macro - each global at *gVar(n)\var(0)
+Macro _GLOBAL(n) : *gVar(n)\var(0) : EndMacro
+
+; V1.035.0: Eval stack macros - gEvalStack is separate array
 Macro _POPI : gEvalStack(sp - 1)\i : EndMacro
 Macro _POPF : gEvalStack(sp - 1)\f : EndMacro
 Macro _POPS : gEvalStack(sp - 1)\ss : EndMacro
@@ -73,11 +90,19 @@ Macro _STACKI(n) : gEvalStack(sp - 1 - (n))\i : EndMacro
 Macro _STACKF(n) : gEvalStack(sp - 1 - (n))\f : EndMacro
 Macro _STACKS(n) : gEvalStack(sp - 1 - (n))\ss : EndMacro
 
-; Local variable access macros
-Macro _LOCALSLOT(offset) : (gLocalBase + (offset)) : EndMacro
-Macro _LOCALI(offset) : gLocal(gLocalBase + (offset))\i : EndMacro
-Macro _LOCALF(offset) : gLocal(gLocalBase + (offset))\f : EndMacro
-Macro _LOCALS(offset) : gLocal(gLocalBase + (offset))\ss : EndMacro
+; V1.035.0: Local variable macros - use *gVar(gCurrentFuncSlot)\var(offset)
+Macro _LOCALSLOT(offset) : (offset) : EndMacro
+Macro _LOCALI(offset) : *gVar(gCurrentFuncSlot)\var(offset)\i : EndMacro
+Macro _LOCALF(offset) : *gVar(gCurrentFuncSlot)\var(offset)\f : EndMacro
+Macro _LOCALS(offset) : *gVar(gCurrentFuncSlot)\var(offset)\ss : EndMacro
+
+; V1.035.0: Local pointer access for struct operations
+Macro _LOCALPTR(offset) : *gVar(gCurrentFuncSlot)\var(offset)\ptr : EndMacro
+
+; V1.035.0: Get function slot from funcId (via gFuncTemplates)
+Macro _FUNCSLOT : gFuncTemplates(_FUNCID)\funcSlot : EndMacro
+Macro _FUNC_NPARAMS : gFuncTemplates(_FUNCID)\nParams : EndMacro
+Macro _FUNC_LOCALCOUNT : gFuncTemplates(_FUNCID)\localCount : EndMacro
 
 ; ARRAYINFO inline opcode access (pc+1+i for i-th array)
 Macro _ARRAYINFO_OFFSET(i) : arCode(pc + 1 + (i))\i : EndMacro
@@ -94,24 +119,19 @@ Macro                   vm_PopParams(n)
 EndMacro
 
 ; Macro for built-in functions: push integer result
-; V1.31.0: Push to gEvalStack[] (isolated variable system)
+; V1.035.0: Push to gEvalStack[]
+; V1.035.1: Removed erroneous pc+1 - opcode handlers already increment pc
 Macro                   vm_PushInt(value)
    gEvalStack(sp)\i = value
    sp + 1
-   CompilerIf #DEBUG
-      ;If sp % 100 = 0
-      ;   Debug "Stack pointer at: " + Str(sp) + " / " + Str(gMaxEvalStack)
-      ;EndIf
-   CompilerEndIf
-   pc + 1
 EndMacro
 
 ; Macro for built-in functions: push float result
-; V1.31.0: Push to gEvalStack[] (isolated variable system)
+; V1.035.0: Push to gEvalStack[]
+; V1.035.1: Removed erroneous pc+1 - opcode handlers already increment pc
 Macro                   vm_PushFloat(value)
    gEvalStack(sp)\f = value
    sp + 1
-   pc + 1
 EndMacro
 
 Macro                   vm_AssertPrint( tmsg )
@@ -152,8 +172,9 @@ EndMacro
 
 Procedure               C2FetchPush()
    vm_DebugFunctionName()
-   ; V1.31.0: GS - Global to Stack: gVar[slot] -> gEvalStack[sp]
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   ; V1.034.18: Unified FETCH using _SLOT(j, offset)
+   ; j=0 → global: gStorage(offset), j=1 → local: gStorage(gFrameBase + offset)
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
@@ -171,7 +192,7 @@ EndProcedure
 Procedure               C2PUSH_SLOT()
    vm_DebugFunctionName()
    ; Push the slot index itself, not the value at that slot
-   ; V1.31.0: Push to gEvalStack[]
+   ; V1.31.0: Push to gStorage[]
    gEvalStack(sp)\i = _AR()\i
    sp + 1
    pc + 1
@@ -179,16 +200,16 @@ EndProcedure
 
 Procedure               C2FETCHS()
    vm_DebugFunctionName()
-   ; V1.31.0: GS - Global to Stack: gVar[slot].ss -> gEvalStack[sp].ss
-   gEvalStack(sp)\ss = gVar(_AR()\i)\ss
+   ; V1.034.14: Unified FETCHS using _SLOT(j, offset)
+   gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2FETCHF()
    vm_DebugFunctionName()
-   ; V1.31.0: GS - Global to Stack: gVar[slot].f -> gEvalStack[sp].f
-   gEvalStack(sp)\f = gVar(_AR()\i)\f
+   ; V1.034.14: Unified FETCHF using _SLOT(j, offset)
+   gEvalStack(sp)\f = _SLOT(_AR()\j, _AR()\i)\f
    sp + 1
    pc + 1
 EndProcedure
@@ -196,39 +217,39 @@ EndProcedure
 Procedure               C2POP()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp] -> gVar[slot]
-   gVar(_AR()\i)\i = gEvalStack(sp)\i
+   ; V1.034.14: Unified POP using _SLOT(j, offset)
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2POPS()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp].ss -> gVar[slot].ss
-   gVar(_AR()\i)\ss = gEvalStack(sp)\ss
+   ; V1.034.14: Unified POPS using _SLOT(j, offset)
+   _SLOT(_AR()\j, _AR()\i)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2POPF()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp].f -> gVar[slot].f
-   gVar(_AR()\i)\f = gEvalStack(sp)\f
+   ; V1.034.14: Unified POPF using _SLOT(j, offset)
+   _SLOT(_AR()\j, _AR()\i)\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2PUSHS()
    vm_DebugFunctionName()
-   ; V1.31.0: GS - Global to Stack: gVar[slot].ss -> gEvalStack[sp].ss
-   gEvalStack(sp)\ss = gVar(_AR()\i)\ss
+   ; V1.034.14: Unified PUSHS using _SLOT(j, offset) - same as FETCHS
+   gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2PUSHF()
    vm_DebugFunctionName()
-   ; V1.31.0: GS - Global to Stack: gVar[slot].f -> gEvalStack[sp].f
-   gEvalStack(sp)\f = gVar(_AR()\i)\f
+   ; V1.034.14: Unified PUSHF using _SLOT(j, offset) - same as FETCHF
+   gEvalStack(sp)\f = _SLOT(_AR()\j, _AR()\i)\f
    sp + 1
    pc + 1
 EndProcedure
@@ -236,24 +257,26 @@ EndProcedure
 Procedure               C2Store()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp] -> gVar[slot]
-   gVar(_AR()\i)\i = gEvalStack(sp)\i
+   ; V1.034.14: Unified STORE using _SLOT(j, offset)
+   ; TEMP DEBUG
+   
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2STORES()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp].ss -> gVar[slot].ss
-   gVar(_AR()\i)\ss = gEvalStack(sp)\ss
+   ; V1.034.14: Unified STORES using _SLOT(j, offset)
+   _SLOT(_AR()\j, _AR()\i)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2STOREF()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: SG - Stack to Global: gEvalStack[sp].f -> gVar[slot].f
-   gVar(_AR()\i)\f = gEvalStack(sp)\f
+   ; V1.034.14: Unified STOREF using _SLOT(j, offset)
+   _SLOT(_AR()\j, _AR()\i)\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
@@ -261,168 +284,169 @@ EndProcedure
 ; This fixes the issue where regular STORE only copies \i but StructGetStr accesses \ptr
 ; The stVT structure has separate \i and \ptr fields (not a union)
 ; Used when storing function return values to struct variables: p.Person = listGet(...)
-; V1.31.0: Read from gEvalStack[] (isolated variable system)
+; V1.034.14: Unified using _SLOT(j, offset) - replaces both STORE_STRUCT and LSTORE_STRUCT
 Procedure               C2STORE_STRUCT()
    vm_DebugFunctionName()
    sp - 1
 
-   ; Copy both integer value AND pointer field (since they're separate in stVT)
-   gVar( _AR()\i )\i = gEvalStack(sp)\i
-   gVar( _AR()\i )\ptr = gEvalStack(sp)\i  ; Copy \i to \ptr for pointer semantics
+   ; Copy both integer value AND pointer field using unified _SLOT access
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\i  ; Copy \i to \ptr for pointer semantics
 
    pc + 1
 EndProcedure
 
-; V1.031.32: Local variant of STORE_STRUCT - stores to gLocal[offset] instead of gVar[]
-; Used for local struct variables inside functions: p.Person = listGet(...)
+; V1.034.14: LSTORE_STRUCT now just calls unified STORE_STRUCT (jump table compatibility)
 Procedure               C2LSTORE_STRUCT()
    vm_DebugFunctionName()
    sp - 1
 
-   ; Copy both integer value AND pointer field to local variable
-   gLocal( _AR()\i )\i = gEvalStack(sp)\i
-   gLocal( _AR()\i )\ptr = gEvalStack(sp)\i
+   ; Copy both integer value AND pointer field using unified _SLOT access
+   ; Note: For local structs, j should be 1 (set by codegen)
+   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\i
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOV()
    vm_DebugFunctionName()
+   ; V1.034.17: Unified MOV using _SLOT with locality flags in n field
+   ; n & 1 = source is local, n & 2 = destination is local
+   ; n=0: GG, n=1: LG, n=2: GL, n=3: LL
 
-   ; V1.022.8: Debug output to trace struct initialization
    CompilerIf #DEBUG
-      Debug "MOV: pc=" + Str(pc) + " src[" + Str(_AR()\j) + "]=" + Str(gVar(_AR()\j)\i) + " -> dest[" + Str(_AR()\i) + "]"
+      Debug "MOV: pc=" + Str(pc) + " src[" + Str(_AR()\j) + "] -> dest[" + Str(_AR()\i) + "] n=" + Str(_AR()\n)
    CompilerEndIf
 
-   ; V1.18.0: Direct global access, no intermediate variables for speed
-   ; V1.20.27: Pointer metadata now handled by C2PMOV opcode
-   gVar( _AR()\i )\i = gVar( _AR()\j )\i
+   _SLOT(_AR()\n >> 1, _AR()\i)\i = _SLOT(_AR()\n & 1, _AR()\j)\i
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOVS()
    vm_DebugFunctionName()
+   ; V1.034.17: Unified MOVS using _SLOT with locality flags in n field
 
-   ; V1.18.0: Direct global access, no intermediate variables for speed
-   gVar( _AR()\i )\ss = gVar( _AR()\j )\ss
+   _SLOT(_AR()\n >> 1, _AR()\i)\ss = _SLOT(_AR()\n & 1, _AR()\j)\ss
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOVF()
    vm_DebugFunctionName()
+   ; V1.034.17: Unified MOVF using _SLOT with locality flags in n field
 
-   ; V1.18.0: Direct global access, no intermediate variables for speed
-   gVar( _AR()\i )\f = gVar( _AR()\j )\f
+   _SLOT(_AR()\n >> 1, _AR()\i)\f = _SLOT(_AR()\n & 1, _AR()\j)\f
 
    pc + 1
 EndProcedure
 
 ;- V1.31.0: Local Variable Opcodes (Isolated Variable System)
-;  LMOV (GL - Global to Local): gVar[j] -> gLocal[gLocalBase + i]
-;  LGMOV (LG - Local to Global): gLocal[gLocalBase + j] -> gVar[i]
-;  LLMOV (LL - Local to Local): gLocal[gLocalBase + j] -> gLocal[gLocalBase + i]
+;  LMOV (GL - Global to Local): gVar[j] -> gLocal[gFrameBase + i]
+;  LGMOV (LG - Local to Global): gLocal[gFrameBase + j] -> gVar[i]
+;  LLMOV (LL - Local to Local): gLocal[gFrameBase + j] -> gLocal[gFrameBase + i]
 
 Procedure               C2LMOV()
    vm_DebugFunctionName()
-   ; V1.31.0: GL - Global to Local: gVar[j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\i = gVar(_AR()\j)\i
+   ; V1.035.0: GL - Global to Local: *gVar[j]\var(0) -> *gVar[funcSlot]\var(i)
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar(_AR()\j)\var(0)\i
    pc + 1
 EndProcedure
 
 Procedure               C2LMOVS()
    vm_DebugFunctionName()
-   ; V1.31.0: GL - Global to Local: gVar[j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\ss = gVar(_AR()\j)\ss
+   ; V1.035.0: GL - Global to Local: *gVar[j]\var(0) -> *gVar[funcSlot]\var(i)
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ss = *gVar(_AR()\j)\var(0)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2LMOVF()
    vm_DebugFunctionName()
-   ; V1.31.0: GL - Global to Local: gVar[j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\f = gVar(_AR()\j)\f
+   ; V1.035.0: GL - Global to Local: *gVar[j]\var(0) -> *gVar[funcSlot]\var(i)
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\f = *gVar(_AR()\j)\var(0)\f
    pc + 1
 EndProcedure
 
-;- V1.31.0: Local-to-Global MOV opcodes (LGMOV - LG)
+;- V1.035.0: Local-to-Global MOV opcodes (LGMOV - LG)
 Procedure               C2LGMOV()
    vm_DebugFunctionName()
-   ; V1.31.0: LG - Local to Global: gLocal[gLocalBase + j] -> gVar[i]
-   gVar(_AR()\i)\i = gLocal(gLocalBase + _AR()\j)\i
+   ; V1.035.0: LG - Local to Global: *gVar[funcSlot]\var(j) -> *gVar[i]\var(0)
+   *gVar(_AR()\i)\var(0)\i = *gVar(gCurrentFuncSlot)\var(_AR()\j)\i
    pc + 1
 EndProcedure
 
 Procedure               C2LGMOVS()
    vm_DebugFunctionName()
-   ; V1.31.0: LG - Local to Global: gLocal[gLocalBase + j] -> gVar[i]
-   gVar(_AR()\i)\ss = gLocal(gLocalBase + _AR()\j)\ss
+   ; V1.035.0: LG - Local to Global: *gVar[funcSlot]\var(j) -> *gVar[i]\var(0)
+   *gVar(_AR()\i)\var(0)\ss = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2LGMOVF()
    vm_DebugFunctionName()
-   ; V1.31.0: LG - Local to Global: gLocal[gLocalBase + j] -> gVar[i]
-   gVar(_AR()\i)\f = gLocal(gLocalBase + _AR()\j)\f
+   ; V1.035.0: LG - Local to Global: *gVar[funcSlot]\var(j) -> *gVar[i]\var(0)
+   *gVar(_AR()\i)\var(0)\f = *gVar(gCurrentFuncSlot)\var(_AR()\j)\f
    pc + 1
 EndProcedure
 
 ;- V1.31.0: Local-to-Local MOV opcodes (LLMOV - LL)
 Procedure               C2LLMOV()
    vm_DebugFunctionName()
-   ; V1.31.0: LL - Local to Local: gLocal[gLocalBase + j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\i = gLocal(gLocalBase + _AR()\j)\i
+   ; V1.31.0: LL - Local to Local: gLocal[gFrameBase + j] -> gLocal[gFrameBase + i]
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar(gCurrentFuncSlot)\var(_AR()\j)\i
    pc + 1
 EndProcedure
 
 Procedure               C2LLMOVS()
    vm_DebugFunctionName()
-   ; V1.31.0: LL - Local to Local: gLocal[gLocalBase + j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\ss = gLocal(gLocalBase + _AR()\j)\ss
+   ; V1.31.0: LL - Local to Local: gLocal[gFrameBase + j] -> gLocal[gFrameBase + i]
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ss = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2LLMOVF()
    vm_DebugFunctionName()
-   ; V1.31.0: LL - Local to Local: gLocal[gLocalBase + j] -> gLocal[gLocalBase + i]
-   gLocal(gLocalBase + _AR()\i)\f = gLocal(gLocalBase + _AR()\j)\f
+   ; V1.31.0: LL - Local to Local: gLocal[gFrameBase + j] -> gLocal[gFrameBase + i]
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\f = *gVar(gCurrentFuncSlot)\var(_AR()\j)\f
    pc + 1
 EndProcedure
 
 Procedure               C2LLPMOV()
    vm_DebugFunctionName()
    ; V1.033.41: LL PMOV - Local to Local pointer move (copies i, ptr, ptrtype)
-   gLocal(gLocalBase + _AR()\i)\i = gLocal(gLocalBase + _AR()\j)\i
-   gLocal(gLocalBase + _AR()\i)\ptr = gLocal(gLocalBase + _AR()\j)\ptr
-   gLocal(gLocalBase + _AR()\i)\ptrtype = gLocal(gLocalBase + _AR()\j)\ptrtype
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = *gVar(gCurrentFuncSlot)\var(_AR()\j)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptr = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptr
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ptrtype = *gVar(gCurrentFuncSlot)\var(_AR()\j)\ptrtype
    pc + 1
 EndProcedure
 
 Procedure               C2LFETCH()
    vm_DebugFunctionName()
-   ; V1.31.0: Fetch from gLocal[gLocalBase + offset] to gEvalStack[]
+   ; V1.035.0: Fetch from *gVar(gCurrentFuncSlot)\var(offset) to gEvalStack[]
+   ; Note: LFETCH is local-specific, always uses gCurrentFuncSlot
    CompilerIf #DEBUG
       If gStackDepth >= 6
-         Debug "  LFETCH: depth=" + Str(gStackDepth) + " gLocalBase=" + Str(gLocalBase) + " offset=" + Str(_AR()\i) + " value=" + Str(gLocal(gLocalBase + _AR()\i)\i) + " pc=" + Str(pc) + " sp=" + Str(sp)
+         Debug "  LFETCH: depth=" + Str(gStackDepth) + " funcSlot=" + Str(gCurrentFuncSlot) + " offset=" + Str(_AR()\i) + " value=" + Str(*gVar(gCurrentFuncSlot)\var(_AR()\i)\i) + " pc=" + Str(pc) + " sp=" + Str(sp)
       EndIf
    CompilerEndIf
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LFETCHS()
    vm_DebugFunctionName()
-   ; V1.31.0: Fetch string from gLocal[gLocalBase + offset] to gEvalStack[]
-   gEvalStack(sp)\ss = gLocal(gLocalBase + _AR()\i)\ss
+   ; V1.31.0: Fetch string from gLocal[gFrameBase + offset] to gStorage[]
+   gEvalStack(sp)\ss = *gVar(gCurrentFuncSlot)\var(_AR()\i)\ss
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LFETCHF()
    vm_DebugFunctionName()
-   ; V1.31.0: Fetch float from gLocal[gLocalBase + offset] to gEvalStack[]
-   gEvalStack(sp)\f = gLocal(gLocalBase + _AR()\i)\f
+   ; V1.31.0: Fetch float from gLocal[gFrameBase + offset] to gStorage[]
+   gEvalStack(sp)\f = *gVar(gCurrentFuncSlot)\var(_AR()\i)\f
    sp + 1
    pc + 1
 EndProcedure
@@ -430,166 +454,153 @@ EndProcedure
 Procedure               C2LSTORE()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: Store to gLocal[gLocalBase + offset] from gEvalStack[]
-   Protected localIdx.i = gLocalBase + _AR()\i
+   ; V1.035.0: Store to *gVar(gCurrentFuncSlot)\var(offset) from gEvalStack[]
+   ; Note: LSTORE is local-specific, always uses gCurrentFuncSlot
    CompilerIf #DEBUG
       ; V1.031.27: Bounds checking for debug builds
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
       If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** LSTORE ERROR: sp=" + Str(sp) + " out of bounds [0.." + Str(gMaxEvalStack-1) + "] at pc=" + Str(pc)
+         Debug "*** LSTORE ERROR: sp=" + Str(sp) + " out of bounds [0.." + Str(gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
-      If localIdx < 0 Or localIdx >= gLocalStack
-         Debug "*** LSTORE ERROR: gLocal index=" + Str(localIdx) + " (gLocalBase=" + Str(gLocalBase) + " offset=" + Str(_AR()\i) + ") out of bounds [0.." + Str(gLocalStack-1) + "] at pc=" + Str(pc)
-         gExitApplication = #True
-         ProcedureReturn
-      EndIf
-      Debug "VM LSTORE: gLocalBase=" + Str(gLocalBase) + " offset=" + Str(_AR()\i) + " value=" + Str(gEvalStack(sp)\i)
+      Debug "VM LSTORE: funcSlot=" + Str(gCurrentFuncSlot) + " offset=" + Str(_AR()\i) + " value=" + Str(gEvalStack(sp)\i)
    CompilerEndIf
-   gLocal(localIdx)\i = gEvalStack(sp)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2LSTORES()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: Store string to gLocal[gLocalBase + offset] from gEvalStack[]
-   Protected localIdx.i = gLocalBase + _AR()\i
+   ; V1.31.0: Store string to gLocal[gFrameBase + offset] from gStorage[]
    CompilerIf #DEBUG
-      If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** LSTORES ERROR: sp=" + Str(sp) + " out of bounds at pc=" + Str(pc)
-         gExitApplication = #True
-         ProcedureReturn
-      EndIf
-      If localIdx < 0 Or localIdx >= gLocalStack
-         Debug "*** LSTORES ERROR: gLocal index=" + Str(localIdx) + " out of bounds at pc=" + Str(pc)
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
+      If sp < gGlobalStack Or sp >= gGlobalStack + gMaxEvalStack
+         Debug "*** LSTORES ERROR: sp=" + Str(sp) + " out of bounds [" + Str(gGlobalStack) + ".." + Str(gGlobalStack + gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
-   gLocal(localIdx)\ss = gEvalStack(sp)\ss
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2LSTOREF()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: Store float to gLocal[gLocalBase + offset] from gEvalStack[]
-   Protected localIdx.i = gLocalBase + _AR()\i
+   ; V1.31.0: Store float to gLocal[gFrameBase + offset] from gStorage[]
    CompilerIf #DEBUG
-      If sp < 0 Or sp >= gMaxEvalStack
-         Debug "*** LSTOREF ERROR: sp=" + Str(sp) + " out of bounds at pc=" + Str(pc)
-         gExitApplication = #True
-         ProcedureReturn
-      EndIf
-      If localIdx < 0 Or localIdx >= gLocalStack
-         Debug "*** LSTOREF ERROR: gLocal index=" + Str(localIdx) + " out of bounds at pc=" + Str(pc)
+      ; V1.034.52: Fixed sp bounds check - sp is absolute index, not relative to eval stack
+      If sp < gGlobalStack Or sp >= gGlobalStack + gMaxEvalStack
+         Debug "*** LSTOREF ERROR: sp=" + Str(sp) + " out of bounds [" + Str(gGlobalStack) + ".." + Str(gGlobalStack + gMaxEvalStack - 1) + "] at pc=" + Str(pc)
          gExitApplication = #True
          ProcedureReturn
       EndIf
    CompilerEndIf
-   gLocal(localIdx)\f = gEvalStack(sp)\f
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 ;- In-place increment/decrement operations (efficient, no multi-operation sequences)
 
 Procedure               C2INC_VAR()
-   ; Increment global variable in place (no stack operation)
+   ; V1.034.14: Unified INC using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
+   _SLOT(_AR()\j, _AR()\i)\i + 1
    pc + 1
 EndProcedure
 
 Procedure               C2DEC_VAR()
-   ; Decrement global variable in place (no stack operation)
+   ; V1.034.14: Unified DEC using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
+   _SLOT(_AR()\j, _AR()\i)\i - 1
    pc + 1
 EndProcedure
 
 Procedure               C2INC_VAR_PRE()
-   ; V1.31.0: Pre-increment global: increment and push new value to gEvalStack[]
+   ; V1.034.14: Unified pre-increment using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i + 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   _SLOT(_AR()\j, _AR()\i)\i + 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2DEC_VAR_PRE()
-   ; V1.31.0: Pre-decrement global: decrement and push new value to gEvalStack[]
+   ; V1.034.14: Unified pre-decrement using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gVar(_AR()\i)\i - 1
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
+   _SLOT(_AR()\j, _AR()\i)\i - 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2INC_VAR_POST()
-   ; V1.31.0: Post-increment global: push old value to gEvalStack[] and increment
+   ; V1.034.14: Unified post-increment using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gVar(_AR()\i)\i + 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT(_AR()\j, _AR()\i)\i + 1
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2DEC_VAR_POST()
-   ; V1.31.0: Post-decrement global: push old value to gEvalStack[] and decrement
+   ; V1.034.14: Unified post-decrement using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gVar(_AR()\i)\i
-   gVar(_AR()\i)\i - 1
+   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT(_AR()\j, _AR()\i)\i - 1
    sp + 1
    pc + 1
 EndProcedure
 
+; V1.034.14: L-variants now use same unified _SLOT - kept for jump table compatibility
 Procedure               C2LINC_VAR()
-   ; V1.31.0: Increment local in gLocal[gLocalBase + offset]
+   ; V1.31.0: Local increment - gLocal[gFrameBase + offset]++
    vm_DebugFunctionName()
-   gLocal(gLocalBase + _AR()\i)\i + 1
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LDEC_VAR()
-   ; V1.31.0: Decrement local in gLocal[gLocalBase + offset]
+   ; V1.31.0: Local decrement - gLocal[gFrameBase + offset]--
    vm_DebugFunctionName()
-   gLocal(gLocalBase + _AR()\i)\i - 1
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i - 1
    pc + 1
 EndProcedure
 
 Procedure               C2LINC_VAR_PRE()
-   ; V1.31.0: Pre-increment local and push to gEvalStack[]
+   ; V1.31.0: Local pre-increment - ++gLocal[gFrameBase + offset]
    vm_DebugFunctionName()
-   gLocal(gLocalBase + _AR()\i)\i + 1
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i + 1
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LDEC_VAR_PRE()
-   ; V1.31.0: Pre-decrement local and push to gEvalStack[]
+   ; V1.31.0: Local pre-decrement - --gLocal[gFrameBase + offset]
    vm_DebugFunctionName()
-   gLocal(gLocalBase + _AR()\i)\i - 1
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i - 1
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LINC_VAR_POST()
-   ; V1.31.0: Push old value to gEvalStack[] then increment local
+   ; V1.31.0: Local post-increment - gLocal[gFrameBase + offset]++
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
-   gLocal(gLocalBase + _AR()\i)\i + 1
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i + 1
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2LDEC_VAR_POST()
-   ; V1.31.0: Push old value to gEvalStack[] then decrement local
+   ; V1.31.0: Local post-decrement - gLocal[gFrameBase + offset]--
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = gLocal(gLocalBase + _AR()\i)\i
-   gLocal(gLocalBase + _AR()\i)\i - 1
+   gEvalStack(sp)\i = *gVar(gCurrentFuncSlot)\var(_AR()\i)\i
+   *gVar(gCurrentFuncSlot)\var(_AR()\i)\i - 1
    sp + 1
    pc + 1
 EndProcedure
@@ -597,74 +608,74 @@ EndProcedure
 ;- In-place compound assignment operations (pop stack, operate, store - no push)
 
 Procedure               C2ADD_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], add to global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], add to global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i + gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2SUB_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], subtract from global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], subtract from global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i - gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2MUL_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], multiply global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], multiply global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i * gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i * gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2DIV_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], divide global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], divide global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i / gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i / gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2MOD_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], modulo global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], modulo global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\i % gEvalStack(sp)\i
+   _SLOT(_AR()\j, _AR()\i)\i % gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATADD_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], float add to global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], float add to global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\f + gEvalStack(sp)\f
+   _SLOT(_AR()\j, _AR()\i)\f + gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATSUB_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], float subtract from global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], float subtract from global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\f - gEvalStack(sp)\f
+   _SLOT(_AR()\j, _AR()\i)\f - gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATMUL_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], float multiply global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], float multiply global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\f * gEvalStack(sp)\f
+   _SLOT(_AR()\j, _AR()\i)\f * gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATDIV_ASSIGN_VAR()
-   ; V1.31.0: Pop value from gEvalStack[], float divide global, store back (no push)
+   ; V1.31.0: Pop value from gStorage[], float divide global, store back (no push)
    vm_DebugFunctionName()
    sp - 1
-   gVar(_AR()\i)\f / gEvalStack(sp)\f
+   _SLOT(_AR()\j, _AR()\i)\f / gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
@@ -676,7 +687,7 @@ EndProcedure
 Procedure               C2JZ()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: Read from gEvalStack[]
+   ; V1.31.0: Read from gStorage[]
    If Not gEvalStack(sp)\i
       pc + _AR()\i
    Else
@@ -685,7 +696,7 @@ Procedure               C2JZ()
 EndProcedure
 
 Procedure               C2TENIF()
-   ; V1.31.0: Ternary IF - use gEvalStack[]
+   ; V1.31.0: Ternary IF - use gStorage[]
    vm_DebugFunctionName()
    sp - 1
    If Not gEvalStack(sp)\i
@@ -702,7 +713,7 @@ Procedure               C2TENELSE()
 EndProcedure
 
 ; V1.024.0: New opcodes for switch statement support
-; V1.31.0: Updated for gEvalStack[]
+; V1.31.0: Updated for gStorage[]
 Procedure               C2DUP()
    vm_DebugFunctionName()
    gEvalStack(sp)\i = gEvalStack(sp - 1)\i
@@ -734,7 +745,7 @@ Procedure               C2DUP_S()
 EndProcedure
 
 Procedure               C2JNZ()
-   ; V1.31.0: Use gEvalStack[]
+   ; V1.31.0: Use gStorage[]
    vm_DebugFunctionName()
    sp - 1
    If gEvalStack(sp)\i
@@ -759,28 +770,28 @@ EndProcedure
 Procedure               C2ADDSTR()
    vm_DebugFunctionName()
    sp - 1
-   ; V1.31.0: String concatenation on gEvalStack[]
+   ; V1.31.0: String concatenation on gStorage[]
    gEvalStack(sp - 1)\ss = gEvalStack(sp - 1)\ss + gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2FTOS()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert float to string at gEvalStack[] top
+   ; V1.31.0: Convert float to string at gStorage[] top
    gEvalStack(sp - 1)\ss = StrD(gEvalStack(sp - 1)\f, gDecs)
    pc + 1
 EndProcedure
 
 Procedure               C2ITOS()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert integer to string at gEvalStack[] top
+   ; V1.31.0: Convert integer to string at gStorage[] top
    gEvalStack(sp - 1)\ss = Str(gEvalStack(sp - 1)\i)
    pc + 1
 EndProcedure
 
 Procedure               C2ITOF()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert integer to float at gEvalStack[] top
+   ; V1.31.0: Convert integer to float at gStorage[] top
    gEvalStack(sp - 1)\f = gEvalStack(sp - 1)\i
    gEvalStack(sp - 1)\ptr = 0
    gEvalStack(sp - 1)\ptrtype = 0
@@ -789,28 +800,28 @@ EndProcedure
 
 Procedure               C2FTOI_ROUND()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert float to integer at gEvalStack[] top (round to nearest)
+   ; V1.31.0: Convert float to integer at gStorage[] top (round to nearest)
    gEvalStack(sp - 1)\i = gEvalStack(sp - 1)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FTOI_TRUNCATE()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert float to integer at gEvalStack[] top (truncate towards zero)
+   ; V1.31.0: Convert float to integer at gStorage[] top (truncate towards zero)
    gEvalStack(sp - 1)\i = Int(gEvalStack(sp - 1)\f)
    pc + 1
 EndProcedure
 
 Procedure               C2STOF()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert string to float at gEvalStack[] top
+   ; V1.31.0: Convert string to float at gStorage[] top
    gEvalStack(sp - 1)\f = ValD(gEvalStack(sp - 1)\ss)
    pc + 1
 EndProcedure
 
 Procedure               C2STOI()
    vm_DebugFunctionName()
-   ; V1.31.0: Convert string to integer at gEvalStack[] top
+   ; V1.31.0: Convert string to integer at gStorage[] top
    gEvalStack(sp - 1)\i = Val(gEvalStack(sp - 1)\ss)
    pc + 1
 EndProcedure
@@ -851,7 +862,7 @@ Procedure               C2EQUAL()
 EndProcedure
 
 ; V1.023.30: String comparison - compare \ss string fields
-; V1.31.0: Updated for gEvalStack[]
+; V1.31.0: Updated for gStorage[]
 Procedure               C2STREQ()
    vm_DebugFunctionName()
    sp - 1
@@ -894,16 +905,27 @@ Procedure               C2XOR()
    vm_BitOperation( ! )
 EndProcedure
 
+; V1.034.30: Bit shift operators
+Procedure               C2SHL()
+   vm_DebugFunctionName()
+   vm_BitOperation( << )
+EndProcedure
+
+Procedure               C2SHR()
+   vm_DebugFunctionName()
+   vm_BitOperation( >> )
+EndProcedure
+
 Procedure               C2NOT()
    vm_DebugFunctionName()
-   ; V1.31.0: Use gEvalStack[]
+   ; V1.31.0: Use gStorage[]
    gEvalStack(sp - 1)\i = Bool(Not gEvalStack(sp - 1)\i)
    pc + 1
 EndProcedure
 
 Procedure               C2NEGATE()
    vm_DebugFunctionName()
-   ; V1.31.0: Use gEvalStack[]
+   ; V1.31.0: Use gStorage[]
    gEvalStack(sp - 1)\i = -gEvalStack(sp - 1)\i
    pc + 1
 EndProcedure
@@ -918,7 +940,7 @@ Procedure               C2MOD()
    vm_BitOperation( % )
 EndProcedure
 
-; V1.31.0: Print operations updated for gEvalStack[]
+; V1.31.0: Print operations updated for gStorage[]
 Procedure               C2PRTS()
    vm_DebugFunctionName()
    sp - 1
@@ -1095,7 +1117,7 @@ EndProcedure
 
 Procedure               C2FLOATNEGATE()
    vm_DebugFunctionName()
-   ; V1.31.0: Use gEvalStack[]
+   ; V1.31.0: Use gStorage[]
    gEvalStack(sp - 1)\f = -gEvalStack(sp - 1)\f
    pc + 1
 EndProcedure
@@ -1140,7 +1162,7 @@ Procedure               C2FLOATGREATEREQUAL()
 EndProcedure
 
 Procedure               C2FLOATNOTEQUAL()
-   ; V1.31.0: Tolerance-based float inequality using gEvalStack[]
+   ; V1.31.0: Tolerance-based float inequality using gStorage[]
    vm_DebugFunctionName()
    sp - 1
    ; Tolerance-based float inequality: NOT equal if difference > tolerance
@@ -1153,7 +1175,7 @@ Procedure               C2FLOATNOTEQUAL()
 EndProcedure
 
 Procedure               C2FLOATEQUAL()
-   ; V1.31.0: Tolerance-based float equality using gEvalStack[]
+   ; V1.31.0: Tolerance-based float equality using gStorage[]
    vm_DebugFunctionName()
    sp - 1
    ; Tolerance-based float equality: equal if difference <= tolerance
@@ -1166,14 +1188,13 @@ Procedure               C2FLOATEQUAL()
 EndProcedure
 
 Procedure               C2CALL()
-   ; V1.031.106: Refactored to use macros, removed unused variables
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
+   ; Each function has its own slot in *gVar(funcSlot)
+   ; Recursion: allocate new frame, swap pointer, restore on return
    vm_DebugFunctionName()
-   Define i.l  ; Loop counter only
-
-   ; V1.31.0 ISOLATED VARIABLE SYSTEM
-   ; - Local variables stored in gLocal[] (separate from gVar[] and gEvalStack[])
-   ; - Parameters copied from gEvalStack[] to gLocal[]
-   ; - No overlap possible between locals and evaluation stack
+   Define i.l
+   Define funcSlot.l, totalVars.l
+   Define *newFrame.stVar
 
    ; Increment stack depth (create new frame)
    gStackDepth + 1
@@ -1183,54 +1204,83 @@ Procedure               C2CALL()
          Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
          End
       EndIf
-      If gLocalTop + _NPARAMS + _NLOCALS > gLocalStack
-         Debug "*** FATAL ERROR: Local variable overflow at pc=" + Str(pc)
-         End
-      EndIf
    CompilerEndIf
 
+   ; V1.035.0: Get function slot from template
+   funcSlot = _FUNCSLOT
+   totalVars = _NPARAMS + _NLOCALS
+
    ; Save stack frame info
-   ; V1.031.105: Skip over ARRAYINFO opcodes when saving return address
-   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
-   gStack(gStackDepth)\sp = sp - _NPARAMS       ; Save sp BEFORE params were pushed
-   gStack(gStackDepth)\localBase = gLocalBase   ; Caller's localBase for restoration
-   gStack(gStackDepth)\localCount = _NPARAMS + _NLOCALS
+   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS  ; Skip ARRAYINFO opcodes
+   gStack(gStackDepth)\sp = sp - _NPARAMS           ; Save sp BEFORE params were pushed
+   gStack(gStackDepth)\funcSlot = funcSlot          ; Which function slot we're using
+   gStack(gStackDepth)\localCount = totalVars
 
-   ; V1.31.0: Set new frame base
-   gLocalBase = gLocalTop  ; New frame starts at current top
+   ; V1.034.64: Optimized with frame pool for fast recursion
+   ; Ensure at least 1 slot to avoid negative array size
+   Protected arraySize.i = totalVars
+   If arraySize < 1 : arraySize = 1 : EndIf
 
-   ; V1.31.0: Copy parameters from gEvalStack[] to gLocal[] (reverse order)
-   For i = 0 To _NPARAMS - 1
-      CopyStructure(gEvalStack(sp - 1 - i), gLocal(gLocalBase + i), stVTSimple)
-   Next
-
-   ; Pop parameters from evaluation stack
-   sp - _NPARAMS
-
-   ; V1.023.0: Preload non-parameter locals from function template
-   If _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      If gFuncTemplates(_FUNCID)\localCount > 0
-         For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-            CopyStructure(gFuncTemplates(_FUNCID)\template(i), gLocal(gLocalBase + _NPARAMS + i), stVTSimple)
-         Next
+   If gFuncActive(funcSlot)
+      ; Recursion: use pooled frame if available and fits, else allocate
+      If gFramePoolTop < gRecursionFrame And arraySize <= #FRAME_VAR_SIZE
+         *newFrame = *gFramePool(gFramePoolTop)
+         gFramePoolTop + 1
+         gStack(gStackDepth)\isPooled = #True       ; Pooled, return to pool
+         gStack(gStackDepth)\isAllocated = #False
+      Else
+         *newFrame = AllocateStructure(stVar)
+         ReDim *newFrame\var(arraySize - 1)
+         gStack(gStackDepth)\isPooled = #False
+         gStack(gStackDepth)\isAllocated = #True    ; Allocated, must free
       EndIf
+      gStack(gStackDepth)\savedFrame = *gVar(funcSlot)  ; Save original
+      *gVar(funcSlot) = *newFrame
+   Else
+      ; First call: allocate/resize existing slot only if needed
+      If Not *gVar(funcSlot)
+         *gVar(funcSlot) = AllocateStructure(stVar)
+         ReDim *gVar(funcSlot)\var(arraySize - 1)
+      ElseIf ArraySize(*gVar(funcSlot)\var()) < arraySize - 1
+         ReDim *gVar(funcSlot)\var(arraySize - 1)
+      EndIf
+      gStack(gStackDepth)\savedFrame = #Null
+      gStack(gStackDepth)\isPooled = #False
+      gStack(gStackDepth)\isAllocated = #False
+      gFuncActive(funcSlot) = #True
    EndIf
 
-   ; V1.31.0: Allocate local slots (advance gLocalTop)
-   gLocalTop + _NPARAMS + _NLOCALS
+   ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
+   ; V1.034.66: Also copy pointer fields for pointer parameter support
+   For i = 0 To _NPARAMS - 1
+      *gVar(funcSlot)\var(i)\i = gEvalStack(sp - 1 - i)\i
+      *gVar(funcSlot)\var(i)\f = gEvalStack(sp - 1 - i)\f
+      *gVar(funcSlot)\var(i)\ss = gEvalStack(sp - 1 - i)\ss
+      *gVar(funcSlot)\var(i)\ptr = gEvalStack(sp - 1 - i)\ptr
+      *gVar(funcSlot)\var(i)\ptrtype = gEvalStack(sp - 1 - i)\ptrtype
+   Next
+
+   ; Preload non-parameter locals from function template - only if there are locals
+   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
+      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
+         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
+      Next
+   EndIf
+
+   ; V1.035.0: Pop params from eval stack, set current function slot
+   sp = sp - _NPARAMS
+   gCurrentFuncSlot = funcSlot
+   gCallCount + 1
 
    ; Allocate local arrays using inline ARRAYINFO opcodes
    If _NLOCALARRAYS > 0
       CompilerIf #DEBUG
-         Debug "  Allocating " + Str(_NLOCALARRAYS) + " local arrays from inline ARRAYINFO"
+         Debug "  Allocating " + Str(_NLOCALARRAYS) + " local arrays"
       CompilerEndIf
       For i = 0 To _NLOCALARRAYS - 1
          If _ARRAYINFO_SIZE(i) > 0
-            ReDim gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
-            gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
-            CompilerIf #DEBUG
-               Debug "    Array[" + Str(i) + "] at slot " + Str(gLocalBase + _ARRAYINFO_OFFSET(i)) + " size=" + Str(_ARRAYINFO_SIZE(i))
-            CompilerEndIf
+            ReDim *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
+            *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
          EndIf
       Next
    EndIf
@@ -1240,10 +1290,12 @@ Procedure               C2CALL()
 
 EndProcedure
 
-; V1.033.12: Optimized CALL for 0 parameters - eliminates param copy loop
+; V1.035.0: Optimized CALL for 0 parameters - POINTER ARRAY ARCHITECTURE
 Procedure               C2CALL0()
    vm_DebugFunctionName()
    Define i.l
+   Define funcSlot.l, totalVars.l
+   Define *newFrame.stVar
 
    gStackDepth + 1
 
@@ -1254,31 +1306,330 @@ Procedure               C2CALL0()
       EndIf
    CompilerEndIf
 
-   ; Save stack frame (no params to account for in sp)
+   funcSlot = _FUNCSLOT
+   totalVars = _NLOCALS  ; 0 params
+
+   ; Save stack frame
    gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
-   gStack(gStackDepth)\sp = sp                        ; sp unchanged - no params
-   gStack(gStackDepth)\localBase = gLocalBase
-   gStack(gStackDepth)\localCount = _NLOCALS          ; 0 params + nLocals
+   gStack(gStackDepth)\sp = sp
+   gStack(gStackDepth)\funcSlot = funcSlot
+   gStack(gStackDepth)\localCount = totalVars
 
-   gLocalBase = gLocalTop
+   ; V1.034.64: Optimized with frame pool for fast recursion
+   Protected arraySize.i = totalVars
+   If arraySize < 1 : arraySize = 1 : EndIf
 
-   ; No parameter copy needed - skip straight to template preload
-   If _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      If gFuncTemplates(_FUNCID)\localCount > 0
-         For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-            CopyStructure(gFuncTemplates(_FUNCID)\template(i), gLocal(gLocalBase + i), stVTSimple)
-         Next
+   ; Handle recursion
+   If gFuncActive(funcSlot)
+      ; Recursion: use pooled frame if available and fits, else allocate
+      If gFramePoolTop < gRecursionFrame And arraySize <= #FRAME_VAR_SIZE
+         *newFrame = *gFramePool(gFramePoolTop)
+         gFramePoolTop + 1
+         gStack(gStackDepth)\isPooled = #True       ; Pooled, return to pool
+         gStack(gStackDepth)\isAllocated = #False
+      Else
+         *newFrame = AllocateStructure(stVar)
+         ReDim *newFrame\var(arraySize - 1)
+         gStack(gStackDepth)\isPooled = #False
+         gStack(gStackDepth)\isAllocated = #True    ; Allocated, must free
       EndIf
+      gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
+      *gVar(funcSlot) = *newFrame
+   Else
+      If Not *gVar(funcSlot)
+         *gVar(funcSlot) = AllocateStructure(stVar)
+         ReDim *gVar(funcSlot)\var(arraySize - 1)
+      ElseIf ArraySize(*gVar(funcSlot)\var()) < arraySize - 1
+         ReDim *gVar(funcSlot)\var(arraySize - 1)
+      EndIf
+      gStack(gStackDepth)\savedFrame = #Null
+      gStack(gStackDepth)\isPooled = #False
+      gStack(gStackDepth)\isAllocated = #False
+      gFuncActive(funcSlot) = #True
    EndIf
 
-   gLocalTop + _NLOCALS
+   ; Template preload (no params) - only if there are locals
+   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
+      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
+         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(i), stVTSimple)
+      Next
+   EndIf
+
+   gCurrentFuncSlot = funcSlot
+   gCall0Count + 1
+
+   CompilerIf #DEBUG
+      Debug "CALL0: at pc=" + Str(pc) + " funcSlot=" + Str(funcSlot) + " jumping to pc=" + Str(_PCADDR) + " nArr=" + Str(_NLOCALARRAYS)
+   CompilerEndIf
+
+   ; Allocate local arrays
+   If _NLOCALARRAYS > 0
+      CompilerIf #DEBUG
+         Debug "CALL0: Allocating " + Str(_NLOCALARRAYS) + " local arrays at pc=" + Str(pc) + " funcSlot=" + Str(funcSlot)
+      CompilerEndIf
+      For i = 0 To _NLOCALARRAYS - 1
+         CompilerIf #DEBUG
+            Debug "  Array " + Str(i) + ": offset=" + Str(_ARRAYINFO_OFFSET(i)) + " size=" + Str(_ARRAYINFO_SIZE(i))
+         CompilerEndIf
+         If _ARRAYINFO_SIZE(i) > 0
+            ReDim *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
+            *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
+            CompilerIf #DEBUG
+               Debug "    Allocated: dta.size=" + Str(*gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size)
+            CompilerEndIf
+         EndIf
+      Next
+   EndIf
+
+   pc = _PCADDR
+   gFunctionDepth + 1
+EndProcedure
+
+; V1.035.0: Optimized CALL for 1 parameter - POINTER ARRAY ARCHITECTURE
+Procedure               C2CALL1()
+   vm_DebugFunctionName()
+   Define i.l
+   Define funcSlot.l, totalVars.l
+   Define *newFrame.stVar
+
+   gStackDepth + 1
+
+   CompilerIf #DEBUG
+      If gStackDepth >= gFunctionStack
+         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
+         End
+      EndIf
+   CompilerEndIf
+
+   funcSlot = _FUNCSLOT
+   totalVars = 1 + _NLOCALS  ; Always >= 1, no size check needed
+
+   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
+   gStack(gStackDepth)\sp = sp - 1
+   gStack(gStackDepth)\funcSlot = funcSlot
+   gStack(gStackDepth)\localCount = totalVars
+
+   ; Handle recursion - V1.034.64: Optimized with frame pool for fast recursion
+   If gFuncActive(funcSlot)
+      ; Recursion: use pooled frame if available and fits, else allocate
+      If gFramePoolTop < gRecursionFrame And totalVars <= #FRAME_VAR_SIZE
+         *newFrame = *gFramePool(gFramePoolTop)
+         gFramePoolTop + 1
+         gStack(gStackDepth)\isPooled = #True       ; Pooled, return to pool
+         gStack(gStackDepth)\isAllocated = #False
+      Else
+         *newFrame = AllocateStructure(stVar)
+         ReDim *newFrame\var(totalVars - 1)
+         gStack(gStackDepth)\isPooled = #False
+         gStack(gStackDepth)\isAllocated = #True    ; Allocated, must free
+      EndIf
+      gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
+      *gVar(funcSlot) = *newFrame
+   Else
+      If Not *gVar(funcSlot)
+         *gVar(funcSlot) = AllocateStructure(stVar)
+         ReDim *gVar(funcSlot)\var(totalVars - 1)
+      ElseIf ArraySize(*gVar(funcSlot)\var()) < totalVars - 1
+         ReDim *gVar(funcSlot)\var(totalVars - 1)
+      EndIf
+      gStack(gStackDepth)\savedFrame = #Null
+      gStack(gStackDepth)\isPooled = #False
+      gStack(gStackDepth)\isAllocated = #False
+      gFuncActive(funcSlot) = #True
+   EndIf
+
+   ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
+   ; V1.034.66: Also copy pointer fields for pointer parameter support
+   *gVar(funcSlot)\var(0)\i = gEvalStack(sp - 1)\i
+   *gVar(funcSlot)\var(0)\f = gEvalStack(sp - 1)\f
+   *gVar(funcSlot)\var(0)\ss = gEvalStack(sp - 1)\ss
+   *gVar(funcSlot)\var(0)\ptr = gEvalStack(sp - 1)\ptr
+   *gVar(funcSlot)\var(0)\ptrtype = gEvalStack(sp - 1)\ptrtype
+
+   ; Template preload - only if there are locals beyond params
+   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
+      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
+         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(1 + i), stVTSimple)
+      Next
+   EndIf
+
+   sp = sp - 1
+   gCurrentFuncSlot = funcSlot
+
+   If _NLOCALARRAYS > 0
+      For i = 0 To _NLOCALARRAYS - 1
+         If _ARRAYINFO_SIZE(i) > 0
+            ReDim *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
+            *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
+         EndIf
+      Next
+   EndIf
+
+   pc = _PCADDR
+   gFunctionDepth + 1
+EndProcedure
+
+; V1.035.0: Optimized CALL for 2 parameters - POINTER ARRAY ARCHITECTURE
+Procedure               C2CALL2()
+   vm_DebugFunctionName()
+   Define i.l
+   Define funcSlot.l, totalVars.l
+   Define *newFrame.stVar
+
+   gStackDepth + 1
+
+   CompilerIf #DEBUG
+      If gStackDepth >= gFunctionStack
+         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
+         End
+      EndIf
+   CompilerEndIf
+
+   funcSlot = _FUNCSLOT
+   totalVars = 2 + _NLOCALS  ; Always >= 2, no size check needed
+
+   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
+   gStack(gStackDepth)\sp = sp - 2
+   gStack(gStackDepth)\funcSlot = funcSlot
+   gStack(gStackDepth)\localCount = totalVars
+
+   ; Handle recursion - V1.034.64: Optimized with frame pool for fast recursion
+   If gFuncActive(funcSlot)
+      ; Recursion: use pooled frame if available and fits, else allocate
+      If gFramePoolTop < gRecursionFrame And totalVars <= #FRAME_VAR_SIZE
+         *newFrame = *gFramePool(gFramePoolTop)
+         gFramePoolTop + 1
+         gStack(gStackDepth)\isPooled = #True       ; Pooled, return to pool
+         gStack(gStackDepth)\isAllocated = #False
+      Else
+         *newFrame = AllocateStructure(stVar)
+         ReDim *newFrame\var(totalVars - 1)
+         gStack(gStackDepth)\isPooled = #False
+         gStack(gStackDepth)\isAllocated = #True    ; Allocated, must free
+      EndIf
+      gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
+      *gVar(funcSlot) = *newFrame
+   Else
+      If Not *gVar(funcSlot)
+         *gVar(funcSlot) = AllocateStructure(stVar)
+         ReDim *gVar(funcSlot)\var(totalVars - 1)
+      ElseIf ArraySize(*gVar(funcSlot)\var()) < totalVars - 1
+         ReDim *gVar(funcSlot)\var(totalVars - 1)
+      EndIf
+      gStack(gStackDepth)\savedFrame = #Null
+      gStack(gStackDepth)\isPooled = #False
+      gStack(gStackDepth)\isAllocated = #False
+      gFuncActive(funcSlot) = #True
+   EndIf
+
+   ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
+   ; V1.034.66: Also copy pointer fields for pointer parameter support
+   *gVar(funcSlot)\var(0)\i = gEvalStack(sp - 1)\i
+   *gVar(funcSlot)\var(0)\f = gEvalStack(sp - 1)\f
+   *gVar(funcSlot)\var(0)\ss = gEvalStack(sp - 1)\ss
+   *gVar(funcSlot)\var(0)\ptr = gEvalStack(sp - 1)\ptr
+   *gVar(funcSlot)\var(0)\ptrtype = gEvalStack(sp - 1)\ptrtype
+   *gVar(funcSlot)\var(1)\i = gEvalStack(sp - 2)\i
+   *gVar(funcSlot)\var(1)\f = gEvalStack(sp - 2)\f
+   *gVar(funcSlot)\var(1)\ss = gEvalStack(sp - 2)\ss
+   *gVar(funcSlot)\var(1)\ptr = gEvalStack(sp - 2)\ptr
+   *gVar(funcSlot)\var(1)\ptrtype = gEvalStack(sp - 2)\ptrtype
+
+   ; Template preload - only if there are locals beyond params
+   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
+      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
+         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(2 + i), stVTSimple)
+      Next
+   EndIf
+
+   sp = sp - 2
+   gCurrentFuncSlot = funcSlot
+
+   If _NLOCALARRAYS > 0
+      For i = 0 To _NLOCALARRAYS - 1
+         If _ARRAYINFO_SIZE(i) > 0
+            ReDim *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
+            *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
+         EndIf
+      Next
+   EndIf
+
+   pc = _PCADDR
+   gFunctionDepth + 1
+EndProcedure
+
+; V1.034.65: CALL_REC - Optimized recursive call (always uses frame pool)
+; Used by compiler when function calls itself directly
+; No gFuncActive check needed - we KNOW the function is active (it's calling itself)
+Procedure               C2CALL_REC()
+   vm_DebugFunctionName()
+   Define i.l
+   Define funcSlot.l, totalVars.l
+   Define *newFrame.stVar
+
+   gStackDepth + 1
+
+   CompilerIf #DEBUG
+      If gStackDepth >= gFunctionStack
+         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
+         End
+      EndIf
+   CompilerEndIf
+
+   funcSlot = _FUNCSLOT
+   totalVars = _NPARAMS + _NLOCALS
+
+   ; Save stack frame
+   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
+   gStack(gStackDepth)\sp = sp - _NPARAMS
+   gStack(gStackDepth)\funcSlot = funcSlot
+   gStack(gStackDepth)\localCount = totalVars
+
+   ; Always use frame pool for recursive calls (fast path)
+   Protected arraySize.i = totalVars
+   If arraySize < 1 : arraySize = 1 : EndIf
+
+   If gFramePoolTop < gRecursionFrame And arraySize <= #FRAME_VAR_SIZE
+      *newFrame = *gFramePool(gFramePoolTop)
+      gFramePoolTop + 1
+      gStack(gStackDepth)\isPooled = #True
+      gStack(gStackDepth)\isAllocated = #False
+   Else
+      ; Pool exhausted or frame too large - allocate dynamically
+      *newFrame = AllocateStructure(stVar)
+      ReDim *newFrame\var(arraySize - 1)
+      gStack(gStackDepth)\isPooled = #False
+      gStack(gStackDepth)\isAllocated = #True
+   EndIf
+   gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
+   *gVar(funcSlot) = *newFrame
+
+   ; Copy params from eval stack
+   ; V1.034.66: Also copy pointer fields for pointer parameter support
+   For i = 0 To _NPARAMS - 1
+      *gVar(funcSlot)\var(i)\i = gEvalStack(sp - 1 - i)\i
+      *gVar(funcSlot)\var(i)\f = gEvalStack(sp - 1 - i)\f
+      *gVar(funcSlot)\var(i)\ss = gEvalStack(sp - 1 - i)\ss
+      *gVar(funcSlot)\var(i)\ptr = gEvalStack(sp - 1 - i)\ptr
+      *gVar(funcSlot)\var(i)\ptrtype = gEvalStack(sp - 1 - i)\ptrtype
+   Next
+
+   ; Preload locals from template
+   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
+      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
+         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
+      Next
+   EndIf
+
+   sp = sp - _NPARAMS
+   gCurrentFuncSlot = funcSlot
 
    ; Allocate local arrays
    If _NLOCALARRAYS > 0
       For i = 0 To _NLOCALARRAYS - 1
          If _ARRAYINFO_SIZE(i) > 0
-            ReDim gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
-            gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
+            ReDim *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
+            *gVar(funcSlot)\var(_ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
          EndIf
       Next
    EndIf
@@ -1287,134 +1638,65 @@ Procedure               C2CALL0()
    gFunctionDepth + 1
 EndProcedure
 
-; V1.033.12: Optimized CALL for 1 parameter - direct copy, no loop
-Procedure               C2CALL1()
-   vm_DebugFunctionName()
-   Define i.l
-
-   gStackDepth + 1
-
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
-   gStack(gStackDepth)\sp = sp - 1                    ; 1 param
-   gStack(gStackDepth)\localBase = gLocalBase
-   gStack(gStackDepth)\localCount = 1 + _NLOCALS
-
-   gLocalBase = gLocalTop
-
-   ; Direct copy of 1 param (no loop)
-   CopyStructure(gEvalStack(sp - 1), gLocal(gLocalBase), stVTSimple)
-   sp - 1
-
-   ; Template preload
-   If _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      If gFuncTemplates(_FUNCID)\localCount > 0
-         For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-            CopyStructure(gFuncTemplates(_FUNCID)\template(i), gLocal(gLocalBase + 1 + i), stVTSimple)
-         Next
-      EndIf
-   EndIf
-
-   gLocalTop + 1 + _NLOCALS
-
-   If _NLOCALARRAYS > 0
-      For i = 0 To _NLOCALARRAYS - 1
-         If _ARRAYINFO_SIZE(i) > 0
-            ReDim gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
-            gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
-         EndIf
-      Next
-   EndIf
-
-   pc = _PCADDR
-   gFunctionDepth + 1
-EndProcedure
-
-; V1.033.12: Optimized CALL for 2 parameters - unrolled copy
-Procedure               C2CALL2()
-   vm_DebugFunctionName()
-   Define i.l
-
-   gStackDepth + 1
-
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
-   gStack(gStackDepth)\sp = sp - 2                    ; 2 params
-   gStack(gStackDepth)\localBase = gLocalBase
-   gStack(gStackDepth)\localCount = 2 + _NLOCALS
-
-   gLocalBase = gLocalTop
-
-   ; Unrolled copy of 2 params (no loop)
-   CopyStructure(gEvalStack(sp - 1), gLocal(gLocalBase), stVTSimple)      ; param 0
-   CopyStructure(gEvalStack(sp - 2), gLocal(gLocalBase + 1), stVTSimple)  ; param 1
-   sp - 2
-
-   ; Template preload
-   If _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      If gFuncTemplates(_FUNCID)\localCount > 0
-         For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-            CopyStructure(gFuncTemplates(_FUNCID)\template(i), gLocal(gLocalBase + 2 + i), stVTSimple)
-         Next
-      EndIf
-   EndIf
-
-   gLocalTop + 2 + _NLOCALS
-
-   If _NLOCALARRAYS > 0
-      For i = 0 To _NLOCALARRAYS - 1
-         If _ARRAYINFO_SIZE(i) > 0
-            ReDim gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\ar(_ARRAYINFO_SIZE(i) - 1)
-            gLocal(gLocalBase + _ARRAYINFO_OFFSET(i))\dta\size = _ARRAYINFO_SIZE(i)
-         EndIf
-      Next
-   EndIf
-
-   pc = _PCADDR
-   gFunctionDepth + 1
-EndProcedure
-
-; V1.031.106: Macro for common cleanup of local slots
-Macro _CLEANUP_LOCALS(baseSlot, count)
+; V1.035.0: POINTER ARRAY ARCHITECTURE - cleanup macro for function locals
+Macro _CLEANUP_FUNC_LOCALS(funcSlot, count)
    For _i = 0 To (count) - 1
-      gLocal((baseSlot) + _i)\ss = ""
-      If gLocal((baseSlot) + _i)\dta\size > 0
-         ReDim gLocal((baseSlot) + _i)\dta\ar(0)
-         gLocal((baseSlot) + _i)\dta\size = 0
+      *gVar(funcSlot)\var(_i)\ss = ""
+      If *gVar(funcSlot)\var(_i)\dta\size > 0
+         ReDim *gVar(funcSlot)\var(_i)\dta\ar(0)
+         *gVar(funcSlot)\var(_i)\dta\size = 0
       EndIf
    Next
 EndMacro
 
 Procedure               C2Return()
-   ; V1.031.106: Refactored to use macros
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
    vm_DebugFunctionName()
-   Define _i.l, _retval.i = 0, _savedBase.l = gLocalBase
+   Define _i.l, _retval.i = 0
+   Define funcSlot.l, *savedFrame.stVar
 
-   ; Save return value before cleanup
-   If sp > 0 : _retval = _POPI : EndIf
+   ; Get return value from eval stack if present
+   If sp > gStack(gStackDepth)\sp
+      _retval = _POPI
+   EndIf
+
+   ; Get function slot from stack frame
+   funcSlot = gStack(gStackDepth)\funcSlot
+
+   CompilerIf #DEBUG
+      Debug "RETURN: from funcSlot=" + Str(funcSlot) + " returning to pc=" + Str(gStack(gStackDepth)\pc) + " depth=" + Str(gStackDepth)
+   CompilerEndIf
+
+   ; Clear local slots (strings/arrays for GC)
+   _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
 
    ; Restore caller's pc and sp
    pc = gStack(gStackDepth)\pc
    sp = gStack(gStackDepth)\sp
 
-   ; Clear local slots (strings/arrays for GC)
-   _CLEANUP_LOCALS(_savedBase, gStack(gStackDepth)\localCount)
+   ; V1.034.64: Handle recursion cleanup with frame pool support
+   If gStack(gStackDepth)\isPooled
+      ; Pooled frame - return to pool
+      gFramePoolTop - 1
+      *savedFrame = gStack(gStackDepth)\savedFrame
+      *gVar(funcSlot) = *savedFrame
+   ElseIf gStack(gStackDepth)\isAllocated
+      ; Dynamically allocated frame - free it and restore original
+      *savedFrame = gStack(gStackDepth)\savedFrame
+      FreeStructure(*gVar(funcSlot))
+      *gVar(funcSlot) = *savedFrame
+   Else
+      ; First call frame - mark slot as inactive
+      gFuncActive(funcSlot) = #False
+   EndIf
 
-   ; Restore frame pointers and decrement depth
-   gLocalTop = _savedBase
-   gLocalBase = gStack(gStackDepth)\localBase
+   ; Restore caller's function slot (or 0 if returning to global)
+   If gStackDepth > 0
+      gCurrentFuncSlot = gStack(gStackDepth - 1)\funcSlot
+   Else
+      gCurrentFuncSlot = 0
+   EndIf
+
    gStackDepth - 1
    gFunctionDepth - 1
 
@@ -1424,53 +1706,88 @@ Procedure               C2Return()
 EndProcedure
 
 Procedure               C2ReturnF()
-   ; V1.031.106: Refactored to use macros
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
    vm_DebugFunctionName()
-   Define _i.l, _retval.d = 0.0, _savedBase.l = gLocalBase
+   Define _i.l, _retval.d = 0.0
+   Define funcSlot.l, *savedFrame.stVar
 
-   ; Save return value before cleanup
-   If sp > 0 : _retval = _POPF : EndIf
+   ; Get return value from eval stack if present
+   If sp > gStack(gStackDepth)\sp
+      _retval = _POPF
+   EndIf
 
-   ; Restore caller's pc and sp
+   funcSlot = gStack(gStackDepth)\funcSlot
+
+   CompilerIf #DEBUG
+      ;PrintN("RETURNF: from funcSlot=" + Str(funcSlot) + " returning to pc=" + Str(gStack(gStackDepth)\pc) + " depth=" + Str(gStackDepth))
+   CompilerEndIf
+
+   _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+
    pc = gStack(gStackDepth)\pc
    sp = gStack(gStackDepth)\sp
 
-   ; Clear local slots (strings/arrays for GC)
-   _CLEANUP_LOCALS(_savedBase, gStack(gStackDepth)\localCount)
+   ; V1.034.64: Handle recursion cleanup with frame pool support
+   If gStack(gStackDepth)\isPooled
+      ; Pooled frame - return to pool
+      gFramePoolTop - 1
+      *savedFrame = gStack(gStackDepth)\savedFrame
+      *gVar(funcSlot) = *savedFrame
+   ElseIf gStack(gStackDepth)\isAllocated
+      *savedFrame = gStack(gStackDepth)\savedFrame
+      FreeStructure(*gVar(funcSlot))
+      *gVar(funcSlot) = *savedFrame
+   Else
+      gFuncActive(funcSlot) = #False
+   EndIf
 
-   ; Restore frame pointers and decrement depth
-   gLocalTop = _savedBase
-   gLocalBase = gStack(gStackDepth)\localBase
+   If gStackDepth > 0
+      gCurrentFuncSlot = gStack(gStackDepth - 1)\funcSlot
+   Else
+      gCurrentFuncSlot = 0
+   EndIf
+
    gStackDepth - 1
    gFunctionDepth - 1
 
-   ; Push return value
    gEvalStack(sp)\f = _retval
    sp + 1
 EndProcedure
 
 Procedure               C2ReturnS()
-   ; V1.031.106: Refactored to use macros
+   ; V1.035.0: POINTER ARRAY ARCHITECTURE
    vm_DebugFunctionName()
-   Define _i.l, _retval.s = "", _savedBase.l = gLocalBase
+   Define _i.l, _retval.s = ""
+   Define funcSlot.l, *savedFrame.stVar
 
-   ; Save return value before cleanup
-   If sp > 0 : _retval = _POPS : EndIf
+   ; Get return value from eval stack if present
+   If sp > gStack(gStackDepth)\sp
+      _retval = _POPS
+   EndIf
 
-   ; Restore caller's pc and sp
+   funcSlot = gStack(gStackDepth)\funcSlot
+   _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+
    pc = gStack(gStackDepth)\pc
    sp = gStack(gStackDepth)\sp
 
-   ; Clear local slots (strings/arrays for GC)
-   _CLEANUP_LOCALS(_savedBase, gStack(gStackDepth)\localCount)
+   If gStack(gStackDepth)\isAllocated
+      *savedFrame = gStack(gStackDepth)\savedFrame
+      FreeStructure(*gVar(funcSlot))
+      *gVar(funcSlot) = *savedFrame
+   Else
+      gFuncActive(funcSlot) = #False
+   EndIf
 
-   ; Restore frame pointers and decrement depth
-   gLocalTop = _savedBase
-   gLocalBase = gStack(gStackDepth)\localBase
+   If gStackDepth > 0
+      gCurrentFuncSlot = gStack(gStackDepth - 1)\funcSlot
+   Else
+      gCurrentFuncSlot = 0
+   EndIf
+
    gStackDepth - 1
    gFunctionDepth - 1
 
-   ; Push return value
    gEvalStack(sp)\ss = _retval
    sp + 1
 EndProcedure
@@ -1507,9 +1824,9 @@ XIncludeFile "c2-collections-v03.pbi"
 ;- End VM functions
 
 ; IDE Options = PureBasic 6.21 (Windows - x64)
-; CursorPosition = 1079
-; FirstLine = 1054
-; Folding = -------------------------
+; CursorPosition = 266
+; FirstLine = 256
+; Folding = ------------------------------
 ; EnableAsm
 ; EnableThread
 ; EnableXP

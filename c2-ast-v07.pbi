@@ -1,4 +1,4 @@
-; -- lexical parser to VM for a simplified C Language
+﻿; -- lexical parser to VM for a simplified C Language
 ; Tested in UTF8
 ; PBx64 v6.20
 ;
@@ -185,7 +185,10 @@
 
                If TOKEN()\TokenExtra = #ljLeftParent
                   ; It's a built-in function call
+                  ; V1.034.68: Save both opcode AND returnType BEFORE expand_params
+                  ; expand_params may call expr() recursively, which can change mapBuiltins position
                   Protected builtinOpcode.i = mapBuiltins()\opcode
+                  Protected builtinReturnType.w = mapBuiltins()\returnType
                   *e = expand_params(#ljPush, -1)  ; -1 for built-ins
 
                   ; V1.026.8: PUSH_SLOT wrapping removed - collection functions now use
@@ -195,6 +198,7 @@
 
                   *node = Makeleaf(#ljCall, Str(builtinOpcode))  ; Use #ljCall with opcode as value
                   *node\paramCount = gLastExpandParamsCount
+                  *node\TypeHint = builtinReturnType  ; V1.034.68: Use saved value (map position may have changed)
                   *p = MakeNode(#ljSEQ, *e, *node)
                Else
                   ; Not a function call, restore position and treat as variable
@@ -279,14 +283,8 @@
                         Protected saFoundField.b = #False
                         Protected saFieldStructType.s = ""  ; V1.022.49: For nested structs
 
-                        ; Find array variable slot
-                        Protected saIdx.i
-                        For saIdx = 0 To gnLastVariable - 1
-                           If LCase(gVarMeta(saIdx)\name) = LCase(identName)
-                              saVarSlot = saIdx
-                              Break
-                           EndIf
-                        Next
+                        ; V1.034.2: Find array variable slot - O(1) lookup
+                        saVarSlot = FindVariableSlotByName(identName, gCurrentFunctionName)
 
                         ; Check if it's a struct array
                         If saVarSlot >= 0 And gVarMeta(saVarSlot)\structType <> ""
@@ -457,45 +455,21 @@
                      Protected structFieldName.s = TOKEN()\value
                      Protected structVarSlot.i = -1
                      Protected structVarIdx.i
-                     Protected mangledStructName.s = ""
 
-                     ; V1.022.123: Search for struct variable - LOCAL (mangled) name FIRST, then global
-                     ; Skip slot 0 (reserved for ?discard?)
-                     If gCurrentFunctionName <> ""
-                        mangledStructName = gCurrentFunctionName + "_" + identName
-                        For structVarIdx = 1 To gnLastVariable - 1
-                           If LCase(gVarMeta(structVarIdx)\name) = LCase(mangledStructName) And (gVarMeta(structVarIdx)\flags & #C2FLAG_STRUCT)
-                              structVarSlot = structVarIdx
-                              Break
-                           EndIf
-                        Next
-                     EndIf
-
-                     ; V1.022.123: If not found as local, search for global struct (skip slot 0)
-                     If structVarSlot < 0
-                        CompilerIf #DEBUG
-                           Debug "AST struct field search: looking for '" + identName + "' with STRUCT flag in slots 1 to " + Str(gnLastVariable - 1)
-                        CompilerEndIf
-                        For structVarIdx = 1 To gnLastVariable - 1
-                           If LCase(gVarMeta(structVarIdx)\name) = LCase(identName) And (gVarMeta(structVarIdx)\flags & #C2FLAG_STRUCT)
-                              structVarSlot = structVarIdx
-                              CompilerIf #DEBUG
-                                 Debug "AST struct field search: FOUND at slot " + Str(structVarSlot) + " structType='" + gVarMeta(structVarSlot)\structType + "'"
-                              CompilerEndIf
-                              Break
-                           EndIf
-                        Next
-                        CompilerIf #DEBUG
-                           If structVarSlot < 0
-                              Debug "AST struct field search: NOT FOUND - checking if name exists without STRUCT flag..."
-                              For structVarIdx = 1 To gnLastVariable - 1
-                                 If LCase(gVarMeta(structVarIdx)\name) = LCase(identName)
-                                    Debug "  Found name at slot " + Str(structVarIdx) + " but flags=" + Str(gVarMeta(structVarIdx)\flags) + " (STRUCT=" + Str(#C2FLAG_STRUCT) + ")"
-                                 EndIf
-                              Next
-                           EndIf
-                        CompilerEndIf
-                     EndIf
+                     ; V1.034.2: O(1) lookup for struct variable (local first, then global)
+                     structVarSlot = FindStructSlotByName(identName, gCurrentFunctionName)
+                     CompilerIf #DEBUG
+                        If structVarSlot >= 0
+                           Debug "AST struct field search: FOUND at slot " + Str(structVarSlot) + " structType='" + gVarMeta(structVarSlot)\structType + "'"
+                        Else
+                           Debug "AST struct field search: NOT FOUND - checking if name exists without STRUCT flag..."
+                           For structVarIdx = 1 To gnLastVariable - 1
+                              If LCase(gVarMeta(structVarIdx)\name) = LCase(identName)
+                                 Debug "  Found name at slot " + Str(structVarIdx) + " but flags=" + Str(gVarMeta(structVarIdx)\flags) + " (STRUCT=" + Str(#C2FLAG_STRUCT) + ")"
+                              EndIf
+                           Next
+                        EndIf
+                     CompilerEndIf
 
                      If structVarSlot >= 0
                         ; Found struct variable - look up field
@@ -665,23 +639,20 @@
                         ; (they're only created during codegen). Searching here can match
                         ; wrong slots due to uninitialized data. Codegen will resolve correctly.
                         If gCurrentFunctionName = ""
-                           ; Global scope: search for GLOBAL pointer/struct variables only
-                           For structVarIdx = 1 To gnLastVariable - 1  ; Skip slot 0 (reserved)
-                              If LCase(gVarMeta(structVarIdx)\name) = LCase(identName)
-                                 ; V1.029.40: Check for struct pointer OR struct variable
-                                 If gVarMeta(structVarIdx)\pointsToStructType <> ""
-                                    ; Struct pointer: ptr\field
-                                    ptrVarSlot = structVarIdx
-                                    ptrStructTypeName = gVarMeta(structVarIdx)\pointsToStructType
-                                    Break
-                                 ElseIf gVarMeta(structVarIdx)\structType <> ""
-                                    ; Struct variable: var\field (direct field access)
-                                    ptrVarSlot = structVarIdx
-                                    ptrStructTypeName = gVarMeta(structVarIdx)\structType
-                                    Break
-                                 EndIf
+                           ; V1.034.2: Global scope - O(1) lookup for pointer/struct variables
+                           Protected ptrSearchSlot.i = FindVariableSlotByName(identName, "")
+                           If ptrSearchSlot > 0  ; Skip slot 0
+                              ; V1.029.40: Check for struct pointer OR struct variable
+                              If gVarMeta(ptrSearchSlot)\pointsToStructType <> ""
+                                 ; Struct pointer: ptr\field
+                                 ptrVarSlot = ptrSearchSlot
+                                 ptrStructTypeName = gVarMeta(ptrSearchSlot)\pointsToStructType
+                              ElseIf gVarMeta(ptrSearchSlot)\structType <> ""
+                                 ; Struct variable: var\field (direct field access)
+                                 ptrVarSlot = ptrSearchSlot
+                                 ptrStructTypeName = gVarMeta(ptrSearchSlot)\structType
                               EndIf
-                           Next
+                           EndIf
                         EndIf
                         ; Inside functions: ptrVarSlot stays -1, forcing deferred path
 
@@ -970,15 +941,9 @@
                               epMangledName = epBaseName
                            EndIf
 
-                           ; Check if variable already exists (case-insensitive)
-                           epBaseSlot = -1
-                           Protected epSearchIdx.i
-                           For epSearchIdx = 0 To gnLastVariable - 1
-                              If LCase(gVarMeta(epSearchIdx)\name) = LCase(epMangledName)
-                                 epBaseSlot = epSearchIdx
-                                 Break
-                              EndIf
-                           Next
+                           ; V1.034.2: Check if variable already exists - O(1) lookup
+                           ; Note: epMangledName is already mangled, so search with empty context
+                           epBaseSlot = FindVariableSlotByName(epMangledName, "")
 
                            ; Create if not exists
                            If epBaseSlot < 0
@@ -1329,7 +1294,7 @@
                newTypeFlag = #C2FLAG_INT
             EndIf
 
-            ; V1.022.79: Search for existing array to resize
+            ; V1.034.2: Search for existing array to resize - O(1) lookup
             ; When inside a function, only check for local arrays (mangled names)
             ; When at global scope, check for global arrays (paramOffset = -1)
             ; A local array declaration should NOT match a global array - it shadows it
@@ -1337,21 +1302,15 @@
             If gCurrentFunctionName <> ""
                ; Inside a function - only check for existing LOCAL array with same name
                mangledArrayName = gCurrentFunctionName + "_" + arrayName
-               For i = 0 To gnLastVariable - 1
-                  If LCase(gVarMeta(i)\name) = LCase(mangledArrayName)
-                     existingSlot = i
-                     Break
-                  EndIf
-               Next
+               existingSlot = FindVariableSlotByName(mangledArrayName, "")
                ; NOTE: We do NOT check global arrays here - local arrays shadow globals
             Else
                ; At global scope - check for existing global array
-               For i = 0 To gnLastVariable - 1
-                  If LCase(gVarMeta(i)\name) = LCase(searchArrayName) And gVarMeta(i)\paramOffset = -1
-                     existingSlot = i
-                     Break
-                  EndIf
-               Next
+               existingSlot = FindVariableSlotByName(searchArrayName, "")
+               ; Verify it's actually a global (paramOffset = -1)
+               If existingSlot >= 0 And gVarMeta(existingSlot)\paramOffset <> -1
+                  existingSlot = -1  ; Not a global, ignore
+               EndIf
             EndIf
 
             ; If variable exists, check if it's an array and validate types
@@ -2387,7 +2346,13 @@
                ; It's a function call - parse as expression statement (result is discarded)
                SelectElement(llTokenList(), savedListIndex2)
                *e = expr(0)
-               *p = *e
+               ; V1.034.0: For non-void functions, wrap in SEQ with POP to discard return value
+               ; Check if right child (Call node) has non-zero TypeHint (return type)
+               If *e And *e\right And *e\right\TypeHint <> 0
+                  *p = MakeNode(#ljSEQ, *e, Makeleaf(#ljPOP, "0"))
+               Else
+                  *p = *e
+               EndIf
                Expect("Statement", #ljSemi)
             ElseIf TOKEN()\TokenExtra = #ljINC Or TOKEN()\TokenExtra = #ljDEC
                ; It's standalone increment/decrement - parse as expression and discard result
@@ -2547,15 +2512,9 @@
                         Protected aosStmtArrayName.s = *v\left\value
                         Protected aosStmtArraySlot.i = -1
                         Protected aosStmtStructType.s = ""
-                        Protected aosStmtIdx.i
 
-                        ; Find array variable
-                        For aosStmtIdx = 0 To gnLastVariable - 1
-                           If LCase(gVarMeta(aosStmtIdx)\name) = LCase(aosStmtArrayName)
-                              aosStmtArraySlot = aosStmtIdx
-                              Break
-                           EndIf
-                        Next
+                        ; V1.034.2: Find array variable - O(1) lookup
+                        aosStmtArraySlot = FindVariableSlotByName(aosStmtArrayName, gCurrentFunctionName)
 
                         ; Check if it's a struct array
                         If aosStmtArraySlot >= 0 And gVarMeta(aosStmtArraySlot)\structType <> ""
@@ -2663,15 +2622,8 @@
                                  If gCurrentFunctionName <> ""
                                     stmtAutoCreateName = gCurrentFunctionName + "_" + stmtTypeBaseName
                                  EndIf
-                                 ; Check if variable already exists
-                                 Protected stmtAutoSlot.i = -1
-                                 Protected stmtAutoIdx.i
-                                 For stmtAutoIdx = 1 To gnLastVariable - 1
-                                    If LCase(gVarMeta(stmtAutoIdx)\name) = LCase(stmtAutoCreateName)
-                                       stmtAutoSlot = stmtAutoIdx
-                                       Break
-                                    EndIf
-                                 Next
+                                 ; V1.034.2: Check if variable already exists - O(1) lookup
+                                 Protected stmtAutoSlot.i = FindVariableSlotByName(stmtAutoCreateName, "")
                                  ; Create if not exists
                                  If stmtAutoSlot < 0
                                     stmtAutoSlot = gnLastVariable
@@ -2692,27 +2644,8 @@
                            EndIf
                         EndIf
 
-                        ; V1.022.123: Search for struct variable - LOCAL (mangled) name FIRST, then global
-                        ; Skip slot 0 (reserved for ?discard?)
-                        If gCurrentFunctionName <> ""
-                           stmtMangledStructName = gCurrentFunctionName + "_" + stmtStructVarName
-                           For stmtStructVarIdx = 1 To gnLastVariable - 1
-                              If LCase(gVarMeta(stmtStructVarIdx)\name) = LCase(stmtMangledStructName) And (gVarMeta(stmtStructVarIdx)\flags & #C2FLAG_STRUCT)
-                                 stmtStructVarSlot = stmtStructVarIdx
-                                 Break
-                              EndIf
-                           Next
-                        EndIf
-
-                        ; V1.022.123: If not found as local, search for global struct (skip slot 0)
-                        If stmtStructVarSlot < 0
-                           For stmtStructVarIdx = 1 To gnLastVariable - 1
-                              If LCase(gVarMeta(stmtStructVarIdx)\name) = LCase(stmtStructVarName) And (gVarMeta(stmtStructVarIdx)\flags & #C2FLAG_STRUCT)
-                                 stmtStructVarSlot = stmtStructVarIdx
-                                 Break
-                              EndIf
-                           Next
-                        EndIf
+                        ; V1.034.2: O(1) lookup for struct variable (local first, then global)
+                        stmtStructVarSlot = FindStructSlotByName(stmtStructVarName, gCurrentFunctionName)
 
                         If stmtStructVarSlot >= 0
                         ; Found struct variable - look up field
@@ -3293,6 +3226,38 @@
             *updateBody = MakeNode(#ljSEQ, *update, *s)
             *condUpdateBody = MakeNode(#ljSEQ, *cond, *updateBody)
             *p = MakeNode(#ljFOR, *init, *condUpdateBody)
+
+         ; V1.034.6: foreach loop for lists and maps
+         ; Syntax: foreach listOrMap { ... }
+         ; OR: foreach (listOrMap) { ... }
+         ; Creates scoped iterator on stack - nested loops work correctly
+         Case #ljFOREACH
+            NextToken()
+            ; Optional parentheses around list/map name
+            hasParen = #False
+            If TOKEN()\TokenExtra = #ljLeftParent
+               hasParen = #True
+               NextToken()
+            EndIf
+
+            ; Parse the list/map expression (typically just an identifier)
+            *e = expr(0)
+
+            ; Close paren if opened
+            If hasParen
+               If TOKEN()\TokenExtra <> #ljRightParent
+                  SetError("Expected ')' after foreach collection", #C2ERR_EXPECTED_STATEMENT)
+                  gStack - 1
+                  ProcedureReturn 0
+               EndIf
+               NextToken()
+            EndIf
+
+            ; Parse body (must be braced block or single statement)
+            *s = stmt()
+
+            ; Build FOREACH AST: left = collection expr, right = body
+            *p = MakeNode(#ljFOREACH, *e, *s)
 
          ; V1.024.0: switch statement
          Case #ljSWITCH

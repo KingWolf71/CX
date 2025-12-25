@@ -1,0 +1,10 @@
+// Test struct declaration only
+#pragma console on
+#pragma ListASM on
+
+struct Point {
+    x.f;
+    y.f;
+}
+
+print("Struct declared");

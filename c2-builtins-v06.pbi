@@ -84,6 +84,7 @@ Procedure C2BUILTIN_RANDOM()
    EndSelect
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; abs(x) - Absolute value
@@ -101,6 +102,7 @@ Procedure C2BUILTIN_ABS()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; min(a, b) - Minimum of two values
@@ -125,6 +127,7 @@ Procedure C2BUILTIN_MIN()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; max(a, b) - Maximum of two values
@@ -149,6 +152,7 @@ Procedure C2BUILTIN_MAX()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; assertEqual(expected, actual) - Assert integers are equal
@@ -187,6 +191,7 @@ EndProcedure
 Procedure C2BUILTIN_ASSERT_FLOAT()
    ; V1.31.0: Read params from gEvalStack[]
    vm_DebugFunctionName()
+
    Protected paramCount.i = vm_GetParamCount()
    Protected expected.d, actual.d, tolerance.d, result.i
    Protected message.s
@@ -218,7 +223,11 @@ Procedure C2BUILTIN_ASSERT_FLOAT()
    EndIf
 
    vm_AssertPrint( message )
-   pc + 1  ; V1.020.053: Assertions don't return values (statement-level calls only)
+
+   ; V1.034.67: Push return value to match AST-generated POP
+   vm_PushInt(result)
+
+   pc + 1
 EndProcedure
 
 ; assertStringEqual(expected, actual) - Assert strings are equal
@@ -249,7 +258,9 @@ Procedure C2BUILTIN_ASSERT_STRING()
    EndIf
 
    vm_AssertPrint( message )
-   pc + 1  ; V1.020.053: Assertions don't return values (statement-level calls only)
+   ; V1.034.67: Push return value to match AST-generated POP
+   vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; sqrt(x) - Square root (returns float)
@@ -267,6 +278,7 @@ Procedure C2BUILTIN_SQRT()
    EndIf
 
    vm_PushFloat(result)
+   pc + 1
 EndProcedure
 
 ; pow(base, exp) - Power function (returns float)
@@ -287,6 +299,7 @@ Procedure C2BUILTIN_POW()
    EndIf
 
    vm_PushFloat(result)
+   pc + 1
 EndProcedure
 
 ; len(s) - String length (returns integer)
@@ -304,6 +317,7 @@ Procedure C2BUILTIN_LEN()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; strcmp(a, b) - String compare (PureBasic & SpiderBasic compatible)
@@ -333,6 +347,7 @@ Procedure C2BUILTIN_STRCMP()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ; getc(s, idx) - Get character code at index (0-based)
@@ -361,6 +376,7 @@ Procedure C2BUILTIN_GETC()
    EndIf
 
    vm_PushInt(result)
+   pc + 1
 EndProcedure
 
 ;- End Built-in Functions

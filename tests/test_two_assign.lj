@@ -1,0 +1,7 @@
+// Assignment test
+#pragma console on
+#pragma appname "TwoAssign"
+#pragma ListASM on
+
+list items;
+result = listFirst(items);

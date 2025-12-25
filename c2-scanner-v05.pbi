@@ -373,9 +373,27 @@ EndProcedure
                EndIf
 
             Case "<"
-               If Follow( "=", #ljLESSEQUAL, #ljLESS, @err ) : ProcedureReturn err : EndIf
+               ; V1.034.4: Check for << (shift left) or <= (less-equal) or < (less)
+               par_NextCharacter()
+               If gNextChar = "<"
+                  par_AddToken( #ljOP, #ljSHL, "", "" )
+               ElseIf gNextChar = "="
+                  par_AddToken( #ljOP, #ljLESSEQUAL, "", "" )
+               Else
+                  par_AddToken( #ljOP, #ljLESS, "", "" )
+                  gPos - 1
+               EndIf
             Case ">"
-               If Follow( "=", #ljGreaterEqual, #ljGREATER, @err ) : ProcedureReturn err : EndIf
+               ; V1.034.4: Check for >> (shift right) or >= (greater-equal) or > (greater)
+               par_NextCharacter()
+               If gNextChar = ">"
+                  par_AddToken( #ljOP, #ljSHR, "", "" )
+               ElseIf gNextChar = "="
+                  par_AddToken( #ljOP, #ljGreaterEqual, "", "" )
+               Else
+                  par_AddToken( #ljOP, #ljGREATER, "", "" )
+                  gPos - 1
+               EndIf
             Case "!"
                If Follow( "=", #ljNotEqual, #ljNOT, @err ) : ProcedureReturn err : EndIf
             Case "="
@@ -527,6 +545,10 @@ EndProcedure
                            ; Function CALL - create new #ljCall token
                            par_AddToken( #ljCall, #ljCall, "", Str( mapModules()\function ) )
                            par_CheckPreviousTokenForPointer()
+                           ; V1.034.8: Detect direct recursion (function calls itself)
+                           If mapModules()\function = gCurrFunction And gCurrFunction > 0
+                              mapModules()\isRecursive = #True
+                           EndIf
                         EndIf
                      Else
                         ; NOTE: Don't check built-ins here - allows variables to shadow built-in names
