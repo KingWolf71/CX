@@ -1,6 +1,6 @@
-# D+AI Architecture - Technical Deep Dive
+# D-Plus Architecture - Technical Deep Dive
 
-This document explains the internal architecture and implementation details of the D+AI compiler and VM.
+This document explains the internal architecture and implementation details of the D-Plus compiler and VM.
 
 ## Table of Contents
 1. [Data Structures](#data-structures)
@@ -804,7 +804,7 @@ EndMacro
 
 Typical performance (1000-iteration loop with arrays):
 - **Generic interpreter:** ~500ms
-- **D+AI optimized:** ~50ms
+- **D-Plus optimized:** ~50ms
 - **Speedup:** 10x
 
 ---

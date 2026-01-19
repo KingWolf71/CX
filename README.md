@@ -1,4 +1,4 @@
-# D+AI Compiler & Virtual Machine
+# D-Plus Compiler & Virtual Machine
 
 **Version:** 1.039.26
 **Language:** PureBasic (v6.10+)
@@ -6,7 +6,7 @@
 
 ## Overview
 
-D+AI is a high-performance compiler and virtual machine for a simplified C-like language. The project prioritizes **VM execution speed** above all else, implementing aggressive optimizations at both compile-time and runtime.
+D-Plus is a high-performance compiler and virtual machine for a simplified C-like language. The project prioritizes **VM execution speed** above all else, implementing aggressive optimizations at both compile-time and runtime.
 
 The language features:
 - C-style syntax with semicolon-terminated statements
@@ -25,7 +25,7 @@ The language features:
 
 ### Compiler Pipeline
 
-The D+AI compiler follows a multi-stage pipeline:
+The D-Plus compiler follows a multi-stage pipeline:
 
 ```
 Source Code (.d)
@@ -299,7 +299,7 @@ Use `pbtester.pb` to batch-run test files and verify output.
 ## Version History
 
 ### v1.039.x (Current)
-- ✅ Project renamed from LJ2 to D+AI (D-PLUS)
+- ✅ Project renamed from LJ2 to D-Plus
 - ✅ Source extension changed from .lj to .d
 - ✅ Compiled bytecode extension .od
 - ✅ Serialization support for compiled programs

@@ -1,4 +1,4 @@
-# D+AI Quick Reference
+# D-Plus Quick Reference
 
 ## File Locations Cheat Sheet
 
@@ -254,7 +254,7 @@ Before committing changes:
 - [ ] Test with `#pragma optimizecode on`
 - [ ] Test with `#pragma optimizecode off`
 - [ ] Verify ListASM output makes sense
-- [ ] Update version in `_D+AI.ver` (MAJ.MIN.FIX)
+- [ ] Update version in `_D-Plus.ver` (MAJ.MIN.FIX)
 - [ ] Backup old modules to `BACKUP/` if needed
 
 ## Performance Profiling
@@ -312,7 +312,7 @@ grep -n "ARRAY" c2-postprocessor-V02.pbi
 
 ## Version Control Best Practices
 
-1. **Always increment version** in `_D+AI.ver`
+1. **Always increment version** in `_D-Plus.ver`
 2. **Backup before major changes** to `BACKUP/`
 3. **Update XIncludeFile paths** when renaming
 4. **Test before commit**
@@ -339,7 +339,7 @@ ls BACKUP/
 cp BACKUP/c2-modules-V12.pb c2-modules-V13.pb
 
 # 3. Update includes if needed
-# 4. Revert _D+AI.ver
+# 4. Revert _D-Plus.ver
 ```
 
 ---

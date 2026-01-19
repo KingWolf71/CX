@@ -1,6 +1,6 @@
 1. Priority is on VM execution speed
 2. Windows Purebasic path D:\WIP\APPS\PureBasic.610
-3. Linux compilation: wsl -d Ubuntu-24.04 -e bash -c "export PUREBASIC_HOME=/home/terence/Apps/purebasic621 && cd /mnt/d/OneDrive/WIP/Sources/D+AI.2026 && \$PUREBASIC_HOME/compilers/pbcompiler c2-modules-V25.pb -e dpai_linux -t -cl 2>&1" (use -t for thread-safe, -cl for console mode)
+3. Linux compilation: wsl -d Ubuntu-24.04 -e bash -c "export PUREBASIC_HOME=/home/terence/Apps/purebasic621 && cd /mnt/d/OneDrive/WIP/Sources/D-Plus.2026 && \$PUREBASIC_HOME/compilers/pbcompiler c2-modules-V25.pb -e dpai_linux -t -cl 2>&1" (use -t for thread-safe, -cl for console mode)
 4. Windows compilation: pbcompiler /OPTIMIZER /THREAD /DYNAMICCPU c2-modules-V25.pb /EXE dpai.exe (add /CONSOLE for console mode, requires PureBasic 6.10+)
 5. Always leave definitions at beginning of procedure - no exceptions
 6. No procedure static variables; we use global variables which can be reset between runs

@@ -1,8 +1,8 @@
-# D+AI Test Suite Documentation
+# D-Plus Test Suite Documentation
 
 ## Overview
 
-The D+AI test suite provides automated testing for the D+AI compiler and VM. It supports categorized testing, crash detection, timeout handling, and detailed reporting.
+The D-Plus test suite provides automated testing for the D-Plus compiler and VM. It supports categorized testing, crash detection, timeout handling, and detailed reporting.
 
 ## Test Suite Scripts
 
@@ -53,7 +53,7 @@ The D+AI test suite provides automated testing for the D+AI compiler and VM. It 
 | `-ShowOutput` | false | Display test output for all tests |
 | `-StopOnError` | false | Stop on first failure |
 | `-ListOnly` | false | List tests without running |
-| `-AutoClose` | 3 | Seconds before D+AI auto-closes (0 to disable) |
+| `-AutoClose` | 3 | Seconds before D-Plus auto-closes (0 to disable) |
 | `-Timeout` | 30 | Max seconds per test before timeout |
 
 ### Examples
@@ -109,7 +109,7 @@ The test suite detects various failure modes:
 
 ```
 ========================================
-  D+AI Test Suite Runner
+  D-Plus Test Suite Runner
   Category: quick
   AutoClose: 3s | Timeout: 30s
 ========================================
@@ -142,22 +142,22 @@ Failed tests:
 
 ## Auto-Close Feature
 
-The D+AI compiler supports an `--autoclose` command-line option that shows a countdown before exiting. This is useful for automated testing.
+The D-Plus compiler supports an `--autoclose` command-line option that shows a countdown before exiting. This is useful for automated testing.
 
 ### Command Line Usage
 
 ```bash
 # Default 15 seconds countdown
-./D+AI_linux "file.d" --autoclose
-./D+AI_linux "file.d" -a
+./D-Plus_linux "file.d" --autoclose
+./D-Plus_linux "file.d" -a
 
 # Custom countdown (5 seconds)
-./D+AI_linux "file.d" --autoclose 5
-./D+AI_linux "file.d" --autoclose=5
-./D+AI_linux "file.d" -a=5
+./D-Plus_linux "file.d" --autoclose 5
+./D-Plus_linux "file.d" --autoclose=5
+./D-Plus_linux "file.d" -a=5
 
 # No auto-close (default behavior)
-./D+AI_linux "file.d"
+./D-Plus_linux "file.d"
 ```
 
 ### Console Output
@@ -210,5 +210,5 @@ Test files follow a numbering scheme:
 
 ### WSL issues
 - Ensure Ubuntu-24.04 WSL distribution is installed
-- Verify `D+AI_linux` binary exists and is executable
+- Verify `D-Plus_linux` binary exists and is executable
 - Check PUREBASIC_HOME path in test script
