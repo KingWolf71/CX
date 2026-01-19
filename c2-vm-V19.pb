@@ -185,6 +185,7 @@ Module C2VM
       #MSG_SET_TEXT
       #MSG_ADD_LINE
       #MSG_SET_LINE    ; V1.039.11: Update existing line (for countdown)
+      #MSG_CLIPBOARD   ; V1.100.2: Queue clipboard copy for thread safety
    EndEnumeration
 
    Structure stGUIMessage
@@ -482,6 +483,8 @@ Module C2VM
                   AddGadgetItem(gGUIQueue()\gadgetID, -1, gGUIQueue()\text)
                Case #MSG_SET_LINE    ; V1.039.11: Update existing line (for countdown)
                   SetGadgetItemText(gGUIQueue()\gadgetID, gGUIQueue()\lineNum, gGUIQueue()\text)
+               Case #MSG_CLIPBOARD   ; V1.100.2: Copy console to clipboard
+                  SetClipboardText(GetGadgetText(gGUIQueue()\gadgetID))
             EndSelect
             count + 1
          Next
@@ -1623,7 +1626,12 @@ Module C2VM
       CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Executable
          If gPasteToClipboard
             vm_ConsoleOrGUI( "" )
-            SetClipboardText( GetGadgetText(#edConsole) )
+            ; V1.100.2: Queue clipboard in threaded mode to ensure all output is processed first
+            If gRunThreaded
+               vmQueueGUIMessage(#MSG_CLIPBOARD, #edConsole, 0, "")
+            Else
+               SetClipboardText( GetGadgetText(#edConsole) )
+            EndIf
          EndIf
       CompilerEndIf
 
