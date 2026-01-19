@@ -1560,9 +1560,9 @@ Module C2VM
          If verFile
             verString = ReadString(verFile)
             CloseFile(verFile)
-            line =  "D+AI Version: " + verString
+            line =  "D-Plus Version: " + verString
          Else
-            line =  "D+AI Version: unknown"
+            line =  "D-Plus Version: unknown"
          EndIf
 
          Debug line

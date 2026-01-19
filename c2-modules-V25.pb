@@ -2067,7 +2067,7 @@ CompilerIf #PB_Compiler_IsMainFile
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
       ; Console build - output goes to same terminal
       If showHelp
-         PrintN("D+AI - Programming Language Compiler & VM v" + verString)
+         PrintN("D-Plus - Programming Language Compiler & VM v" + verString)
          PrintN("")
          Restore HelpText
          Repeat
@@ -2079,20 +2079,20 @@ CompilerIf #PB_Compiler_IsMainFile
       EndIf
 
       If earlyDebug
-         PrintN("D+AI v" + verString + " - Programming Language Compiler & VM")
+         PrintN("D-Plus v" + verString + " - Programming Language Compiler & VM")
          PrintN("")
       EndIf
    CompilerElse
       ; GUI build - use MessageRequester for help
       If showHelp
-         helpText = "D+AI - Programming Language Compiler & VM v" + verString + #CRLF$ + #CRLF$
+         helpText = "D-Plus - Programming Language Compiler & VM v" + verString + #CRLF$ + #CRLF$
          Restore HelpText
          Repeat
             Read.s helpLine
             If helpLine = "<<END>>" : Break : EndIf
             helpText + helpLine + #CRLF$
          ForEver
-         MessageRequester("D+AI Help", helpText, #PB_MessageRequester_Info)
+         MessageRequester("D-Plus Help", helpText, #PB_MessageRequester_Info)
          End
       EndIf
       ; No banner in GUI mode - it would need a requester
@@ -2199,7 +2199,7 @@ CompilerIf #PB_Compiler_IsMainFile
             PrintN(usageText)
             End
          CompilerElse
-            MessageRequester("D+AI Error", "No input file specified." + #CRLF$ + #CRLF$ + usageText, #PB_MessageRequester_Error)
+            MessageRequester("D-Plus Error", "No input file specified." + #CRLF$ + #CRLF$ + usageText, #PB_MessageRequester_Error)
             End
          CompilerEndIf
       EndIf

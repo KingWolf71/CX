@@ -1531,7 +1531,12 @@ Macro          ASMLine(obj,show)
    ElseIf obj\code = #ljINC_VAR Or obj\code = #ljDEC_VAR Or obj\code = #ljINC_VAR_PRE Or obj\code = #ljDEC_VAR_PRE Or obj\code = #ljINC_VAR_POST Or obj\code = #ljDEC_VAR_POST
       If obj\j = 1
          ; Local variable - i is paramOffset
-         line + "[LOCAL[" + Str(obj\i) + "]]"
+         CompilerIf show
+            line + "[LOCAL[" + Str(obj\i) + "]]"
+         CompilerElse
+            _GetLocalName(obj\i)
+            line + gAsmLocalName
+         CompilerEndIf
       Else
          ; Global variable - i is slot
          line + "[" + gVarMeta(obj\i)\name + "]"
@@ -1540,7 +1545,12 @@ Macro          ASMLine(obj,show)
    ; V1.034.38: PFETCH display - pointer FETCH with j=1 for locals
    ElseIf obj\code = #ljPFETCH
       If obj\j = 1
-         line + "[LOCAL[" + Str(obj\i) + "]] --> [sp]"
+         CompilerIf show
+            line + "[LOCAL[" + Str(obj\i) + "]] --> [sp]"
+         CompilerElse
+            _GetLocalName(obj\i)
+            line + gAsmLocalName + " --> [sp]"
+         CompilerEndIf
       Else
          line + "[slot" + Str(obj\i) + "] --> [sp]"
       EndIf
@@ -1549,7 +1559,12 @@ Macro          ASMLine(obj,show)
    ; V1.034.38: PTRINC_POST_INT display - pointer post-increment with j=1 for locals
    ElseIf obj\code = #ljPTRINC_POST_INT Or obj\code = #ljPTRINC_POST_FLOAT Or obj\code = #ljPTRINC_POST_STRING Or obj\code = #ljPTRINC_POST_ARRAY Or obj\code = #ljPTRDEC_POST_INT Or obj\code = #ljPTRDEC_POST_FLOAT Or obj\code = #ljPTRDEC_POST_STRING Or obj\code = #ljPTRDEC_POST_ARRAY
       If obj\j = 1
-         line + "[LOCAL[" + Str(obj\i) + "]]"
+         CompilerIf show
+            line + "[LOCAL[" + Str(obj\i) + "]]"
+         CompilerElse
+            _GetLocalName(obj\i)
+            line + gAsmLocalName
+         CompilerEndIf
       Else
          line + "[slot" + Str(obj\i) + "]"
       EndIf
@@ -1558,7 +1573,12 @@ Macro          ASMLine(obj,show)
    ; V1.034.38: PPOP display - pointer POP with j/i for target
    ElseIf obj\code = #ljPPOP
       If obj\j = 1
-         line + "[sp] --> [LOCAL[" + Str(obj\i) + "]]"
+         CompilerIf show
+            line + "[sp] --> [LOCAL[" + Str(obj\i) + "]]"
+         CompilerElse
+            _GetLocalName(obj\i)
+            line + "[sp] --> " + gAsmLocalName
+         CompilerEndIf
       Else
          line + "[sp] --> [slot" + Str(obj\i) + "]"
       EndIf
