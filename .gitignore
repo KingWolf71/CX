@@ -51,6 +51,7 @@ test-*.ps1
 # Editor temp files
 *.bak
 *~
+*.ses
 
 # Temporary folders and files
 TEMP/
