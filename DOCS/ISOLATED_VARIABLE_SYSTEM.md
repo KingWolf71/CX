@@ -236,7 +236,7 @@ EndIf
 ## Migration from Unified System
 
 ### For Users
-- **No changes needed** to .lj source files
+- **No changes needed** to .d source files
 - Same syntax, same semantics
 - Compiled bytecode format unchanged
 

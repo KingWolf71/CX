@@ -116,11 +116,11 @@ The test suite detects various failure modes:
 
 Running 8 tests...
 
-[1/8] Testing: 001 Simple while.lj... PASS (2.45s)
-[2/8] Testing: 002 if else.lj... PASS (2.31s)
-[3/8] Testing: crash_test.lj... CRASH (0.12s) - CRASH (Segmentation fault)
-[4/8] Testing: hang_test.lj... TIMEOUT (30.05s) - TIMEOUT (exceeded 30s)
-[5/8] Testing: error_test.lj... FAIL (2.18s) - Error in output
+[1/8] Testing: 001 Simple while.d... PASS (2.45s)
+[2/8] Testing: 002 if else.d... PASS (2.31s)
+[3/8] Testing: crash_test.d... CRASH (0.12s) - CRASH (Segmentation fault)
+[4/8] Testing: hang_test.d... TIMEOUT (30.05s) - TIMEOUT (exceeded 30s)
+[5/8] Testing: error_test.d... FAIL (2.18s) - Error in output
 
 ========================================
   Test Results Summary
@@ -134,9 +134,9 @@ Running 8 tests...
   Time:     42.35s
 
 Failed tests:
-  [CRASH] crash_test.lj
-  [TIMEOUT] hang_test.lj
-  [FAIL] error_test.lj
+  [CRASH] crash_test.d
+  [TIMEOUT] hang_test.d
+  [FAIL] error_test.d
         Error in output
 ```
 
@@ -148,16 +148,16 @@ The D+AI compiler supports an `--autoclose` command-line option that shows a cou
 
 ```bash
 # Default 15 seconds countdown
-./D+AI_linux "file.lj" --autoclose
-./D+AI_linux "file.lj" -a
+./D+AI_linux "file.d" --autoclose
+./D+AI_linux "file.d" -a
 
 # Custom countdown (5 seconds)
-./D+AI_linux "file.lj" --autoclose 5
-./D+AI_linux "file.lj" --autoclose=5
-./D+AI_linux "file.lj" -a=5
+./D+AI_linux "file.d" --autoclose 5
+./D+AI_linux "file.d" --autoclose=5
+./D+AI_linux "file.d" -a=5
 
 # No auto-close (default behavior)
-./D+AI_linux "file.lj"
+./D+AI_linux "file.d"
 ```
 
 ### Console Output
@@ -188,7 +188,7 @@ Test files follow a numbering scheme:
 - `120-129` - Comprehensive tests
 - `130-139` - Error handling tests
 
-**Excluded files:** Files starting with `bug` (e.g., `bug fix.lj`) are automatically excluded from all test runs.
+**Excluded files:** Files starting with `bug` (e.g., `bug fix.d`) are automatically excluded from all test runs.
 
 ## Adding New Tests
 

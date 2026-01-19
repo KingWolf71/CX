@@ -205,7 +205,7 @@ EndStructure
 ## Compatibility
 
 ### Backward Compatibility
-- Source code (.lj files) **unchanged** - Full compatibility
+- Source code (.d files) **unchanged** - Full compatibility
 - Compilation process **unchanged** - Name mangling still works
 - paramOffset field **unchanged** - Still distinguishes global vs local
 
@@ -305,7 +305,7 @@ But for now, the unified system provides the best balance of simplicity and perf
 ## Migration Notes
 
 ### For Users
-- No changes needed to your .lj source files
+- No changes needed to your .d source files
 - Everything works exactly as before
 - Same syntax, same semantics
 

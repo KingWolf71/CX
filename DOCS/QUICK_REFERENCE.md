@@ -17,7 +17,7 @@
 | Built-in functions | `c2-builtins-v05.pbi` |
 | Collections | `c2-collections-v01.pbi` |
 | Test runner | `pbtester-v04.pb` |
-| Examples | `Examples/*.lj` |
+| Examples | `Examples/*.d` |
 
 ## Key Global Variables
 
@@ -181,7 +181,7 @@ Debug "PC=" + Str(pc) + " SP=" + Str(sp) + " Opcode=" + OpcodeName(arCode(pc)\co
 
 ### Listing Assembly
 
-Add pragma to .lj file:
+Add pragma to .d file:
 ```c
 #pragma ListASM on
 ```
@@ -247,9 +247,9 @@ str.s = "Hello" + " " + "World"   ; ✅ Correct
 
 Before committing changes:
 
-- [ ] Run `Examples/00 comprehensive test.lj`
-- [ ] Run `Examples/22 array comprehensive.lj`
-- [ ] Run `Examples/bug fix2.lj`
+- [ ] Run `Examples/00 comprehensive test.d`
+- [ ] Run `Examples/22 array comprehensive.d`
+- [ ] Run `Examples/bug fix2.d`
 - [ ] Check no assertions fail
 - [ ] Test with `#pragma optimizecode on`
 - [ ] Test with `#pragma optimizecode off`

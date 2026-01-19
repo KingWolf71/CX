@@ -40,7 +40,7 @@ Pointers in D+AI are **not** traditional C-style memory pointers. Instead:
 - c2-inc-v12.pbi: Contains 13 pointer opcode definitions
 - c2-pointers-v01.pbi: Contains all 13 pointer VM command implementations
 - c2-vm-commands-v09.pb: Includes c2-pointers-v01.pbi
-- Examples/24-28 test pointers *.lj: 5 comprehensive test programs
+- Examples/24-28 test pointers *.d: 5 comprehensive test programs
 
 ## Syntax
 
