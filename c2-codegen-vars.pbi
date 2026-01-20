@@ -21,7 +21,7 @@
       ; V1.030.56: Debug slot 176 at ABSOLUTE START of FetchVarOffset (before any Protected)
       CompilerIf #DEBUG
          If gnLastVariable > 176 And gCurrentFunctionName = "_calculatearea"
-            Debug "V1.030.56: FVO ABSOLUTE START slot176 structType='" + gVarMeta(176)\structType + "' text='" + text + "'"
+            ; Debug "V1.030.56: FVO ABSOLUTE START slot176 structType='" + gVarMeta(176)\structType + "' text='" + text + "'"
          EndIf
       CompilerEndIf
       ; All Protected declarations at procedure start per CLAUDE.md rule #3
@@ -49,7 +49,7 @@
       ; V1.030.55: Debug slot 176 IMMEDIATELY after Protected declarations (before any code)
       CompilerIf #DEBUG
          If gnLastVariable > 176 And gCurrentFunctionName = "_calculatearea"
-            Debug "V1.030.55: POST-PROTECTED slot176 structType='" + gVarMeta(176)\structType + "' text='" + text + "'"
+            ; Debug "V1.030.55: POST-PROTECTED slot176 structType='" + gVarMeta(176)\structType + "' text='" + text + "'"
          EndIf
       CompilerEndIf
 
@@ -61,7 +61,7 @@
          Static fvo176LastStructType.s = ""
          If gnLastVariable > 176 And gCurrentFunctionName = "_calculatearea"
             If gVarMeta(176)\structType <> fvo176LastStructType
-               Debug "V1.030.53: FVO ENTRY slot176 CHANGED! was '" + fvo176LastStructType + "' now '" + gVarMeta(176)\structType + "' text='" + text + "'"
+               ; Debug "V1.030.53: FVO ENTRY slot176 CHANGED! was '" + fvo176LastStructType + "' now '" + gVarMeta(176)\structType + "' text='" + text + "'"
                fvo176LastStructType = gVarMeta(176)\structType
             EndIf
          EndIf
@@ -153,8 +153,8 @@
             If gVarMeta(dotStructSlot)\paramOffset < 0 And gCodeGenFunction > 0 And gCodeGenParamIndex < 0
                ; Check if it's actually a local (mangled name)
                ; V1.030.15: Debug the comparison
-               Debug "V1.030.15: PARAMOFFSET CHECK - slot=" + Str(dotStructSlot) + " name='" + gVarMeta(dotStructSlot)\name + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
-               Debug "V1.030.15: LEFT='" + LCase(Left(gVarMeta(dotStructSlot)\name, Len(gCurrentFunctionName) + 1)) + "' RIGHT='" + LCase(gCurrentFunctionName + "_") + "' MATCH=" + Str(Bool(LCase(Left(gVarMeta(dotStructSlot)\name, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_")))
+               ; Debug "V1.030.15: PARAMOFFSET CHECK - slot=" + Str(dotStructSlot) + " name='" + gVarMeta(dotStructSlot)\name + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
+               ; Debug "V1.030.15: LEFT='" + LCase(Left(gVarMeta(dotStructSlot)\name, Len(gCurrentFunctionName) + 1)) + "' RIGHT='" + LCase(gCurrentFunctionName + "_") + "' MATCH=" + Str(Bool(LCase(Left(gVarMeta(dotStructSlot)\name, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_")))
                If LCase(Left(gVarMeta(dotStructSlot)\name, Len(gCurrentFunctionName) + 1)) = LCase(gCurrentFunctionName + "_")
                   ; V1.029.43: With \ptr storage, each struct uses only 1 slot.
                   ; Only assign paramOffset to base slot - no field slots exist.
@@ -196,13 +196,13 @@
                   dotRemaining = ""
                EndIf
 
-               Debug "V1.030.39: DOT FIELD STEP: looking for '" + dotCurrentField + "' in type '" + dotCurrentType + "'"
+               ; Debug "V1.030.39: DOT FIELD STEP: looking for '" + dotCurrentField + "' in type '" + dotCurrentType + "'"
 
                dotFieldFound = #False
                If FindMapElement(mapStructDefs(), dotCurrentType)
                   ForEach mapStructDefs()\fields()
                      If LCase(mapStructDefs()\fields()\name) = LCase(dotCurrentField)
-                        Debug "V1.030.39: DOT FIELD FOUND: '" + dotCurrentField + "' at offset=" + Str(mapStructDefs()\fields()\offset) + " nestedType='" + mapStructDefs()\fields()\structType + "'"
+                        ; Debug "V1.030.39: DOT FIELD FOUND: '" + dotCurrentField + "' at offset=" + Str(mapStructDefs()\fields()\offset) + " nestedType='" + mapStructDefs()\fields()\structType + "'"
                         dotFieldOffset = dotFieldOffset + mapStructDefs()\fields()\offset
                         dotCurrentType = mapStructDefs()\fields()\structType  ; For nested structs
                         dotFieldFound = #True
@@ -210,13 +210,13 @@
                      EndIf
                   Next
                   If Not dotFieldFound
-                     Debug "V1.030.39: DOT FIELD NOT FOUND: '" + dotCurrentField + "' in type '" + dotCurrentType + "'"
+                     ; Debug "V1.030.39: DOT FIELD NOT FOUND: '" + dotCurrentField + "' in type '" + dotCurrentType + "'"
                   EndIf
                Else
-                  Debug "V1.030.39: DOT TYPE NOT FOUND: '" + dotCurrentType + "' in mapStructDefs()"
+                  ; Debug "V1.030.39: DOT TYPE NOT FOUND: '" + dotCurrentType + "' in mapStructDefs()"
                EndIf
             Wend
-            Debug "V1.030.39: DOT FIELD WALK END: totalOffset=" + Str(dotFieldOffset) + " byteOffset=" + Str(dotFieldOffset * 8) + " dotFieldFound=" + Str(dotFieldFound)
+            ; Debug "V1.030.39: DOT FIELD WALK END: totalOffset=" + Str(dotFieldOffset) + " byteOffset=" + Str(dotFieldOffset * 8) + " dotFieldFound=" + Str(dotFieldFound)
 
             ; V1.030.60: FIX - Only return if field was actually found
             ; The old condition "dotFieldFound Or dotRemaining = ''" was buggy:
@@ -230,7 +230,7 @@
                gVarMeta(dotStructSlot)\structFieldBase = dotStructSlot
                gVarMeta(dotStructSlot)\structFieldOffset = dotFieldOffset * 8
                CompilerIf #DEBUG
-                  Debug "V1.030.37: DOT FIELD OFFSET: slot=" + Str(dotStructSlot) + " fieldChain='" + dotFieldChain + "' fieldOffset=" + Str(dotFieldOffset) + " byteOffset=" + Str(dotFieldOffset * 8)
+                  ; Debug "V1.030.37: DOT FIELD OFFSET: slot=" + Str(dotStructSlot) + " fieldChain='" + dotFieldChain + "' fieldOffset=" + Str(dotFieldOffset) + " byteOffset=" + Str(dotFieldOffset * 8)
                CompilerEndIf
                ProcedureReturn dotStructSlot
             Else
@@ -255,7 +255,7 @@
             ; V1.031.29: Debug struct type annotation detection
             OSDebug_Vars("V1.031.29: STRUCT TYPE CHECK: dotStructName='" + dotStructName + "' dotFieldChain='" + dotFieldChain + "' mapStructDefs has Point=" + Str(Bool(FindMapElement(mapStructDefs(), "Point") <> 0)))
             CompilerIf #DEBUG
-               Debug "V1.029.86: Checking struct type annotation: dotStructName='" + dotStructName + "' dotFieldChain='" + dotFieldChain + "'"
+               ; Debug "V1.029.86: Checking struct type annotation: dotStructName='" + dotStructName + "' dotFieldChain='" + dotFieldChain + "'"
             CompilerEndIf
             ; Check if dotFieldChain is a known struct type (not primitive .i, .f, .s, .d)
             If LCase(dotFieldChain) <> "i" And LCase(dotFieldChain) <> "f" And LCase(dotFieldChain) <> "s" And LCase(dotFieldChain) <> "d"
@@ -267,12 +267,12 @@
                   ; V1.031.29: Debug detected struct type
                   OSDebug_Vars("V1.031.29: STRUCT TYPE DETECTED! text='" + text + "' structTypeName='" + structTypeName + "'")
                   CompilerIf #DEBUG
-                     Debug "V1.029.86: DETECTED struct type annotation! structTypeName='" + structTypeName + "' text='" + text + "'"
+                     ; Debug "V1.029.86: DETECTED struct type annotation! structTypeName='" + structTypeName + "' text='" + text + "'"
                   CompilerEndIf
                Else
                   OSDebug_Vars("V1.031.29: STRUCT TYPE MISS! dotFieldChain '" + dotFieldChain + "' NOT in mapStructDefs()")
                   CompilerIf #DEBUG
-                     Debug "V1.029.86: dotFieldChain '" + dotFieldChain + "' NOT found in mapStructDefs()"
+                     ; Debug "V1.029.86: dotFieldChain '" + dotFieldChain + "' NOT found in mapStructDefs()"
                   CompilerEndIf
                EndIf
             Else
@@ -281,7 +281,7 @@
                ; Without this fix, "w.f" stays as "w.f" causing wrong slot lookup
                text = dotStructName
                CompilerIf #DEBUG
-                  Debug "V1.030.63: Type suffix stripped in DOT path: dotFieldChain='" + dotFieldChain + "' text='" + text + "'"
+                  ; Debug "V1.030.63: Type suffix stripped in DOT path: dotFieldChain='" + dotFieldChain + "' text='" + text + "'"
                CompilerEndIf
             EndIf
          EndIf
@@ -354,7 +354,7 @@
                   ForEach mapStructDefs()\fields()
                      If LCase(Trim(mapStructDefs()\fields()\name)) = LCase(bsCurrentField)
                         ; V1.030.66: Debug - trace field offset lookup in backslash chain
-                        Debug "V1.030.66 FIELD_LOOKUP: type='" + bsCurrentType + "' field='" + bsCurrentField + "' storedOffset=" + Str(mapStructDefs()\fields()\offset) + " prevAccum=" + Str(bsAccumOffset)
+                        ; Debug "V1.030.66 FIELD_LOOKUP: type='" + bsCurrentType + "' field='" + bsCurrentField + "' storedOffset=" + Str(mapStructDefs()\fields()\offset) + " prevAccum=" + Str(bsAccumOffset)
                         bsAccumOffset = bsAccumOffset + mapStructDefs()\fields()\offset
                         ; V1.030.35: Track if this field is a nested struct that we continue to traverse
                         If mapStructDefs()\fields()\structType <> "" And bsFieldChain <> ""
@@ -395,7 +395,7 @@
                         EndIf
                      Next
                      CompilerIf #DEBUG
-                        Debug "V1.030.25: Backslash path - assigned paramOffset=" + Str(gVarMeta(structSlot)\paramOffset) + " to local struct '" + gVarMeta(structSlot)\name + "'"
+                        ; Debug "V1.030.25: Backslash path - assigned paramOffset=" + Str(gVarMeta(structSlot)\paramOffset) + " to local struct '" + gVarMeta(structSlot)\name + "'"
                      CompilerEndIf
                   EndIf
                EndIf
@@ -410,7 +410,7 @@
                gVarMeta(structSlot)\structFieldBase = structSlot
                gVarMeta(structSlot)\structFieldOffset = fieldOffset * 8
                ; V1.030.66: Debug - trace backslash chain byte offset calculation
-               Debug "V1.030.66 BACKSLASH: name='" + gVarMeta(structSlot)\name + "' fieldChain='" + text + "' slotOffset=" + Str(fieldOffset) + " byteOffset=" + Str(fieldOffset * 8) + " paramOffset=" + Str(gVarMeta(structSlot)\paramOffset)
+               ; Debug "V1.030.66 BACKSLASH: name='" + gVarMeta(structSlot)\name + "' fieldChain='" + text + "' slotOffset=" + Str(fieldOffset) + " byteOffset=" + Str(fieldOffset * 8) + " paramOffset=" + Str(gVarMeta(structSlot)\paramOffset)
                ProcedureReturn structSlot
             EndIf
          EndIf
@@ -450,7 +450,7 @@
                      EndIf
                   Next
                   CompilerIf #DEBUG
-                     Debug "V1.026.20: Assigned paramOffset=" + Str(gVarMeta(i)\paramOffset) + " to local '" + searchName + "'"
+                     ; Debug "V1.026.20: Assigned paramOffset=" + Str(gVarMeta(i)\paramOffset) + " to local '" + searchName + "'"
                   CompilerEndIf
                EndIf
                ; V1.029.98: Clear struct field metadata when returning whole variable (not field access)
@@ -470,7 +470,7 @@
                If gVarMeta(i)\flags & #C2FLAG_PARAM
                   ; Found as non-mangled param - use it
                   CompilerIf #DEBUG
-                     Debug "V1.029.94: Found non-mangled param '" + text + "' at slot " + Str(i) + " (paramOffset=" + Str(gVarMeta(i)\paramOffset) + ")"
+                     ; Debug "V1.029.94: Found non-mangled param '" + text + "' at slot " + Str(i) + " (paramOffset=" + Str(gVarMeta(i)\paramOffset) + ")"
                   CompilerEndIf
                   ; V1.029.98: Clear struct field metadata when returning whole variable
                   gVarMeta(i)\structFieldBase = -1
@@ -507,7 +507,7 @@
          ElseIf forceLocal
             ; V1.022.71: Type annotation present - create local (shadow global if exists)
             CompilerIf #DEBUG
-               Debug "V1.022.71: Type annotation - creating local '" + text + "' (shadows global if exists)"
+               ; Debug "V1.022.71: Type annotation - creating local '" + text + "' (shadows global if exists)"
             CompilerEndIf
          EndIf
 
@@ -585,7 +585,7 @@
                ; Extract original name after the function prefix
                tokenSearchName = Mid(text, prefixLen + 1)
                CompilerIf #DEBUG
-                  Debug "V1.022.100: Searching for original '" + tokenSearchName + "' (mangled: '" + text + "')"
+                  ; Debug "V1.022.100: Searching for original '" + tokenSearchName + "' (mangled: '" + text + "')"
                CompilerEndIf
             EndIf
          EndIf
@@ -598,7 +598,7 @@
                foundTokenTypeHint = TOKEN()\typeHint
                foundTokenType = TOKEN()\TokenType
                CompilerIf #DEBUG
-                  Debug "V1.022.100: Found token '" + tokenSearchName + "' typeHint=" + Str(foundTokenTypeHint) + " tokenType=" + Str(foundTokenType)
+                  ; Debug "V1.022.100: Found token '" + tokenSearchName + "' typeHint=" + Str(foundTokenTypeHint) + " tokenType=" + Str(foundTokenType)
                CompilerEndIf
                Break
             EndIf
@@ -661,12 +661,12 @@
             If foundTokenTypeHint = #ljFLOAT
                gVarMeta(gnLastVariable)\flags = #C2FLAG_IDENT | #C2FLAG_FLOAT
                CompilerIf #DEBUG
-                  Debug "V1.022.100: Set FLOAT type for '" + text + "' from token typeHint"
+                  ; Debug "V1.022.100: Set FLOAT type for '" + text + "' from token typeHint"
                CompilerEndIf
             ElseIf foundTokenTypeHint = #ljSTRING
                gVarMeta(gnLastVariable)\flags = #C2FLAG_IDENT | #C2FLAG_STR
                CompilerIf #DEBUG
-                  Debug "V1.022.100: Set STR type for '" + text + "' from token typeHint"
+                  ; Debug "V1.022.100: Set STR type for '" + text + "' from token typeHint"
                CompilerEndIf
             Else
                ; No suffix - default to INT (no type inference from assignment)
@@ -698,7 +698,7 @@
          EndIf
          gVarMeta(gnLastVariable)\flags = structVarFlags
          CompilerIf #DEBUG
-            Debug "V1.029.87: Set struct type '" + structTypeName + "' for variable '" + text + "' with elementSize=" + Str(gVarMeta(gnLastVariable)\elementSize) + " (flags=" + Str(gVarMeta(gnLastVariable)\flags) + ")"
+            ; Debug "V1.029.87: Set struct type '" + structTypeName + "' for variable '" + text + "' with elementSize=" + Str(gVarMeta(gnLastVariable)\elementSize) + " (flags=" + Str(gVarMeta(gnLastVariable)\flags) + ")"
          CompilerEndIf
       EndIf
 
@@ -743,7 +743,7 @@
 
       ; V1.030.63: Debug - track new variable creation for w/h
       If FindString(text, "_w") Or FindString(text, "_h")
-         Debug "V1.030.63 NEW_VAR: slot=" + Str(gnLastVariable - 1) + " name='" + text + "' structFieldBase=" + Str(gVarMeta(gnLastVariable - 1)\structFieldBase) + " paramOffset=" + Str(gVarMeta(gnLastVariable - 1)\paramOffset)
+         ; Debug "V1.030.63 NEW_VAR: slot=" + Str(gnLastVariable - 1) + " name='" + text + "' structFieldBase=" + Str(gVarMeta(gnLastVariable - 1)\structFieldBase) + " paramOffset=" + Str(gVarMeta(gnLastVariable - 1)\paramOffset)
       EndIf
 
       ProcedureReturn gnLastVariable - 1

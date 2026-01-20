@@ -1817,6 +1817,19 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    EndProcedure
 
    ;- =====================================
+   ;- Compiler Progress Output
+   ;- =====================================
+   ; V1.039.38: Progress output for BUILD_COMPILER mode
+   #COMPILE_STAGES = 12  ; Total compilation stages for percentage calculation
+
+   Procedure CompileProgress(stage.i, stageName.s)
+      ; Show compilation progress in console mode
+      CompilerIf #BUILD_TYPE = #BUILD_COMPILER
+         Protected percent.i = (stage * 100) / #COMPILE_STAGES
+         PrintN("[" + RSet(Str(percent), 3, " ") + "%] " + stageName)
+      CompilerEndIf
+   EndProcedure
+
    ;- Compiler
    ;- =====================================
    Procedure         Compile()
@@ -1827,12 +1840,11 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       Protected.s    temp
 
       Init()
-      Debug " -- Preprocessing source..."
+      CompileProgress(1, "Preprocessing source...")
       Preprocessor()
 
-      Debug " -- Scanner pass: Lexical analysis and tokenization..."
+      CompileProgress(2, "Scanner: Lexical analysis...")
       If Scanner()
-         Debug "Scanner failed with error: " + gszlastError
          ProcedureReturn 1
       EndIf
 
@@ -1840,11 +1852,9 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       ExtractConstants()
 
       ; V1.029.91: Auto-declare struct variables at function start
-      Debug " -- Auto-declaring struct variables..."
       AutoDeclareStructVars()
 
-      ;par_DebugParser()
-      Debug " -- AST pass: Building abstract syntax tree..."
+      CompileProgress(3, "AST: Building syntax tree...")
       ReorderTokens()
 
       FirstElement( TOKEN() )
@@ -1855,7 +1865,6 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          *p = MakeNode( #ljSEQ, *p, stmt() )
 
          If gLastError
-            Debug "AST Error > " + gszlastError
             gExit = -1
             Break
          EndIf
@@ -1863,16 +1872,15 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       Until ListIndex( TOKEN() ) >= total Or gExit
 
       If gExit >= 0
-         ;- DisplayNode( *p )
          ; V1.030.0: Run variable metadata verification pass before codegen
          ; This catches and auto-fixes common issues like missing STRUCT flags
          VerifyVariableMetadata()
 
+         CompileProgress(4, "CodeGenerator: Emitting bytecode...")
          CodeGenerator( *p )
 
          ; V1.023.26: Check for errors after code generation (e.g., type conflicts)
          If gLastError
-            Debug "CodeGen Error > " + gszlastError
             gExit = -1
          EndIf
       EndIf
@@ -1880,39 +1888,39 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       If gExit >= 0
          ; V1.034.0: Mark function-end NOOPIFs BEFORE jump tracking
          ; This ensures backward jumps correctly target implicit returns
-         Debug " -- MarkImplicitReturns: Marking function-end NOOPIFs..."
+         CompileProgress(5, "MarkImplicitReturns...")
          MarkImplicitReturns()
 
          ; V1.020.077: Initialize jump tracker BEFORE optimization passes
          ; This allows PostProcessor to call AdjustJumpsForNOOP() with populated tracker
-         Debug " -- InitJumpTracker: Calculating initial jump offsets..."
+         CompileProgress(6, "InitJumpTracker...")
          InitJumpTracker()
 
          ; V1.033.23: TypeInference handles type resolution, V10 handles correctness
-         Debug " -- TypeInference: Unified type resolution..."
+         CompileProgress(7, "TypeInference: Type resolution...")
          TypeInference()
 
-         Debug " -- Postprocessor: Correctness passes..."
+         CompileProgress(8, "PostProcessor: Correctness passes...")
          PostProcessor()
 
          ; V1.033.0: Optimizer handles peephole, constant folding, and other optimizations
          ; The pragma "optimizecode" controls whether optimizations run
-         Debug " -- Optimizer: Peephole and fusion optimizations..."
+         CompileProgress(9, "Optimizer: Peephole optimizations...")
          Optimizer()
 
          ; V1.033.49: Build variable templates AFTER optimizer
          ; The optimizer can create new constants via constant folding, incrementing gnLastVariable.
          ; Must build templates after optimizer to include all constants in gGlobalTemplate.
-         Debug " -- BuildVariableTemplates: Creating gGlobalTemplate and gFuncTemplates..."
+         CompileProgress(10, "BuildVariableTemplates...")
          BuildVariableTemplates()
 
          ; V1.039.29: Populate code element maps for ASM listing local variable names
-         Debug " -- PopulateCodeElementMaps: Building lookup tables for ASM display..."
+         CompileProgress(11, "PopulateCodeElementMaps...")
          PopulateCodeElementMaps()
 
          ; V1.020.077: FixJMP now just applies adjusted offsets and patches functions
          ; Jump tracker was already populated by InitJumpTracker() before optimization
-         Debug " -- FixJMP: Applying adjusted offsets and patching functions..."
+         CompileProgress(12, "FixJMP: Patching jumps and calls...")
          FixJMP()
          LastElement( llObjects() )
          EmitInt( #LJEOF )
@@ -2413,7 +2421,7 @@ CompilerIf #PB_Compiler_IsMainFile
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.30 (Windows - x64)
-; CursorPosition = 8
+; CursorPosition = 5
 ; Folding = 0----------
 ; Markers = 569,718
 ; Optimizer
@@ -2424,7 +2432,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2597
+; EnableCompileCount = 2599
 ; EnableBuildCount = 19
 ; EnableExeConstant
 ; IncludeVersionInfo

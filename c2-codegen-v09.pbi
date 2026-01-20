@@ -30,13 +30,13 @@
       Debug "VERIFY: gnLastVariable=" + Str(gnLastVariable)
 
       ; V1.030.47: Debug dump of all struct params at start of codegen
-      Debug "V1.030.47: STRUCT PARAM DUMP AT CODEGEN START:"
+      ; Debug "V1.030.47: STRUCT PARAM DUMP AT CODEGEN START:"
       For i = 0 To gnLastVariable - 1
          If (gVarMeta(i)\flags & #C2FLAG_PARAM) And (gVarMeta(i)\flags & #C2FLAG_STRUCT)
             Debug "  PARAM+STRUCT [" + Str(i) + "] '" + gVarMeta(i)\name + "' structType='" + gVarMeta(i)\structType + "' paramOffset=" + Str(gVarMeta(i)\paramOffset)
          EndIf
       Next
-      Debug "V1.030.47: END STRUCT PARAM DUMP"
+      ; Debug "V1.030.47: END STRUCT PARAM DUMP"
 
       For i = 0 To gnLastVariable - 1
          ; Skip empty/unused slots
@@ -222,13 +222,13 @@
                   If gCodeGenParamIndex >= 0 And gCurrentFunctionName <> ""
                      spFoundPreCreated = -1
                      Protected spStructSearchName.s = LCase(gCurrentFunctionName + "_" + spBaseName)
-                     Debug "V1.030.47: POP struct search: searchName='" + spStructSearchName + "' structType='" + spStructType + "'"
+                     ; Debug "V1.030.47: POP struct search: searchName='" + spStructSearchName + "' structType='" + spStructType + "'"
                      For spVarIdx = 0 To gnLastVariable - 1
                         ; Check if this is a PARAM with EXACT matching mangled name and struct type
                         If gVarMeta(spVarIdx)\flags & #C2FLAG_PARAM
                            If LCase(gVarMeta(spVarIdx)\structType) = LCase(spStructType)
                               If LCase(gVarMeta(spVarIdx)\name) = spStructSearchName
-                                 Debug "V1.030.47: POP struct FOUND at slot " + Str(spVarIdx)
+                                 ; Debug "V1.030.47: POP struct FOUND at slot " + Str(spVarIdx)
                                  spFoundPreCreated = spVarIdx
                                  Break
                               EndIf
@@ -239,7 +239,7 @@
                      If spFoundPreCreated >= 0
                         n = spFoundPreCreated
                      Else
-                        Debug "V1.030.47: POP struct NOT FOUND, calling FetchVarOffset('" + spBaseName + "')"
+                        ; Debug "V1.030.47: POP struct NOT FOUND, calling FetchVarOffset('" + spBaseName + "')"
                         n = FetchVarOffset(spBaseName)
                      EndIf
                   Else
@@ -331,7 +331,7 @@
                   If (gVarMeta(n)\flags & #C2FLAG_PARAM) And (gVarMeta(n)\flags & #C2FLAG_STRUCT) And gVarMeta(n)\paramOffset >= 0
                      ; Already handled - do nothing (don't allocate new struct memory)
                      CompilerIf #DEBUG
-                        Debug "V1.029.68: Skipping struct param - already has paramOffset=" + Str(gVarMeta(n)\paramOffset)
+                        ; Debug "V1.029.68: Skipping struct param - already has paramOffset=" + Str(gVarMeta(n)\paramOffset)
                      CompilerEndIf
                   Else
                   ; Local variable inside a function - assign offset and emit LSTORE
@@ -551,7 +551,7 @@
                   sfBaseSlot = gVarMeta(n)\structFieldBase
                   sfByteOffset = gVarMeta(n)\structFieldOffset
                   ; V1.030.61: Debug - trace what offset is being used for struct fetch
-                  Debug "V1.030.61: STRUCT_FETCH n=" + Str(n) + " name='" + gVarMeta(n)\name + "' sfBaseSlot=" + Str(sfBaseSlot) + " sfByteOffset=" + Str(sfByteOffset) + " value='" + *x\value + "'"
+                  ; Debug "V1.030.61: STRUCT_FETCH n=" + Str(n) + " name='" + gVarMeta(n)\name + "' sfBaseSlot=" + Str(sfBaseSlot) + " sfByteOffset=" + Str(sfByteOffset) + " value='" + *x\value + "'"
                   sfIsLocal = Bool(gVarMeta(sfBaseSlot)\paramOffset >= 0)
                   sfFieldType = dotFieldType
                   ; V1.029.64: Look up field type from struct definition using byte offset
@@ -652,7 +652,7 @@
                   EndIf
                   llObjects()\j = sfByteOffset  ; Byte offset within struct
                   ; V1.030.61: Debug - confirm byte offset written to instruction
-                  Debug "V1.030.61: STRUCT_FETCH EMITTED: opcode=" + Str(llObjects()\code) + " i=" + Str(llObjects()\i) + " j=" + Str(llObjects()\j) + " (byte offset)"
+                  ; Debug "V1.030.61: STRUCT_FETCH EMITTED: opcode=" + Str(llObjects()\code) + " i=" + Str(llObjects()\i) + " j=" + Str(llObjects()\j) + " (byte offset)"
 
                ElseIf identIsLocal And identLocalOffset >= 0
                   ; V1.029.10: Local variable - use LFETCH with paramOffset
@@ -2022,14 +2022,14 @@
                ; V1.030.54: Debug slot 176 BEFORE calling FetchVarOffset in ASSIGN
                CompilerIf #DEBUG
                   If gnLastVariable > 176 And gCurrentFunctionName = "_calculatearea"
-                     Debug "V1.030.54: ASSIGN ENTRY slot176 structType='" + gVarMeta(176)\structType + "' LHS='" + *x\left\value + "'"
+                     ; Debug "V1.030.54: ASSIGN ENTRY slot176 structType='" + gVarMeta(176)\structType + "' LHS='" + *x\left\value + "'"
                   EndIf
                CompilerEndIf
                n = FetchVarOffset( *x\left\value, *x\right, 0, *x\left\TypeHint )
 
                ; V1.030.63: Debug - track ASSIGN LHS for w/h
                If FindString(*x\left\value, "w") Or FindString(*x\left\value, "h")
-                  Debug "V1.030.63 ASSIGN_LHS: LHS='" + *x\left\value + "' slot=" + Str(n) + " name='" + gVarMeta(n)\name + "' structFieldBase=" + Str(gVarMeta(n)\structFieldBase)
+                  ; Debug "V1.030.63 ASSIGN_LHS: LHS='" + *x\left\value + "' slot=" + Str(n) + " name='" + gVarMeta(n)\name + "' structFieldBase=" + Str(gVarMeta(n)\structFieldBase)
                EndIf
 
                ; V1.022.65: Check for struct-to-struct copy (same type required)
@@ -2591,7 +2591,7 @@
                   ; Mark as allocated to prevent later field access from allocating new memory
                   gVarMeta(n)\structAllocEmitted = #True
                   CompilerIf #DEBUG
-                     Debug "V1.034.24: Emitted STORE_STRUCT j=1 for '" + gVarMeta(n)\name + "' at offset " + Str(gVarMeta(n)\paramOffset)
+                     ; Debug "V1.034.24: Emitted STORE_STRUCT j=1 for '" + gVarMeta(n)\name + "' at offset " + Str(gVarMeta(n)\paramOffset)
                   CompilerEndIf
                ElseIf gVarMeta(n)\flags & #C2FLAG_STR
                   EmitInt( #ljSTORES, n )
@@ -3334,7 +3334,7 @@
             Protected ljfDebugId.i = Val(*x\value)
             CompilerIf #DEBUG
                If ljfDebugId >= 5 And ljfDebugId <= 8
-                  Debug "V1.029.75: #ljFunction funcId=" + Str(ljfDebugId)
+                  ; Debug "V1.029.75: #ljFunction funcId=" + Str(ljfDebugId)
                EndIf
             CompilerEndIf
             ForEach mapModules()
@@ -3395,7 +3395,7 @@
                            ; TODO: Handle multiple struct params or struct params in non-first positions
                            gVarMeta(ljfVarIdx)\paramOffset = gCodeGenParamIndex
                            CompilerIf #DEBUG
-                              Debug "V1.029.68: Set struct param '" + gVarMeta(ljfVarIdx)\name + "' paramOffset=" + Str(gVarMeta(ljfVarIdx)\paramOffset)
+                              ; Debug "V1.029.68: Set struct param '" + gVarMeta(ljfVarIdx)\name + "' paramOffset=" + Str(gVarMeta(ljfVarIdx)\paramOffset)
                            CompilerEndIf
                         EndIf
                      EndIf
@@ -3422,7 +3422,7 @@
 
             leftType    = GetExprResultType(*x\left)
             rightType   = GetExprResultType(*x\right)
-            Debug "V1.030.41: BINARY OP " + Str(*x\NodeType) + " leftType=" + Str(leftType) + " rightType=" + Str(rightType) + " FLOAT=" + Str(#C2FLAG_FLOAT)
+            ; Debug "V1.030.41: BINARY OP " + Str(*x\NodeType) + " leftType=" + Str(leftType) + " rightType=" + Str(rightType) + " FLOAT=" + Str(#C2FLAG_FLOAT)
 
             ; With proper stack frames, parameters are stack-local and won't be corrupted
             ; No need for temp variables or special handling

@@ -41,7 +41,7 @@
       ; V1.030.51: Debug slot 176 structType on EVERY GetExprResultType call
       Static gert176LastStructType.s = ""
       If gnLastVariable > 176 And gVarMeta(176)\structType <> gert176LastStructType
-         Debug "V1.030.51: GetExprResultType ENTRY slot176 CHANGED! was '" + gert176LastStructType + "' now '" + gVarMeta(176)\structType + "' node=" + *x\nodeType + " value='" + *x\value + "'"
+         ; Debug "V1.030.51: GetExprResultType ENTRY slot176 CHANGED! was '" + gert176LastStructType + "' now '" + gVarMeta(176)\structType + "' node=" + *x\nodeType + " value='" + *x\value + "'"
          gert176LastStructType = gVarMeta(176)\structType
       EndIf
 
@@ -142,7 +142,7 @@
                Protected dotStructSlot.i = -1
                Protected dotStructTypeName.s = ""
 
-               Debug "V1.030.41: GetExprResultType DOT '" + *x\value + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
+               ; Debug "V1.030.41: GetExprResultType DOT '" + *x\value + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
 
                ; Look for mangled local struct first
                If gCurrentFunctionName <> ""
@@ -151,7 +151,7 @@
                      If LCase(Trim(gVarMeta(n)\name)) = LCase(dotMangledName) And (gVarMeta(n)\flags & #C2FLAG_STRUCT)
                         dotStructSlot = n
                         dotStructTypeName = gVarMeta(n)\structType
-                        Debug "V1.030.41: GetExprResultType MANGLED FOUND slot=" + Str(n) + " structType='" + dotStructTypeName + "'"
+                        ; Debug "V1.030.41: GetExprResultType MANGLED FOUND slot=" + Str(n) + " structType='" + dotStructTypeName + "'"
                         Break
                      EndIf
                   Next
@@ -160,7 +160,7 @@
                ; Check for struct variable by structType (non-mangled name)
                ; V1.030.43: Dump all variables to understand what's stored
                If dotStructSlot < 0
-                  Debug "V1.030.43: SEARCHING for struct '" + dotStructName + "' in " + Str(gnLastVariable) + " variables:"
+                  ; Debug "V1.030.43: SEARCHING for struct '" + dotStructName + "' in " + Str(gnLastVariable) + " variables:"
                   For n = 0 To gnLastVariable - 1
                      If gVarMeta(n)\structType <> "" Or (gVarMeta(n)\flags & #C2FLAG_STRUCT)
                         Debug "  [" + Str(n) + "] name='" + gVarMeta(n)\name + "' structType='" + gVarMeta(n)\structType + "' paramOffset=" + Str(gVarMeta(n)\paramOffset)
@@ -168,7 +168,7 @@
                      If LCase(Trim(gVarMeta(n)\name)) = LCase(dotStructName) And gVarMeta(n)\structType <> ""
                         dotStructSlot = n
                         dotStructTypeName = gVarMeta(n)\structType
-                        Debug "V1.030.43: GetExprResultType STRUCT FOUND slot=" + Str(n) + " structType='" + dotStructTypeName + "'"
+                        ; Debug "V1.030.43: GetExprResultType STRUCT FOUND slot=" + Str(n) + " structType='" + dotStructTypeName + "'"
                         Break
                      EndIf
                   Next
@@ -178,7 +178,7 @@
                ; This handles case when gCurrentFunctionName is empty but param is mangled
                If dotStructSlot < 0
                   Protected dotSuffix.s = "_" + LCase(dotStructName)
-                  Debug "V1.030.44: SUFFIX SEARCH for '" + dotStructName + "' suffix='" + dotSuffix + "' len=" + Str(Len(dotSuffix))
+                  ; Debug "V1.030.44: SUFFIX SEARCH for '" + dotStructName + "' suffix='" + dotSuffix + "' len=" + Str(Len(dotSuffix))
                   For n = 0 To gnLastVariable - 1
                      ; Debug all struct vars during suffix search
                      If gVarMeta(n)\structType <> "" Or (gVarMeta(n)\flags & #C2FLAG_STRUCT)
@@ -188,14 +188,14 @@
                      If Right(LCase(gVarMeta(n)\name), Len(dotSuffix)) = dotSuffix And gVarMeta(n)\structType <> ""
                         dotStructSlot = n
                         dotStructTypeName = gVarMeta(n)\structType
-                        Debug "V1.030.44: SUFFIX MATCH FOUND slot=" + Str(n) + " name='" + gVarMeta(n)\name + "' structType='" + dotStructTypeName + "'"
+                        ; Debug "V1.030.44: SUFFIX MATCH FOUND slot=" + Str(n) + " name='" + gVarMeta(n)\name + "' structType='" + dotStructTypeName + "'"
                         Break
                      EndIf
                   Next
                EndIf
 
                If dotStructSlot < 0
-                  Debug "V1.030.44: GetExprResultType struct NOT FOUND for '" + dotStructName + "'"
+                  ; Debug "V1.030.44: GetExprResultType struct NOT FOUND for '" + dotStructName + "'"
                EndIf
 
                ; Try global struct if not found as local or param
@@ -204,7 +204,7 @@
                      If LCase(Trim(gVarMeta(n)\name)) = LCase(dotStructName) And (gVarMeta(n)\flags & #C2FLAG_STRUCT)
                         dotStructSlot = n
                         dotStructTypeName = gVarMeta(n)\structType
-                        Debug "V1.030.44: GLOBAL STRUCT FOUND slot=" + Str(n) + " name='" + gVarMeta(n)\name + "'"
+                        ; Debug "V1.030.44: GLOBAL STRUCT FOUND slot=" + Str(n) + " name='" + gVarMeta(n)\name + "'"
                         Break
                      EndIf
                   Next
@@ -223,7 +223,7 @@
                         ForEach mapStructDefs()\fields()
                            If LCase(mapStructDefs()\fields()\name) = LCase(dotCurrentField)
                               dotFinalType = mapStructDefs()\fields()\fieldType
-                              Debug "V1.030.41: GetExprResultType field '" + dotCurrentField + "' type=" + Str(dotFinalType) + " (FLOAT=" + Str(#C2FLAG_FLOAT) + ")"
+                              ; Debug "V1.030.41: GetExprResultType field '" + dotCurrentField + "' type=" + Str(dotFinalType) + " (FLOAT=" + Str(#C2FLAG_FLOAT) + ")"
                               ; Check if this field is a nested struct
                               If mapStructDefs()\fields()\structType <> ""
                                  dotCurrentType = mapStructDefs()\fields()\structType
@@ -233,7 +233,7 @@
                         Next
                      EndIf
                   Next
-                  Debug "V1.030.41: GetExprResultType RETURNING type=" + Str(dotFinalType) + " for '" + *x\value + "'"
+                  ; Debug "V1.030.41: GetExprResultType RETURNING type=" + Str(dotFinalType) + " for '" + *x\value + "'"
                   ProcedureReturn dotFinalType
                EndIf
             EndIf
@@ -713,12 +713,12 @@
                If exprResultType & #C2FLAG_FLOAT
                   llObjects()\code = #ljSTOREF
                   CompilerIf #DEBUG
-                     Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STOREF j=1 (float)"
+                     ; Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STOREF j=1 (float)"
                   CompilerEndIf
                ElseIf exprResultType & #C2FLAG_STR
                   llObjects()\code = #ljSTORES
                   CompilerIf #DEBUG
-                     Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STORES j=1 (string)"
+                     ; Debug "V1.034.16: Complex expr to LOCAL[" + Str(complexLocalOffset) + "] using STORES j=1 (string)"
                   CompilerEndIf
                Else
                   llObjects()\code = #ljStore

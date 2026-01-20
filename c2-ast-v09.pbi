@@ -1,4 +1,4 @@
-﻿; -- lexical parser to VM for a simplified C Language
+; -- lexical parser to VM for a simplified C Language
 ; Tested in UTF8
 ; PBx64 v6.20
 ;
@@ -1014,13 +1014,13 @@
                ; With \ptr storage model, struct params use 1 slot (NOT inflated by field count)
                If op = #ljPOP And *e\NodeType = #ljIDENT And *e\value <> ""
                   Protected epStructDotPos.i = FindString(*e\value, ".")
-                  Debug "V1.030.45: expand_params IDENT value='" + *e\value + "' dotPos=" + Str(epStructDotPos)
+                  ; Debug "V1.030.45: expand_params IDENT value='" + *e\value + "' dotPos=" + Str(epStructDotPos)
                   If epStructDotPos > 0 And epStructDotPos < Len(*e\value)
                      Protected epStructTypeName.s = Mid(*e\value, epStructDotPos + 1)
-                     Debug "V1.030.45: expand_params structTypeName='" + epStructTypeName + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
+                     ; Debug "V1.030.45: expand_params structTypeName='" + epStructTypeName + "' gCurrentFunctionName='" + gCurrentFunctionName + "'"
                      ; Check if suffix is a known struct type (not primitive .i, .f, .s, .d)
                      If LCase(epStructTypeName) <> "i" And LCase(epStructTypeName) <> "f" And LCase(epStructTypeName) <> "s" And LCase(epStructTypeName) <> "d"
-                        Debug "V1.030.45: expand_params checking mapStructDefs for '" + epStructTypeName + "' exists=" + Str(Bool(FindMapElement(mapStructDefs(), epStructTypeName)))
+                        ; Debug "V1.030.45: expand_params checking mapStructDefs for '" + epStructTypeName + "' exists=" + Str(Bool(FindMapElement(mapStructDefs(), epStructTypeName)))
                         If FindMapElement(mapStructDefs(), epStructTypeName)
                            ; V1.029.82: Get struct size for metadata but DON'T inflate nParams
                            ; With \ptr storage, struct params use 1 slot (pass by reference)
@@ -1056,7 +1056,7 @@
                            gVarMeta(epBaseSlot)\flags = #C2FLAG_STRUCT | #C2FLAG_IDENT | #C2FLAG_PARAM
                            gVarMeta(epBaseSlot)\structType = epStructTypeName
                            gVarMeta(epBaseSlot)\elementSize = epStructSize
-                           Debug "V1.030.45: expand_params SET structType='" + epStructTypeName + "' for slot=" + Str(epBaseSlot) + " name='" + gVarMeta(epBaseSlot)\name + "'"
+                           ; Debug "V1.030.45: expand_params SET structType='" + epStructTypeName + "' for slot=" + Str(epBaseSlot) + " name='" + gVarMeta(epBaseSlot)\name + "'"
                            ; paramOffset will be set properly in codegen
 
                            ; V1.029.82: With \ptr storage, DON'T reserve field slots
@@ -2253,7 +2253,7 @@
                   CopyStructure(mapStructDefs(), @structDef, stStructDef)
                   NextToken()
 
-                  Debug "V1.037.2: STRUCT DETECTED '" + structVarName + "." + structTypeName + "' next token type=" + Str(TOKEN()\TokenType) + " extra=" + Str(TOKEN()\TokenExtra) + " value='" + TOKEN()\value + "' (#ljSemi=" + Str(#ljSemi) + ")"
+                  ; Debug "V1.037.2: STRUCT DETECTED '" + structVarName + "." + structTypeName + "' next token type=" + Str(TOKEN()\TokenType) + " extra=" + Str(TOKEN()\TokenExtra) + " value='" + TOKEN()\value + "' (#ljSemi=" + Str(#ljSemi) + ")"
 
                   ; V1.022.48: Check for field access (auto-declaration on first use)
                   ; Syntax: varName.StructType\field = value
@@ -2261,9 +2261,9 @@
                      ; Auto-declare struct variable and handle field assignment
                      ; V1.029.89: Force local creation when struct type annotation present
                      ; V1.030.14: Debug - check gCurrentFunctionName during AST struct creation
-                     Debug "V1.030.14: AST STRUCT FIELD - structVarName='" + structVarName + "' gCurrentFunctionName='" + gCurrentFunctionName + "' gCodeGenFunction=" + Str(gCodeGenFunction) + " TOKEN().function=" + Str(TOKEN()\function)
+                     ; Debug "V1.030.14: AST STRUCT FIELD - structVarName='" + structVarName + "' gCurrentFunctionName='" + gCurrentFunctionName + "' gCodeGenFunction=" + Str(gCodeGenFunction) + " TOKEN().function=" + Str(TOKEN()\function)
                      Protected autoDeclBaseSlot.i = FetchVarOffset(structVarName, 0, 0, #True)
-                     Debug "V1.030.14: AST STRUCT CREATED at slot=" + Str(autoDeclBaseSlot) + " name='" + gVarMeta(autoDeclBaseSlot)\name + "' paramOffset=" + Str(gVarMeta(autoDeclBaseSlot)\paramOffset)
+                     ; Debug "V1.030.14: AST STRUCT CREATED at slot=" + Str(autoDeclBaseSlot) + " name='" + gVarMeta(autoDeclBaseSlot)\name + "' paramOffset=" + Str(gVarMeta(autoDeclBaseSlot)\paramOffset)
                      gVarMeta(autoDeclBaseSlot)\flags = #C2FLAG_STRUCT | #C2FLAG_IDENT
                      gVarMeta(autoDeclBaseSlot)\structType = structTypeName
                      gVarMeta(autoDeclBaseSlot)\elementSize = structDef\totalSize
@@ -2273,7 +2273,7 @@
                      ; Field access is handled through the base slot's structType lookup.
 
                      CompilerIf #DEBUG
-                        Debug "V1.022.48: Auto-declared struct '" + structVarName + "' of type '" + structTypeName + "' at slot " + Str(autoDeclBaseSlot)
+                        ; Debug "V1.022.48: Auto-declared struct '" + structVarName + "' of type '" + structTypeName + "' at slot " + Str(autoDeclBaseSlot)
                      CompilerEndIf
 
                      ; Move past backslash
@@ -3011,7 +3011,7 @@
                                     gVarMeta(stmtAutoSlot)\structFieldBase = -1
                                     gVarMeta(stmtAutoSlot)\paramOffset = -1
                                     CompilerIf #DEBUG
-                                       Debug "V1.030.37: Auto-created struct '" + stmtAutoCreateName + "' of type " + stmtTypeTypeName + " at slot " + Str(stmtAutoSlot)
+                                       ; Debug "V1.030.37: Auto-created struct '" + stmtAutoCreateName + "' of type " + stmtTypeTypeName + " at slot " + Str(stmtAutoSlot)
                                     CompilerEndIf
                                  EndIf
                                  ; Update stmtStructVarName to just the base name for subsequent lookup
