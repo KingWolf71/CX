@@ -1,9 +1,10 @@
 ; ============================================================================
-; D+AI Test Runner
+; D-Plus Test Runner
 ; ============================================================================
 ; Automatically runs all source test files in Examples directory
 ; Captures output, timing, and creates JSON results
 ; Compares with previous runs to detect regressions
+; V1.039.37 - Refactored to use PureBasic JSON library
 ; ============================================================================
 
 EnableExplicit
@@ -58,7 +59,7 @@ Global newCount.i
 UseMD5Fingerprint()
 
 ; ============================================================================
-; JSON Helper Procedures
+; Helper Procedures
 ; ============================================================================
 
 Procedure.s ComputeFileHash(filepath.s)
@@ -76,75 +77,48 @@ Procedure.s ComputeFileHash(filepath.s)
   ProcedureReturn hash
 EndProcedure
 
-Procedure.s EscapeJSON(text.s)
-  ; Escape special characters for JSON
-  Protected result.s
-  Protected i.i
-  Protected c.s
-
-  result = ""
-  For i = 1 To Len(text)
-    c = Mid(text, i, 1)
-    Select c
-      Case #DOUBLEQUOTE$
-        result + "\" + #DOUBLEQUOTE$
-      Case "\"
-        result + "\\"
-      Case #LF$
-        result + "\n"
-      Case #CR$
-        result + "\r"
-      Case #TAB$
-        result + "\t"
-      Default
-        result + c
-    EndSelect
-  Next
-
-  ProcedureReturn result
-EndProcedure
-
 Procedure SaveTestResultsJSON(filename.s)
-  ; Save test results to JSON file
+  ; Save test results to JSON file using PureBasic JSON library
+  Protected json.i, rootObj.i, testsArray.i, testObj.i
   Protected file.i
-  Protected first.i
-  Protected json.s
 
-  file = CreateFile(#PB_Any, filename)
-  If Not file
-    PrintN("ERROR: Cannot create results file: " + filename)
+  json = CreateJSON(#PB_Any)
+  If Not json
+    PrintN("ERROR: Cannot create JSON object")
     ProcedureReturn
   EndIf
 
-  WriteStringN(file, "{")
-  WriteStringN(file, "  " + #DOUBLEQUOTE$ + "timestamp" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()) + #DOUBLEQUOTE$ + ",")
-  WriteStringN(file, "  " + #DOUBLEQUOTE$ + "testCount" + #DOUBLEQUOTE$ + ": " + Str(testCount) + ",")
-  WriteStringN(file, "  " + #DOUBLEQUOTE$ + "tests" + #DOUBLEQUOTE$ + ": [")
+  rootObj = SetJSONObject(JSONValue(json))
 
-  first = #True
+  ; Add metadata
+  SetJSONString(AddJSONMember(rootObj, "timestamp"), FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()))
+  SetJSONInteger(AddJSONMember(rootObj, "testCount"), testCount)
+
+  ; Add tests array
+  testsArray = SetJSONArray(AddJSONMember(rootObj, "tests"))
+
   ForEach gTests()
-    If Not first
-      WriteStringN(file, ",")
-    EndIf
-    first = #False
-
-    WriteStringN(file, "    {")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "filename" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + EscapeJSON(gTests()\filename) + #DOUBLEQUOTE$ + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "elapsed" + #DOUBLEQUOTE$ + ": " + Str(gTests()\elapsed) + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "exitCode" + #DOUBLEQUOTE$ + ": " + Str(gTests()\exitCode) + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "error" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + EscapeJSON(gTests()\error) + #DOUBLEQUOTE$ + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "timestamp" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + gTests()\timestamp + #DOUBLEQUOTE$ + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "sourceHash" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + gTests()\sourceHash + #DOUBLEQUOTE$ + ",")
-    WriteStringN(file, "      " + #DOUBLEQUOTE$ + "output" + #DOUBLEQUOTE$ + ": " + #DOUBLEQUOTE$ + EscapeJSON(gTests()\output) + #DOUBLEQUOTE$)
-    WriteString(file, "    }")
+    testObj = SetJSONObject(AddJSONElement(testsArray))
+    SetJSONString(AddJSONMember(testObj, "filename"), gTests()\filename)
+    SetJSONInteger(AddJSONMember(testObj, "elapsed"), gTests()\elapsed)
+    SetJSONInteger(AddJSONMember(testObj, "exitCode"), gTests()\exitCode)
+    SetJSONString(AddJSONMember(testObj, "error"), gTests()\error)
+    SetJSONString(AddJSONMember(testObj, "timestamp"), gTests()\timestamp)
+    SetJSONString(AddJSONMember(testObj, "sourceHash"), gTests()\sourceHash)
+    SetJSONString(AddJSONMember(testObj, "output"), gTests()\output)
   Next
 
-  WriteStringN(file, "")
-  WriteStringN(file, "  ]")
-  WriteStringN(file, "}")
+  ; Write to file with formatting
+  file = CreateFile(#PB_Any, filename)
+  If file
+    WriteString(file, ComposeJSON(json, #PB_JSON_PrettyPrint))
+    CloseFile(file)
+    PrintN("Results saved to: " + filename)
+  Else
+    PrintN("ERROR: Cannot create results file: " + filename)
+  EndIf
 
-  CloseFile(file)
-  PrintN("Results saved to: " + filename)
+  FreeJSON(json)
 EndProcedure
 
 Procedure SaveDiffFile(filename.s)
@@ -167,7 +141,7 @@ Procedure SaveDiffFile(filename.s)
   EndIf
 
   WriteStringN(file, "================================================================================")
-  WriteStringN(file, "LJ2 Test Diff Report - " + FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()))
+  WriteStringN(file, "D-Plus Test Diff Report - " + FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()))
   WriteStringN(file, "================================================================================")
   WriteStringN(file, "")
   WriteStringN(file, "Changed files: " + Str(ListSize(gChangedFiles())))
@@ -220,85 +194,76 @@ Procedure SaveDiffFile(filename.s)
 EndProcedure
 
 Procedure LoadTestResultsJSON(filename.s)
-  ; Load previous test results from JSON file (simple parser)
-  Protected file.i
-  Protected json.s
-  Protected line.s
-  Protected *test.TestResult
-  Protected inTest.i
-  Protected pos.i
-  Protected key.s
-  Protected value.s
+  ; Load previous test results from JSON file using PureBasic JSON library
+  Protected json.i, rootValue.i, testsArray.i, testObj.i
+  Protected i.i, testCount.i
 
   If Not FileSize(filename) > 0
     ProcedureReturn
   EndIf
 
-  file = ReadFile(#PB_Any, filename)
-  If Not file
+  json = LoadJSON(#PB_Any, filename)
+  If Not json
     ProcedureReturn
   EndIf
 
-  inTest = #False
-  While Not Eof(file)
-    line = Trim(ReadString(file))
+  rootValue = JSONValue(json)
+  If JSONType(rootValue) <> #PB_JSON_Object
+    FreeJSON(json)
+    ProcedureReturn
+  EndIf
 
-    If FindString(line, "{", 1) And Not FindString(line, "timestamp", 1) And Not FindString(line, "testCount", 1) And Not FindString(line, "tests", 1)
-      ; Start of test object
-      AddElement(gPrevTests())
-      inTest = #True
-    ElseIf inTest And FindString(line, "filename", 1)
-      pos = FindString(line, ":", 1)
-      If pos
-        value = Trim(Mid(line, pos + 1))
-        value = Trim(value, #DOUBLEQUOTE$)
-        value = RTrim(value, ",")
-        value = RTrim(value, #DOUBLEQUOTE$)
-        gPrevTests()\filename = value
-      EndIf
-    ElseIf inTest And FindString(line, "elapsed", 1)
-      pos = FindString(line, ":", 1)
-      If pos
-        value = Trim(Mid(line, pos + 1))
-        value = RTrim(value, ",")
-        gPrevTests()\elapsed = Val(value)
-      EndIf
-    ElseIf inTest And FindString(line, "exitCode", 1)
-      pos = FindString(line, ":", 1)
-      If pos
-        value = Trim(Mid(line, pos + 1))
-        value = RTrim(value, ",")
-        gPrevTests()\exitCode = Val(value)
-      EndIf
-    ElseIf inTest And FindString(line, "sourceHash", 1)
-      pos = FindString(line, ":", 1)
-      If pos
-        value = Trim(Mid(line, pos + 1))
-        value = Trim(value, #DOUBLEQUOTE$)
-        value = RTrim(value, ",")
-        value = RTrim(value, #DOUBLEQUOTE$)
-        gPrevTests()\sourceHash = value
-      EndIf
-    ElseIf inTest And FindString(line, "output", 1)
-      pos = FindString(line, ":", 1)
-      If pos
-        value = Trim(Mid(line, pos + 1))
-        value = Trim(value, #DOUBLEQUOTE$)
-        value = RTrim(value, #DOUBLEQUOTE$)
-        ; Unescape JSON sequences
-        value = ReplaceString(value, "\n", #LF$)
-        value = ReplaceString(value, "\r", #CR$)
-        value = ReplaceString(value, "\t", #TAB$)
-        value = ReplaceString(value, "\\", "\")
-        value = ReplaceString(value, "\" + #DOUBLEQUOTE$, #DOUBLEQUOTE$)
-        gPrevTests()\output = value
-      EndIf
-    ElseIf FindString(line, "}", 1) And inTest
-      inTest = #False
-    EndIf
-  Wend
+  ; Get tests array
+  testsArray = GetJSONMember(rootValue, "tests")
+  If testsArray And JSONType(testsArray) = #PB_JSON_Array
+    testCount = JSONArraySize(testsArray)
 
-  CloseFile(file)
+    For i = 0 To testCount - 1
+      testObj = GetJSONElement(testsArray, i)
+      If testObj And JSONType(testObj) = #PB_JSON_Object
+        AddElement(gPrevTests())
+
+        Protected memberValue.i
+
+        memberValue = GetJSONMember(testObj, "filename")
+        If memberValue And JSONType(memberValue) = #PB_JSON_String
+          gPrevTests()\filename = GetJSONString(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "elapsed")
+        If memberValue And JSONType(memberValue) = #PB_JSON_Number
+          gPrevTests()\elapsed = GetJSONInteger(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "exitCode")
+        If memberValue And JSONType(memberValue) = #PB_JSON_Number
+          gPrevTests()\exitCode = GetJSONInteger(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "error")
+        If memberValue And JSONType(memberValue) = #PB_JSON_String
+          gPrevTests()\error = GetJSONString(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "timestamp")
+        If memberValue And JSONType(memberValue) = #PB_JSON_String
+          gPrevTests()\timestamp = GetJSONString(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "sourceHash")
+        If memberValue And JSONType(memberValue) = #PB_JSON_String
+          gPrevTests()\sourceHash = GetJSONString(memberValue)
+        EndIf
+
+        memberValue = GetJSONMember(testObj, "output")
+        If memberValue And JSONType(memberValue) = #PB_JSON_String
+          gPrevTests()\output = GetJSONString(memberValue)
+        EndIf
+      EndIf
+    Next
+  EndIf
+
+  FreeJSON(json)
   PrintN("Loaded previous results: " + Str(ListSize(gPrevTests())) + " tests")
 EndProcedure
 
@@ -564,7 +529,7 @@ Procedure Main()
   EndIf
 
   PrintN("============================================================================")
-  PrintN("LJ2 Test Runner v1.8 | Compiler: " + compilerVersion)
+  PrintN("D-Plus Test Runner v1.9 | Compiler: " + compilerVersion)
   PrintN("============================================================================")
   PrintN("")
 
