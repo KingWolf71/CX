@@ -1,11 +1,11 @@
 ; ============================================================================
-; D-Plus Serialization Module v02
+; CX Serialization Module v02
 ; ============================================================================
-; Handles saving/loading compiled .od (Object D) files
+; Handles saving/loading compiled .ocx (Object CX) files
 ; Binary format with JSON header for metadata
 ;
 ; File Format:
-;   [8 bytes]  Magic: "DAIOBJ01"
+;   [8 bytes]  Magic: "CXOBJ001"
 ;   [4 bytes]  JSON header length
 ;   [N bytes]  JSON header (UTF-8)
 ;   [4 bytes]  Bytecode instruction count

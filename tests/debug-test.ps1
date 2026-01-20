@@ -1,6 +1,6 @@
-param([string]$testFile = "069 test typed pointer opcodes.d")
+param([string]$testFile = "069 test typed pointer opcodes.cx")
 
-$proc = Start-Process -FilePath '.\dpai.exe' -ArgumentList '--test', ".\Examples\$testFile" -NoNewWindow -PassThru -RedirectStandardOutput 'debug-out.txt' -RedirectStandardError 'debug-err.txt'
+$proc = Start-Process -FilePath '.\cx.exe' -ArgumentList '--test', ".\Examples\$testFile" -NoNewWindow -PassThru -RedirectStandardOutput 'debug-out.txt' -RedirectStandardError 'debug-err.txt'
 $completed = $proc.WaitForExit(15000)
 if (-not $completed) {
     $proc.Kill()

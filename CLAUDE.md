@@ -1,10 +1,10 @@
 1. Priority is on VM execution speed
 2. Windows Purebasic path D:\WIP\APPS\PureBasic.610
-3. Linux compilation: wsl -d Ubuntu-24.04 -e bash -c "export PUREBASIC_HOME=/home/terence/Apps/purebasic621 && cd /mnt/d/OneDrive/WIP/Sources/D-Plus.2026 && \$PUREBASIC_HOME/compilers/pbcompiler c2-modules-V25.pb -e dpai_linux -t -cl 2>&1" (use -t for thread-safe, -cl for console mode)
+3. Linux compilation: wsl -d Ubuntu-24.04 -e bash -c "export PUREBASIC_HOME=/home/terence/Apps/purebasic621 && cd /mnt/d/OneDrive/WIP/Sources/Intense.2020/CX && \$PUREBASIC_HOME/compilers/pbcompiler c2-modules-V25.pb -e cx_linux -t -cl 2>&1" (use -t for thread-safe, -cl for console mode)
 4. Windows compilation:
-    - Console version: pbcompiler /OPTIMIZER /THREAD /DYNAMICCPU /CONSOLE c2-modules-V25.pb /EXE dpai.exe
-    - Windows version: pbcompiler /OPTIMIZER /THREAD /DYNAMICCPU c2-modules-V25.pb /EXE dpai-win.exe (shows splash during compilation)
-    - Splash screen: pbcompiler splash.pb /EXE splash.exe (required for dpai-win.exe)
+    - Console version: pbcompiler /OPTIMIZER /THREAD /DYNAMICCPU /CONSOLE c2-modules-V25.pb /EXE cx.exe
+    - Windows version: pbcompiler /OPTIMIZER /THREAD /DYNAMICCPU c2-modules-V25.pb /EXE cx-win.exe (shows splash during compilation)
+    - Splash screen: pbcompiler splash.pb /EXE splash.exe (required for cx-win.exe)
 5. Always leave definitions at beginning of procedure - no exceptions
 6. No procedure static variables; we use global variables which can be reset between runs
 7. If there is an _*.ver file add a .1 everytime we interact (MAJ.MIN.FIX)
@@ -17,23 +17,23 @@
 14. Use powershell commands
 15. gVarMeta CANNOT be used in VM code as VM needs to work independently of compiler
 16. var1 + var2 is the same as var1 = var1 + var2 and va1 - var2 is the same as var1 = var1 - var2
-17. LJ Language is meant to be built for speed of execution
+17. CX Language is meant to be built for speed of execution
 18. Don't use intermidiate variables in VM code; use macros instead for readility
 19. Create a 7z backup with version under backups\ at least 2 times a day and before any major version
 20. No structure unions; we need to maintain compatibility with Spiderbasic
 21. Linux GUI runs non-threaded (GTK threading causes issues); Windows GUI uses threading with timer-based queue processing
-22. Command line: dpai.exe [options] <file.d|file.od>
+22. Command line: cx.exe [options] <file.cx|file.ocx>
     - -h, --help: Show help message
     - -c, -t, --console: Run in console/test mode (no GUI)
-    - -C, --compile: Compile to .od file without running
-    - -o, --output <file>: Specify output filename for .od
-    - --no-source: Don't embed source in .od file
+    - -C, --compile: Compile to .ocx file without running
+    - -o, --output <file>: Specify output filename for .ocx
+    - --no-source: Don't embed source in .ocx file
     - -a, --asm: Output clean ASM listing to .asm file
     - --asm-debug: Output detailed ASM with FLAGS/slot info
     - --asm-decimal: Use decimal line numbers in ASM (default: hex)
     - -x, --autoquit <s>: Auto-close after <s> seconds
-    - --no-od: Don't create .od file (compile and run only)
-    - Auto-detects .d (source) vs .od (compiled) files
+    - --no-od: Don't create .ocx file (compile and run only)
+    - Auto-detects .cx (source) vs .ocx (compiled) files
 23. Test runner: tests/run-tests-win.ps1 runs all example tests on Windows
 24. Stack size: 8MB via linker.txt for large compilation (comprehensive tests)
 25. Delete executables prior to compile - always

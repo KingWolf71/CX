@@ -50,23 +50,23 @@
 #C2PROFILER_LOG   = 0     ; V1.031.112: Append profiler data to cumulative log file
 #VM_INLINE_HOT    = 0     ; V1.038.2: Disabled - causes infinite loop (needs investigation)
 
-; V1.038.60: D+AI File Extension - configurable source file extension
-#C2_FILE_EXT$     = ".d"              ; Source file extension (formerly .lj)
-#C2_FILE_FILTER$  = "D Files|*.d"     ; File dialog filter
-#C2_FILE_PATTERN$ = "*.d"             ; File pattern for directory scanning
+; V1.038.60: CX File Extension - configurable source file extension
+#C2_FILE_EXT$     = ".cx"             ; Source file extension (formerly .d, .lj)
+#C2_FILE_FILTER$  = "CX Files|*.cx"   ; File dialog filter
+#C2_FILE_PATTERN$ = "*.cx"            ; File pattern for directory scanning
 
 ; V1.039.0: Build type modes - compile with different #BUILD_TYPE for each executable
 #BUILD_GUI        = 0                 ; Full GUI + compiler + VM (default)
-#BUILD_COMPILER   = 1                 ; Command-line compiler + VM (auto-detects .d vs .od)
+#BUILD_COMPILER   = 1                 ; Command-line compiler + VM (auto-detects .cx vs .ocx)
 
 ;#BUILD_TYPE       = #BUILD_GUI         ; <-- Change this to build different modes
 #BUILD_TYPE       = #BUILD_COMPILER   
 
-; V1.039.0: .od (Object D) file format constants
-#OD_MAGIC$        = "DAIOBJ01"        ; Magic number for .od files (8 bytes)
+; V1.039.0: .ocx (Object CX) file format constants
+#OD_MAGIC$        = "CXOBJ001"        ; Magic number for .ocx files (8 bytes)
 #OD_VERSION$      = "1.0"             ; Format version
-#OD_FILE_EXT$     = ".od"             ; Compiled object file extension
-#OD_INCLUDE_SOURCE = 1                ; 1=embed source in .od, 0=omit
+#OD_FILE_EXT$     = ".ocx"            ; Compiled object file extension
+#OD_INCLUDE_SOURCE = 1                ; 1=embed source in .ocx, 0=omit
 
 #INV$             = ~"\""
 #C2MAXTOKENS      = 500   ; Legacy, use #C2TOKENCOUNT for actual count

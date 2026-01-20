@@ -1,4 +1,4 @@
-# D-Plus Compiler & Virtual Machine
+# CX Compiler & Virtual Machine
 
 **Version:** 1.039.26
 **Language:** PureBasic (v6.10+)
@@ -6,7 +6,7 @@
 
 ## Overview
 
-D-Plus is a high-performance compiler and virtual machine for a simplified C-like language. The project prioritizes **VM execution speed** above all else, implementing aggressive optimizations at both compile-time and runtime.
+CX is a high-performance compiler and virtual machine for a simplified C-like language. The project prioritizes **VM execution speed** above all else, implementing aggressive optimizations at both compile-time and runtime.
 
 The language features:
 - C-style syntax with semicolon-terminated statements
@@ -25,10 +25,10 @@ The language features:
 
 ### Compiler Pipeline
 
-The D-Plus compiler follows a multi-stage pipeline:
+The CX compiler follows a multi-stage pipeline:
 
 ```
-Source Code (.d)
+Source Code (.cx)
     ↓
 [1] Preprocessor  → Macro expansion, pragma processing
     ↓
@@ -73,7 +73,7 @@ Bytecode Array (arCode)
 
 ### Support Files
 
-- `_dpai.ver` - Version tracking (MAJ.MIN.FIX format)
+- `_cx.ver` - Version tracking (MAJ.MIN.FIX format)
 - `CLAUDE.md` - Development guidelines for AI assistance
 - `DOCS/` - Detailed documentation on each compiler phase
 - `Examples/` - Test programs and language demonstrations
@@ -190,41 +190,11 @@ gStack[depth]
 
 **Command Line:**
 ```bash
-dpai.exe program.d               # Run with GUI
-dpai.exe -c program.d            # Run in console mode (no GUI)
-dpai.exe -C program.d            # Compile only to .od file
-dpai.exe -a program.d            # Output ASM listing
-dpai.exe -x 5 program.d          # Auto-close after 5 seconds
-```
-
-### Example Program
-
-```c
-// Example: Array operations with functions
-#pragma console on
-#pragma appname "Array Demo"
-#pragma version
-
-array global_ints.i[10];
-
-function fillArray() {
-    array local_data.i[5];
-
-    i = 0;
-    while i < 5 {
-        local_data[i] = i * 10;
-        global_ints[i] = local_data[i];
-        i = i + 1;
-    }
-}
-
-fillArray();
-
-i = 0;
-while i < 5 {
-    print("global_ints[", i, "] = ", global_ints[i]);
-    i = i + 1;
-}
+cx.exe program.cx               # Run with GUI
+cx.exe -c program.cx            # Run in console mode (no GUI)
+cx.exe -C program.cx            # Compile only to .ocx file
+cx.exe -a program.cx            # Output ASM listing
+cx.exe -x 5 program.cx          # Auto-close after 5 seconds
 ```
 
 ### Pragma Directives
@@ -288,20 +258,50 @@ See `CLAUDE.md` for detailed development instructions, including:
 
 ### Test Suite
 The `Examples/` folder contains comprehensive tests:
-- `120 comprehensive test1.d` - Full language feature test
-- `005 Floats and Macros.d` - Float operations and macro expansion
-- `043 array comprehensive.d` - Array operations (all types)
-- `122 full test suite.d` - Complete feature coverage
+- `120 comprehensive test1.cx` - Full language feature test
+- `005 Floats and Macros.cx` - Float operations and macro expansion
+- `043 array comprehensive.cx` - Array operations (all types)
+- `122 full test suite.cx` - Complete feature coverage
 
 ### Running Tests
 Use `pbtester.pb` to batch-run test files and verify output.
 
+### Example Program
+
+```c
+// Example: Array operations with functions
+#pragma console on
+#pragma appname "Array Demo"
+#pragma version
+
+array global_ints.i[10];
+
+function fillArray() {
+    array local_data.i[5];
+
+    i = 0;
+    while i < 5 {
+        local_data[i] = i * 10;
+        global_ints[i] = local_data[i];
+        i = i + 1;
+    }
+}
+
+fillArray();
+
+i = 0;
+while i < 5 {
+    print("global_ints[", i, "] = ", global_ints[i]);
+    i = i + 1;
+}
+```
+
 ## Version History
 
 ### v1.039.x (Current)
-- ✅ Project renamed from LJ2 to D-Plus
-- ✅ Source extension changed from .lj to .d
-- ✅ Compiled bytecode extension .od
+- ✅ Project renamed from D-Plus to CX
+- ✅ Source extension changed from .d to .cx
+- ✅ Compiled bytecode extension .ocx
 - ✅ Serialization support for compiled programs
 
 ### v1.037.x
@@ -343,4 +343,4 @@ Based on Rosetta Code compiler examples.
 **Author:** Kingwolf71
 **Date:** January 2026
 **Platform:** PureBasic 6.10+ (Windows x64 / Linux x64)
-**Repository:** https://github.com/KingWolf71/D-plus
+**Repository:** https://github.com/KingWolf71/CX

@@ -1830,7 +1830,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          PrintN("[" + RSet(Str(percent), 3, " ") + "%] " + stageName)
       CompilerElse
          ; V1.039.41: Write stage to file for splash screen to read
-         Protected stageFile.i = CreateFile(#PB_Any, GetTemporaryDirectory() + "dplus_compile.stage")
+         Protected stageFile.i = CreateFile(#PB_Any, GetTemporaryDirectory() + "cx_compile.stage")
          If stageFile
             WriteString(stageFile, "[" + Str(percent) + "%] " + stageName)
             CloseFile(stageFile)
@@ -2059,7 +2059,7 @@ CompilerIf #PB_Compiler_IsMainFile
    Define verFile.i, verString.s    ; V1.039.2: For reading version
 
    ; V1.039.2: Read version from file
-   verFile = ReadFile(#PB_Any, "_dpai.ver")
+   verFile = ReadFile(#PB_Any, "_cx.ver")
    If verFile
       verString = Trim(ReadString(verFile))
       CloseFile(verFile)
@@ -2087,7 +2087,7 @@ CompilerIf #PB_Compiler_IsMainFile
    CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
       ; Console build - output goes to same terminal
       If showHelp
-         PrintN("D-Plus - Programming Language Compiler & VM v" + verString)
+         PrintN("CX - Programming Language Compiler & VM v" + verString)
          PrintN("")
          Restore HelpText
          Repeat
@@ -2099,38 +2099,38 @@ CompilerIf #PB_Compiler_IsMainFile
       EndIf
 
       If earlyDebug
-         PrintN("D-Plus v" + verString + " - Programming Language Compiler & VM")
+         PrintN("CX v" + verString + " - Programming Language Compiler & VM")
          PrintN("")
       EndIf
    CompilerElse
       ; GUI build - use MessageRequester for help
       If showHelp
-         helpText = "D-Plus - Programming Language Compiler & VM v" + verString + #CRLF$ + #CRLF$
+         helpText = "CX - Programming Language Compiler & VM v" + verString + #CRLF$ + #CRLF$
          Restore HelpText
          Repeat
             Read.s helpLine
             If helpLine = "<<END>>" : Break : EndIf
             helpText + helpLine + #CRLF$
          ForEver
-         MessageRequester("D-Plus Help", helpText, #PB_MessageRequester_Info)
+         MessageRequester("CX Help", helpText, #PB_MessageRequester_Info)
          End
       EndIf
 
       ; V1.039.42: Check for console-only flags in Windows build
       CompilerIf C2Common::#BUILD_TYPE = C2Common::#BUILD_COMPILER
          If earlyDebug
-            Define errText.s = "Error: The -c/--console flag requires the console version (dpai.exe compiled with /CONSOLE)." + #CRLF$ + #CRLF$
+            Define errText.s = "Error: The -c/--console flag requires the console version (cx.exe compiled with /CONSOLE)." + #CRLF$ + #CRLF$
             errText + "This is the Windows GUI version which does not have console output." + #CRLF$ + #CRLF$
-            errText + "Usage: dpai-win [options] <file.d|file.od>" + #CRLF$ + #CRLF$
+            errText + "Usage: cx-win [options] <file.cx|file.ocx>" + #CRLF$ + #CRLF$
             errText + "Valid options for Windows version:" + #CRLF$
             errText + "  -h, --help          Show help" + #CRLF$
-            errText + "  -C, --compile       Compile to .od without running" + #CRLF$
+            errText + "  -C, --compile       Compile to .ocx without running" + #CRLF$
             errText + "  -a, --asm           Output ASM listing to file" + #CRLF$
             errText + "  --asm-debug         Detailed ASM with debug info" + #CRLF$
             errText + "  -x, --autoquit <s>  Auto-close after <s> seconds" + #CRLF$
-            errText + "  --no-od             Don't create .od file" + #CRLF$ + #CRLF$
-            errText + "For console output, use: dpai.exe -c <file>"
-            MessageRequester("D-Plus Error", errText, #PB_MessageRequester_Error)
+            errText + "  --no-od             Don't create .ocx file" + #CRLF$ + #CRLF$
+            errText + "For console output, use: cx.exe -c <file>"
+            MessageRequester("CX Error", errText, #PB_MessageRequester_Error)
             End
          EndIf
       CompilerEndIf
@@ -2158,11 +2158,11 @@ CompilerIf #PB_Compiler_IsMainFile
                If Left(nextArg, 1) = "-" Or Left(nextArg, 1) = "/"
                   Define argErr.s = "Error: Option '" + param + "' requires a numeric argument (seconds)" + #CRLF$ + #CRLF$
                   argErr + "Usage: " + param + " <seconds>" + #CRLF$
-                  argErr + "Example: dpai -x 30 program.d"
+                  argErr + "Example: cx -x 30 program.cx"
                   CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
                      PrintN(argErr)
                   CompilerElse
-                     MessageRequester("D-Plus Error", argErr, #PB_MessageRequester_Error)
+                     MessageRequester("CX Error", argErr, #PB_MessageRequester_Error)
                   CompilerEndIf
                   End
                EndIf
@@ -2172,11 +2172,11 @@ CompilerIf #PB_Compiler_IsMainFile
             Else
                Define argErr2.s = "Error: Option '" + param + "' requires a numeric argument (seconds)" + #CRLF$ + #CRLF$
                argErr2 + "Usage: " + param + " <seconds>" + #CRLF$
-               argErr2 + "Example: dpai -x 30 program.d"
+               argErr2 + "Example: cx -x 30 program.cx"
                CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
                   PrintN(argErr2)
                CompilerElse
-                  MessageRequester("D-Plus Error", argErr2, #PB_MessageRequester_Error)
+                  MessageRequester("CX Error", argErr2, #PB_MessageRequester_Error)
                CompilerEndIf
                End
             EndIf
@@ -2192,11 +2192,11 @@ CompilerIf #PB_Compiler_IsMainFile
                If Left(nextArgO, 1) = "-" Or Left(nextArgO, 1) = "/"
                   Define argErrO.s = "Error: Option '" + param + "' requires a filename argument" + #CRLF$ + #CRLF$
                   argErrO + "Usage: " + param + " <filename>" + #CRLF$
-                  argErrO + "Example: dpai -o output.od program.d"
+                  argErrO + "Example: cx -o output.ocx program.cx"
                   CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
                      PrintN(argErrO)
                   CompilerElse
-                     MessageRequester("D-Plus Error", argErrO, #PB_MessageRequester_Error)
+                     MessageRequester("CX Error", argErrO, #PB_MessageRequester_Error)
                   CompilerEndIf
                   End
                EndIf
@@ -2205,11 +2205,11 @@ CompilerIf #PB_Compiler_IsMainFile
             Else
                Define argErrO2.s = "Error: Option '" + param + "' requires a filename argument" + #CRLF$ + #CRLF$
                argErrO2 + "Usage: " + param + " <filename>" + #CRLF$
-               argErrO2 + "Example: dpai -o output.od program.d"
+               argErrO2 + "Example: cx -o output.ocx program.cx"
                CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
                   PrintN(argErrO2)
                CompilerElse
-                  MessageRequester("D-Plus Error", argErrO2, #PB_MessageRequester_Error)
+                  MessageRequester("CX Error", argErrO2, #PB_MessageRequester_Error)
                CompilerEndIf
                End
             EndIf
@@ -2240,23 +2240,23 @@ CompilerIf #PB_Compiler_IsMainFile
          ElseIf Left(param, 1) = "-" Or Left(param, 1) = "/"
             ; V1.039.42: Unknown parameter - show error and usage
             Define unknownErr.s = "Error: Unknown option '" + param + "'" + #CRLF$ + #CRLF$
-            unknownErr + "Usage: dpai [options] <file.d|file.od>" + #CRLF$ + #CRLF$
+            unknownErr + "Usage: cx [options] <file.cx|file.ocx>" + #CRLF$ + #CRLF$
             unknownErr + "Options:" + #CRLF$
             unknownErr + "  -h, --help          Show full help" + #CRLF$
             unknownErr + "  -c, --console       Console mode (no GUI)" + #CRLF$
-            unknownErr + "  -C, --compile       Compile to .od without running" + #CRLF$
+            unknownErr + "  -C, --compile       Compile to .ocx without running" + #CRLF$
             unknownErr + "  -a, --asm           Output clean ASM listing" + #CRLF$
             unknownErr + "  --asm-debug         Detailed ASM with debug info" + #CRLF$
             unknownErr + "  --asm-decimal       Decimal line numbers in ASM" + #CRLF$
             unknownErr + "  -x, --autoquit <s>  Auto-close after <s> seconds" + #CRLF$
-            unknownErr + "  -o, --output <file> Output filename for .od" + #CRLF$
-            unknownErr + "  --no-source         Don't embed source in .od" + #CRLF$
-            unknownErr + "  --no-od             Don't create .od file" + #CRLF$ + #CRLF$
-            unknownErr + "Run 'dpai --help' for more information."
+            unknownErr + "  -o, --output <file> Output filename for .ocx" + #CRLF$
+            unknownErr + "  --no-source         Don't embed source in .ocx" + #CRLF$
+            unknownErr + "  --no-od             Don't create .ocx file" + #CRLF$ + #CRLF$
+            unknownErr + "Run 'cx --help' for more information."
             CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
                PrintN(unknownErr)
             CompilerElse
-               MessageRequester("D-Plus Error", unknownErr, #PB_MessageRequester_Error)
+               MessageRequester("CX Error", unknownErr, #PB_MessageRequester_Error)
             CompilerEndIf
             End
          EndIf
@@ -2286,22 +2286,22 @@ CompilerIf #PB_Compiler_IsMainFile
    CompilerIf C2Common::#BUILD_TYPE <> C2Common::#BUILD_GUI
       ; Non-GUI builds (COMPILER, VM) always require a filename
       If Not gotFilename
-         usageText = "Usage: dpai [options] <file.d|file.od>" + #CRLF$ + #CRLF$
+         usageText = "Usage: cx [options] <file.cx|file.ocx>" + #CRLF$ + #CRLF$
          usageText + "Options:" + #CRLF$
          usageText + "  -h, --help          Show full help" + #CRLF$
          usageText + "  -c, --console       Console mode (no GUI)" + #CRLF$
-         usageText + "  -C, --compile       Compile to .od without running" + #CRLF$
+         usageText + "  -C, --compile       Compile to .ocx without running" + #CRLF$
          usageText + "  -a, --asm           Output clean ASM listing" + #CRLF$
          usageText + "  --asm-debug         Output detailed ASM with debug info" + #CRLF$
          usageText + "  --asm-decimal       Use decimal line numbers (6-digit)" + #CRLF$
          usageText + "  -x, --autoquit <s>  Auto-close after <s> seconds" + #CRLF$
-         usageText + "  --no-od             Don't create .od file" + #CRLF$ + #CRLF$
+         usageText + "  --no-od             Don't create .ocx file" + #CRLF$ + #CRLF$
          usageText + "Examples:" + #CRLF$
-         usageText + "  dpai program.d              Compile, save .od, and run" + #CRLF$
-         usageText + "  dpai -a program.d           Compile with clean ASM" + #CRLF$
-         usageText + "  dpai --asm-debug program.d  Compile with detailed ASM" + #CRLF$
-         usageText + "  dpai program.od             Run compiled object" + #CRLF$ + #CRLF$
-         usageText + "Run 'dpai --help' for more information."
+         usageText + "  cx program.cx              Compile, save .ocx, and run" + #CRLF$
+         usageText + "  cx -a program.cx           Compile with clean ASM" + #CRLF$
+         usageText + "  cx --asm-debug program.cx  Compile with detailed ASM" + #CRLF$
+         usageText + "  cx program.ocx             Run compiled object" + #CRLF$ + #CRLF$
+         usageText + "Run 'cx --help' for more information."
 
          CompilerIf #PB_Compiler_ExecutableFormat = #PB_Compiler_Console
             PrintN("Error: No input file specified")
@@ -2309,7 +2309,7 @@ CompilerIf #PB_Compiler_IsMainFile
             PrintN(usageText)
             End
          CompilerElse
-            MessageRequester("D-Plus Error", "No input file specified." + #CRLF$ + #CRLF$ + usageText, #PB_MessageRequester_Error)
+            MessageRequester("CX Error", "No input file specified." + #CRLF$ + #CRLF$ + usageText, #PB_MessageRequester_Error)
             End
          CompilerEndIf
       EndIf
@@ -2372,7 +2372,7 @@ CompilerIf #PB_Compiler_IsMainFile
                      KillProgram(splashPID)
                      CloseProgram(splashPID)
                   EndIf
-                  Define stageFilePath.s = GetTemporaryDirectory() + "dplus_compile.stage"
+                  Define stageFilePath.s = GetTemporaryDirectory() + "cx_compile.stage"
                   If FileSize(stageFilePath) > 0
                      DeleteFile(stageFilePath)
                   EndIf
@@ -2515,39 +2515,40 @@ CompilerIf #PB_Compiler_IsMainFile
    ; V1.039.14: Help text data section for maintainability
    DataSection
       HelpText:
-      Data.s "Usage: dpai [options] <file.d|file.od>"
+      Data.s "Usage: cx [options] <file.cx|file.ocx>"
       Data.s ""
       Data.s "Options:"
       Data.s "  -h, --help          Show this help message"
       Data.s "  -c, -t, --console   Run in console/test mode (no GUI)"
-      Data.s "  -C, --compile       Compile to .od file without running"
-      Data.s "  -o, --output <file> Specify output filename for .od"
-      Data.s "  -v, --verbose       Include ASM listing in .od (excludes source)"
+      Data.s "  -C, --compile       Compile to .ocx file without running"
+      Data.s "  -o, --output <file> Specify output filename for .ocx"
+      Data.s "  -v, --verbose       Include ASM listing in .ocx (excludes source)"
       Data.s "  -a, --asm           Output clean ASM listing to .asm file"
       Data.s "  --asm-debug         Output detailed ASM with FLAGS/slot info"
       Data.s "  --asm-decimal       Use decimal line numbers (6-digit aligned)"
-      Data.s "  --no-source         Don't embed source code in .od file"
-      Data.s "  --no-od             Don't create .od file (compile and run only)"
+      Data.s "  --no-source         Don't embed source code in .ocx file"
+      Data.s "  --no-od             Don't create .ocx file (compile and run only)"
       Data.s "  -x, --autoquit <s>  Auto-close after <s> seconds"
       Data.s ""
       Data.s "File types:"
-      Data.s "  .d    Source file - will be compiled (and run unless -C)"
-      Data.s "  .od   Compiled object - will be loaded and run directly"
+      Data.s "  .cx   Source file - will be compiled (and run unless -C)"
+      Data.s "  .ocx  Compiled object - will be loaded and run directly"
       Data.s "  .asm  ASM listing output (generated with -a/--asm)"
       Data.s ""
       Data.s "Examples:"
-      Data.s "  dpai program.d              Compile and run (GUI)"
-      Data.s "  dpai -t program.d           Compile and run (console/test)"
-      Data.s "  dpai -C program.d           Compile to program.od"
-      Data.s "  dpai -a program.d           Compile with clean ASM listing"
-      Data.s "  dpai --asm-debug program.d  Compile with detailed ASM"
-      Data.s "  dpai program.od             Run compiled object"
+      Data.s "  cx program.cx              Compile and run (GUI)"
+      Data.s "  cx -t program.cx           Compile and run (console/test)"
+      Data.s "  cx -C program.cx           Compile to program.ocx"
+      Data.s "  cx -a program.cx           Compile with clean ASM listing"
+      Data.s "  cx --asm-debug program.cx  Compile with detailed ASM"
+      Data.s "  cx program.ocx             Run compiled object"
       Data.s "<<END>>"
    EndDataSection
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.30 (Windows - x64)
-; CursorPosition = 6
+; ExecutableFormat = Console
+; CursorPosition = 9
 ; FirstLine = 9
 ; Folding = 0-----------
 ; Markers = 569,718
@@ -2555,12 +2556,12 @@ CompilerEndIf
 ; EnableThread
 ; EnableXP
 ; SharedUCRT
-; Executable = dpai.exe
+; Executable = cx.exe
 ; CPU = 1
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2616
-; EnableBuildCount = 34
+; EnableCompileCount = 2617
+; EnableBuildCount = 35
 ; EnableExeConstant
 ; IncludeVersionInfo

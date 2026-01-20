@@ -1,5 +1,5 @@
 ; ============================================================================
-; D-Plus Test Runner
+; CX Test Runner
 ; ============================================================================
 ; Automatically runs all source test files in Examples directory
 ; Captures output, timing, and creates JSON results
@@ -141,7 +141,7 @@ Procedure SaveDiffFile(filename.s)
   EndIf
 
   WriteStringN(file, "================================================================================")
-  WriteStringN(file, "D-Plus Test Diff Report - " + FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()))
+  WriteStringN(file, "CX Test Diff Report - " + FormatDate("%yyyy-%mm-%dd %hh:%ii:%ss", Date()))
   WriteStringN(file, "================================================================================")
   WriteStringN(file, "")
   WriteStringN(file, "Changed files: " + Str(ListSize(gChangedFiles())))
@@ -529,7 +529,7 @@ Procedure Main()
   EndIf
 
   PrintN("============================================================================")
-  PrintN("D-Plus Test Runner v1.9 | Compiler: " + compilerVersion)
+  PrintN("CX Test Runner v1.9 | Compiler: " + compilerVersion)
   PrintN("============================================================================")
   PrintN("")
 

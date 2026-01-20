@@ -1,4 +1,4 @@
-; D-Plus Compilation Splash - Shows "Compiling..." with animation and stages
+; CX Compilation Splash - Shows "Compiling..." with animation and stages
 ; Launched by main app, killed when compilation completes
 ; Reads stage info from splash.stage file
 ; V1.039.41
@@ -54,12 +54,12 @@ If CountProgramParameters() > 0
 EndIf
 
 ; Stage file path - in temp directory
-gStagePath = GetTemporaryDirectory() + "dplus_compile.stage"
+gStagePath = GetTemporaryDirectory() + "cx_compile.stage"
 
 Define event.i, titleGadget.i, filenameGadget.i, progressGadget.i
 
 ; Create splash window
-If OpenWindow(0, #PB_Ignore, #PB_Ignore, #WIN_WIDTH, #WIN_HEIGHT, "D-Plus",
+If OpenWindow(0, #PB_Ignore, #PB_Ignore, #WIN_WIDTH, #WIN_HEIGHT, "CX",
               #PB_Window_ScreenCentered | #PB_Window_BorderLess)
 
    ; Set window background
@@ -82,7 +82,7 @@ If OpenWindow(0, #PB_Ignore, #PB_Ignore, #WIN_WIDTH, #WIN_HEIGHT, "D-Plus",
    Define contentWidth.i = #WIN_WIDTH - #BORDER_GAP * 2 - #BORDER_INNER * 2 - 20
 
    ; Title text
-   titleGadget = TextGadget(#PB_Any, 10, 10, contentWidth, 30, "D-Plus Compiler", #PB_Text_Center)
+   titleGadget = TextGadget(#PB_Any, 10, 10, contentWidth, 30, "CX Compiler", #PB_Text_Center)
    SetGadgetColor(titleGadget, #PB_Gadget_FrontColor, RGB(220, 220, 220))
    SetGadgetColor(titleGadget, #PB_Gadget_BackColor, RGB(45, 45, 48))
    SetGadgetFont(titleGadget, LoadFont(0, "Segoe UI", 14, #PB_Font_Bold))

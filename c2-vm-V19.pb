@@ -1604,13 +1604,13 @@ Module C2VM
       EndIf
 
       If gShowversion
-         verFile = ReadFile(#PB_Any, "_dpai.ver")
+         verFile = ReadFile(#PB_Any, "_cx.ver")
          If verFile
             verString = ReadString(verFile)
             CloseFile(verFile)
-            line =  "D-Plus Version: " + verString
+            line =  "CX Version: " + verString
          Else
-            line =  "D-Plus Version: unknown"
+            line =  "CX Version: unknown"
          EndIf
 
          Debug line

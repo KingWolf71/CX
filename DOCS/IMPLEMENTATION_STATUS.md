@@ -1,8 +1,8 @@
-# D-Plus Implementation Status
+# CX Implementation Status
 Version: 1.037.4
 Date: December 2025
 
-**See also:** [D-Plus_Compiler_Report.html](D-Plus_Compiler_Report.html) - Comprehensive technical report with ratings
+**See also:** [CX_Compiler_Report.html](CX_Compiler_Report.html) - Comprehensive technical report with ratings
 
 ## Current File Versions
 
@@ -358,7 +358,7 @@ Located in `Examples/`:
 
 ### v1.033.43
 - Added -x/--autoquit command line option to set auto-close timer
-- Usage: `D-Plus.exe -x 5 program.d` or `D-Plus.exe --autoquit 5 program.d`
+- Usage: `CX.exe -x 5 program.d` or `CX.exe --autoquit 5 program.d`
 - Equivalent to adding `#pragma autoclose 5` to the source file
 - Timer shows countdown message and closes window after specified seconds
 
@@ -423,7 +423,7 @@ Backups stored in `backups/` folder:
 - 7z archives with version numbers
 - Include source files (.pb, .pbi)
 - Include examples (Examples/*.d)
-- Include version file (_D-Plus.ver)
+- Include version file (_CX.ver)
 
 ## Architecture Notes
 

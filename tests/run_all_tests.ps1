@@ -1,4 +1,4 @@
-param([string]$Compiler = ".\dpai.exe")
+param([string]$Compiler = ".\cx.exe")
 
 $ErrorActionPreference = "SilentlyContinue"
 Set-Location (Split-Path $PSScriptRoot -Parent)
@@ -7,7 +7,7 @@ $passed = 0
 $failed = 0
 $failedTests = @()
 
-$examples = Get-ChildItem "Examples\*.d" | Sort-Object Name
+$examples = Get-ChildItem "Examples\*.cx" | Sort-Object Name
 
 foreach ($file in $examples) {
     $name = $file.Name

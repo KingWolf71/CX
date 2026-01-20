@@ -1,13 +1,13 @@
-# Test all D+AI examples
+# Test all CX examples
 $ErrorActionPreference = "SilentlyContinue"
-$dpai = ".\dpai.exe"
+$cx = ".\cx.exe"
 $passed = 0
 $failed = 0
 $failedTests = @()
 
-Get-ChildItem "Examples\*.d" | Sort-Object Name | ForEach-Object {
+Get-ChildItem "Examples\*.cx" | Sort-Object Name | ForEach-Object {
     $name = $_.Name
-    $output = & $dpai -t $_.FullName 2>&1 | Out-String
+    $output = & $cx -t $_.FullName 2>&1 | Out-String
 
     if ($output -match "LOAD ERROR|Compile Error|^Error:") {
         $failed++
