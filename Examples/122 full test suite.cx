@@ -1,9 +1,9 @@
 // =============================================================================
-// D+AI FULL TEST SUITE WITH TALLY (V1.023.26)
+// CX FULL TEST SUITE WITH TALLY (V1.023.26)
 // Creative tests for edge cases and unusual combinations
 // =============================================================================
 
-#pragma appname "D+AI-Full-Test-Suite"
+#pragma appname "CX-Full-Test-Suite"
 #pragma decimals 6
 #pragma console on
 #pragma consolesize "680x740"
@@ -87,7 +87,7 @@ function section(name.s) {
 }
 
 print("========================================");
-print("   D+AI FULL TEST SUITE (V1.023.26)");
+print("   CX FULL TEST SUITE (V1.023.26)");
 print("========================================");
 
 // =============================================================================

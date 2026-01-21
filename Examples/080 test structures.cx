@@ -3,7 +3,7 @@
 // Syntax: p1.StructType = {values}; for declaration
 // Syntax: p1\field for field access
 
-#pragma appname "D+AI Structure Test"
+#pragma appname "CX Structure Test"
 #pragma decimals 3
 #pragma console on
 #pragma consolesize "680x740"

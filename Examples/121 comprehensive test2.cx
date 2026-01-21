@@ -1,8 +1,8 @@
-// Comprehensive D+AI Test Suite
+// Comprehensive CX Test Suite
 // Tests all features except structures and direct array assignments
 // Reports PASS/FAIL for each test with final summary
 
-#pragma appname "D+AI Comprehensive Test"
+#pragma appname "CX Comprehensive Test"
 #pragma console on
 #pragma version on
 #pragma floattolerance 0.0001

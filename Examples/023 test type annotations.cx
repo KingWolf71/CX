@@ -37,8 +37,8 @@ print("  pi = ", pi);
 print("");
 
 // Test 3: Explicit string annotation
-name.s = "D+AI";
-print("Test 3: name.s = D+AI");
+name.s = "CX";
+print("Test 3: name.s = CX");
 print("  name = ", name);
 print("");
 

@@ -767,19 +767,19 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       ; This prevents stale template data from previous compilations
       ReDim gGlobalTemplate.stVarTemplate(0)
 
-      ; Add #LJ2_VERSION from _lj2.ver file
-      verFile = ReadFile(#PB_Any, "_lj2.ver")
+      ; Add #CX_VERSION from _cx.ver file
+      verFile = ReadFile(#PB_Any, "_cx.ver")
       If verFile
          verString = ReadString(verFile)
          CloseFile(verFile)
       Else
          verString = "0"  ; Default if file not found
       EndIf
-      
+
       Debug "Running version [" + verString + "]"
-      
-      AddMapElement(mapMacros(), "#LJ2_VERSION")
-      mapMacros()\name = "#LJ2_VERSION"
+
+      AddMapElement(mapMacros(), "#CX_VERSION")
+      mapMacros()\name = "#CX_VERSION"
       mapMacros()\body = verString
 
       ReDim arCode(1)

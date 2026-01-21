@@ -1,7 +1,7 @@
-// Comprehensive array test for D+AI
+// Comprehensive array test for CX
 // Tests global arrays, local arrays, all types, indexing, and edge cases
 
-#pragma appname "D+AI Comprehensive Array Test"
+#pragma appname "CX Comprehensive Array Test"
 #pragma decimals 3
 #pragma console on
 #pragma consolesize "680x740"
@@ -24,7 +24,7 @@
 #pragma DumpASM off
 #pragma asmdecimal on
 
-print("=== D+AI Comprehensive Array Test ===");
+print("=== CX Comprehensive Array Test ===");
 print("");
 
 // === Test 1: Global Integer Arrays ===

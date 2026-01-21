@@ -1,9 +1,9 @@
 /* =============================================================================
-   D+AI Increment/Decrement & Compound Assignment Test Suite
+   CX Increment/Decrement & Compound Assignment Test Suite
    Tests all C-style increment/decrement and compound assignment operators
    ============================================================================= */
 
-#pragma appname "D+AI-Increment-Operators-Test"
+#pragma appname "CX-Increment-Operators-Test"
 #pragma decimals 3
 #pragma console on
 #pragma consolesize "680x740"
@@ -25,7 +25,7 @@
 #pragma ThreadKillWait 1800
 #pragma asmdecimal on
 
-print("D+AI INCREMENT/DECREMENT & COMPOUND ASSIGNMENT TEST SUITE");
+print("CX INCREMENT/DECREMENT & COMPOUND ASSIGNMENT TEST SUITE");
 print("=========================================================");
 
 /* =============================================================================

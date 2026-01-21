@@ -2,7 +2,7 @@
    Tests: parameters, return values, recursion, nesting, types
 */
 
-#pragma appname "D+AI Function Test Suite"
+#pragma appname "CX Function Test Suite"
 #pragma decimals 3
 #pragma console on
 #pragma consolesize "680x740"
@@ -119,7 +119,7 @@ func getPi.f() {
 }
 
 func getGreeting.s() {
-    return "Welcome to D+AI!";
+    return "Welcome to CX!";
 }
 
 //--------------------------------------

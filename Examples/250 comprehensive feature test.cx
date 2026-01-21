@@ -1,8 +1,8 @@
-// D+AI Comprehensive Feature Test Suite - V1.037
+// CX Comprehensive Feature Test Suite - V1.037
 // Tests all major language features with pass/fail tracking
 
 #pragma console on
-#pragma appname "D+AI Feature Test"
+#pragma appname "CX Feature Test"
 #pragma consolesize "680x740"
 #pragma consoleposition "30,50"
 #pragma asmdecimal on
@@ -64,7 +64,7 @@ func assertTrue(condition.i, testName.s) {
 }
 
 printf("========================================\n");
-printf("   D+AI COMPREHENSIVE FEATURE TEST\n");
+printf("   CX COMPREHENSIVE FEATURE TEST\n");
 printf("   Version 1.037\n");
 printf("========================================\n");
 

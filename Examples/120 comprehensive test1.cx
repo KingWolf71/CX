@@ -1,9 +1,9 @@
 /* =============================================================================
-   D+AI Comprehensive Feature Test Suite
+   CX Comprehensive Feature Test Suite
    Tests ALL compiler features systematically
    ============================================================================= */
 
-#pragma appname "D+AI-Comprehensive-Test"
+#pragma appname "CX-Comprehensive-Test"
 #pragma decimals 3
 #pragma console on
 #pragma consolesize "680x740"
@@ -25,7 +25,7 @@
 #pragma ThreadKillWait 1800
 #pragma asmdecimal on
 
-print("D+AI COMPREHENSIVE FEATURE TEST SUITE");
+print("CX COMPREHENSIVE FEATURE TEST SUITE");
 print("-------------------------------------");
 
 /* =============================================================================

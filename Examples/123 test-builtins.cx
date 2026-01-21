@@ -1,4 +1,4 @@
-// D+AI v1.038.0 - SpiderBasic Runtime Builtins Test
+// CX v1.038.0 - SpiderBasic Runtime Builtins Test
 // Tests Math, String, Cipher, and JSON functions
 
 #pragma console on
@@ -6,7 +6,7 @@
 #pragma consoleposition "30,50"
 #pragma asmdecimal on
 
-print("=== D+AI v1.038.0 Builtins Test ===\n");
+print("=== CX v1.038.0 Builtins Test ===\n");
 
 // ============================================
 // MATH LIBRARY TESTS
@@ -72,7 +72,7 @@ print("asc('A') = "); print(asc("A")); print("\n");
 
 print("findstring('World') = "); print(findstring(testStr, "World")); print("\n");
 print("countstring('l') = "); print(countstring(testStr, "l")); print("\n");
-print("replacestring('World','D+AI') = '"); print(replacestring(testStr, "World", "D+AI")); print("'\n");
+print("replacestring('World','CX') = '"); print(replacestring(testStr, "World", "CX")); print("'\n");
 print("removestring('l') = '"); print(removestring(testStr, "l")); print("'\n");
 print("reversestring = '"); print(reversestring(testStr)); print("'\n");
 print("insertstring(' Beautiful',6) = '"); print(insertstring(testStr, " Beautiful", 6)); print("'\n");
@@ -97,12 +97,12 @@ print("capitalize('hELLO wORLD', 2) = '"); print(capitalize("hELLO wORLD", 2)); 
 // ============================================
 print("\n--- Cipher Library ---\n");
 
-testData.s = "Hello D+AI!";
+testData.s = "Hello CX!";
 
-print("md5('Hello D+AI!') = "); print(md5(testData)); print("\n");
-print("sha1('Hello D+AI!') = "); print(sha1(testData)); print("\n");
-print("sha256('Hello D+AI!') = "); print(sha256(testData)); print("\n");
-print("crc32('Hello D+AI!') = "); print(crc32(testData)); print("\n");
+print("md5('Hello CX!') = "); print(md5(testData)); print("\n");
+print("sha1('Hello CX!') = "); print(sha1(testData)); print("\n");
+print("sha256('Hello CX!') = "); print(sha256(testData)); print("\n");
+print("crc32('Hello CX!') = "); print(crc32(testData)); print("\n");
 
 // Base64
 encoded.s = base64enc("Hello World");
@@ -115,7 +115,7 @@ print("base64dec(encoded) = '"); print(decoded); print("'\n");
 // ============================================
 print("\n--- JSON Library ---\n");
 
-jsonStr.s = "{\"name\":\"D+AI\",\"version\":1.038,\"active\":true}";
+jsonStr.s = "{\"name\":\"CX\",\"version\":1.038,\"active\":true}";
 print("Parsing: "); print(jsonStr); print("\n");
 
 jsonHandle.i = jsonparse(jsonStr);

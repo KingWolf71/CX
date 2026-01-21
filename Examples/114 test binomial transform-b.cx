@@ -2,7 +2,7 @@
    -b version: Uses for loops and break for early mismatch detection
    Based on: https://rosettacode.org/wiki/Binomial_transform
 
-   NOTE: D+AI doesn't support passing arrays as parameters,
+   NOTE: CX doesn't support passing arrays as parameters,
    so we use global arrays that functions access directly.
 */
 

@@ -1,4 +1,4 @@
-// === D+AI Array Sort Stress Test ===
+// === CX Array Sort Stress Test ===
 // -b version: Uses for loops and break for early exit
 // Tests sorting 5000 float elements using quicksort
 // Prints every 100th element to verify sorted order
