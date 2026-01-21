@@ -205,11 +205,10 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
    Global               gLastError
    Global               gszEOF.s          = Chr( 255 )
    
-   CompilerIf #PB_OS_Linux
-      Global            gszSep.s          = #LF$
-   CompilerElse
-      Global            gszSep.s          = #CRLF$
-   CompilerEndIf
+   ; V1.039.49: Always use LF as separator - handles both LF and CRLF files correctly
+   ; CRLF files: StringField with LF finds line endings (CR stays but is harmless)
+   ; LF files: Works correctly on all platforms
+   Global               gszSep.s          = #LF$
       
    Global               gszFloating.s = "^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$"
 
@@ -863,26 +862,34 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       
       If gMemSize > 0
          f = ReadFile( #PB_Any, filename, #PB_File_NoBuffering )
-         gFileFormat = ReadStringFormat( f )    
-         
+         gFileFormat = ReadStringFormat( f )
+
          If Not f
             SetError( "Could not open file", #C2ERR_FILE_OPEN_FAILED )
          EndIf
-         
+
+         ; V1.039.49: Default to UTF8 for BOM-less files (works for ASCII too)
+         ; Unicode default was wrong for ASCII/UTF-8 source files without BOM
          If gFileFormat <> #PB_Ascii And gFileFormat <> #PB_UTF8 And gFileFormat <> #PB_Unicode
-            gFileFormat = #PB_Unicode
+            gFileFormat = #PB_UTF8
          EndIf
-         
+
+         ; V1.039.49: Seek back to start - ReadStringFormat advances file position
+         FileSeek( f, 0, #PB_Absolute )
+
          *Mem = AllocateMemory( gMemSize + 16 )
          ReadData( f, *Mem, gMemSize )
          CloseFile( f )
-         
+
          CompilerIf( #WithEOL = 1 )
             gszFileText = PeekS( *mem, -1, gFileFormat ) + gszEOF
          CompilerElse
             gszFileText = PeekS( *mem, -1, gFileFormat )
-         CompilerEndIf   
-            
+         CompilerEndIf
+
+         ; V1.039.49: Normalize line endings to LF for consistent parsing
+         gszFileText = ReplaceString(gszFileText, #CRLF$, #LF$)
+
          gMemSize = Len( gszFileText )
          FreeMemory( *mem )
          ProcedureReturn 0
@@ -1573,10 +1580,13 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
 
       ; First we find and store our macros
       ; IMPORTANT: Preserve blank lines to maintain line number alignment with original source
-      Repeat
-         i + 1 : bFlag = #True
+      ; V1.039.49: Use lineCount instead of checking for empty line (empty first line would break loop)
+      For i = 1 To lineCount
+         bFlag = #True
          line = StringField( gszFileText, i, gszSep )
-         If line = "" : Break : EndIf
+
+         ; V1.039.49: Strip EOF marker from line (may be in last line if no trailing newline)
+         line = ReplaceString( line, gszEOF, "" )
 
          If FindString( line, "#define", #PB_String_NoCase ) Or FindString( line, "#pragma", #PB_String_NoCase )
             bFlag = ParseDefinitions( line )
@@ -1589,21 +1599,24 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
             szNewBody + " " + #LF$
             ;Debug mapMacros()\name + " --> " + mapMacros()\strparams + " --> " + mapMacros()\body
          EndIf
-      ForEver
+      Next
       
       ; Macro Expansion
-      i = 0 : gszFileText = ""
+      ; V1.039.49: Use line count instead of empty line check
+      Protected newBodyLineCount.i = CountString( szNewBody, #LF$ ) + 1
+      gszFileText = ""
 
-      Repeat
-         i + 1
+      For i = 1 To newBodyLineCount
          line = StringField( szNewBody, i, #LF$ )
-         If line = "" : Break : EndIf
+
+         ; V1.039.49: Strip EOF marker from line
+         line = ReplaceString( line, gszEOF, "" )
 
          ;- I don't know why the below line works - but it does
          Line = ExpandMacros( line) + #CRLF$
          ;Line = ExpandMacros( line) + #LF$
          gszFileText + line
-      ForEver
+      Next
 
       ; V1.037.0: Apply C compatibility transformations if enabled
       If FindMapElement(mapPragmas(), "ccompat")
@@ -1621,12 +1634,15 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       EndIf
 
       szNewBody = gszFileText
-      gszFileText = "" : i = 0
+      ; V1.039.49: Use line count instead of empty line check
+      newBodyLineCount = CountString( szNewBody, #LF$ ) + 1
+      gszFileText = ""
 
-      Repeat
-         i + 1
+      For i = 1 To newBodyLineCount
          line = StringField( szNewBody, i, #LF$ )
-         If line = "" : Break : EndIf
+
+         ; V1.039.49: Strip EOF marker from line
+         line = ReplaceString( line, gszEOF, "" )
 
          ; V1.030.16: Convert DOT notation to backslash for struct field access
          ; Convert patterns like "local.x" to "local\x", but preserve:
@@ -1737,7 +1753,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
          If FindString( line, "func", #PB_String_NoCase ) Or FindString( line, "function", #PB_String_NoCase )
             ParseFunctions( line, i )
          EndIf
-      ForEver
+      Next
 
       gMemSize = Len( gszFileText )
       sizeAfterMacros = gMemSize
@@ -2340,7 +2356,8 @@ CompilerIf #PB_Compiler_IsMainFile
       C2VM::vmClearRun()
 
       ; V1.039.0: Auto-detect file type by extension
-      isODFile = Bool(LCase(GetExtensionPart(filename)) = "od")
+      ; V1.039.49: Fixed to check for .ocx extension (was incorrectly checking for .od)
+      isODFile = Bool(LCase(GetExtensionPart(filename)) = "ocx")
 
       ; V1.039.0: Handle different build modes
       CompilerIf C2Common::#BUILD_TYPE = C2Common::#BUILD_COMPILER
@@ -2561,7 +2578,8 @@ CompilerIf #PB_Compiler_IsMainFile
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.30 (Windows - x64)
-; CursorPosition = 24
+; ExecutableFormat = Console
+; CursorPosition = 16
 ; FirstLine = 9
 ; Folding = 0-----------
 ; Markers = 569,718
@@ -2574,7 +2592,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2619
-; EnableBuildCount = 35
+; EnableCompileCount = 2621
+; EnableBuildCount = 37
 ; EnableExeConstant
 ; IncludeVersionInfo

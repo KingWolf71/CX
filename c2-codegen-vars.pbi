@@ -637,12 +637,21 @@
       ElseIf syntheticType = #ljINT
          gVarMeta(gnLastVariable)\valueInt = Val(text)
          gVarMeta(gnLastVariable)\flags = #C2FLAG_CONST | #C2FLAG_INT
+         ; V1.039.50: Add to constant map for deduplication
+         AddMapElement(mapConstInt(), text)
+         mapConstInt() = gnLastVariable
       ElseIf syntheticType = #ljFLOAT
          gVarMeta(gnLastVariable)\valueFloat = ValF(text)
          gVarMeta(gnLastVariable)\flags = #C2FLAG_CONST | #C2FLAG_FLOAT
+         ; V1.039.50: Add to constant map for deduplication
+         AddMapElement(mapConstFloat(), text)
+         mapConstFloat() = gnLastVariable
       ElseIf syntheticType = #ljSTRING
          gVarMeta(gnLastVariable)\valueString = text
          gVarMeta(gnLastVariable)\flags = #C2FLAG_CONST | #C2FLAG_STR
+         ; V1.039.50: Add to constant map for deduplication
+         AddMapElement(mapConstStr(), text)
+         mapConstStr() = gnLastVariable
       Else
          ; V1.022.99: Use saved token properties (foundTokenType, foundTokenTypeHint)
          ; instead of TOKEN() which points to wrong position after restore

@@ -4150,9 +4150,16 @@
       result + #CRLF$
       result + ".text" + #CRLF$
 
-      ForEach llObjects()
-         ASMLine( llObjects(), 0 )
+      ; V1.039.49: Use arCode() instead of llObjects() for reliable ASM output
+      ; The llObjects() linked list may have inconsistent state after vm_ListToArray
+      ; arCode() is guaranteed to contain the final compiled bytecode
+      ; Use For loop and break on EOF to avoid ASMLine macro variable redeclaration
+      For i = 0 To ArraySize(arCode())
+         ASMLine( arCode( i ), 1 )
          result + line + #CRLF$
+         If arCode( i )\code = #LJEOF
+            Break
+         EndIf
       Next
 
       result + #CRLF$
