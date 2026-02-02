@@ -1,0 +1,25 @@
+// Test: "second" used as a variable name should not conflict with second() builtin
+
+// Test 1: simple variable named "second"
+second.i = 42;
+assertEqual(second, 42);
+
+// Test 2: second() as builtin still works
+s.i = second();
+assert(s >= 0);
+assert(s <= 59);
+
+// Test 3: array named "second"
+array second.i[3];
+second[0] = 10;
+second[1] = 20;
+second[2] = 30;
+assertEqual(second[0], 10);
+assertEqual(second[1], 20);
+assertEqual(second[2], 30);
+
+// Test 4: second() builtin with parameter
+testTime.i = 45296; // 12:34:56
+assertEqual(second(testTime), 56);
+
+print("All second variable tests passed!\n");

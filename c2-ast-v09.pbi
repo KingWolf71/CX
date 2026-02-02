@@ -177,6 +177,7 @@
 
          Case #ljIDENT
             ; Check if this is a built-in function call (identifier followed by '(')
+            Protected isBuiltinCall.b = #False
             If FindMapElement(mapBuiltins(), LCase(TOKEN()\value))
                ; Peek at next token to see if it's '('
                ; Save current position in token list
@@ -185,6 +186,7 @@
 
                If TOKEN()\TokenExtra = #ljLeftParent
                   ; It's a built-in function call
+                  isBuiltinCall = #True
                   ; V1.034.68: Save both opcode AND returnType BEFORE expand_params
                   ; expand_params may call expr() recursively, which can change mapBuiltins position
                   Protected builtinOpcode.i = mapBuiltins()\opcode
@@ -201,13 +203,12 @@
                   *node\TypeHint = builtinReturnType  ; V1.034.68: Use saved value (map position may have changed)
                   *p = MakeNode(#ljSEQ, *e, *node)
                Else
-                  ; Not a function call, restore position and treat as variable
+                  ; Not a function call, restore position - fall through to variable handling below
                   SelectElement(llTokenList(), savedListIndex)
-                  *p = Makeleaf( #ljIDENT, TOKEN()\value )
-                  *p\TypeHint = TOKEN()\typeHint
-                  NextToken()
                EndIf
-            Else
+            EndIf
+
+            If Not isBuiltinCall
                ; Not a built-in - check if it looks like a function call (identifier followed by '(')
                ; OR array indexing (identifier followed by '[')
                Protected savedListIndex2.i = ListIndex(llTokenList())
