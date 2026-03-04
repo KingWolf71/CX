@@ -915,6 +915,23 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_JSONCREATE )   = @C2BUILTIN_JSONCREATE()
       *ptrJumpTable( #ljBUILTIN_JSONADD )      = @C2BUILTIN_JSONADD()
       *ptrJumpTable( #ljBUILTIN_JSONEXPORT )   = @C2BUILTIN_JSONEXPORT()
+      *ptrJumpTable( #ljBUILTIN_JSONADDNUM )   = @C2BUILTIN_JSONADDNUM()   ; V1.039.57
+      *ptrJumpTable( #ljBUILTIN_JSONADDBOOL )  = @C2BUILTIN_JSONADDBOOL()  ; V1.039.57
+      ; V1.039.57: XML builtins
+      *ptrJumpTable( #ljBUILTIN_XMLPARSE )     = @C2BUILTIN_XMLPARSE()
+      *ptrJumpTable( #ljBUILTIN_XMLFREE )      = @C2BUILTIN_XMLFREE()
+      *ptrJumpTable( #ljBUILTIN_XMLROOT )      = @C2BUILTIN_XMLROOT()
+      *ptrJumpTable( #ljBUILTIN_XMLCHILD )     = @C2BUILTIN_XMLCHILD()
+      *ptrJumpTable( #ljBUILTIN_XMLNEXT )      = @C2BUILTIN_XMLNEXT()
+      *ptrJumpTable( #ljBUILTIN_XMLNAME )      = @C2BUILTIN_XMLNAME()
+      *ptrJumpTable( #ljBUILTIN_XMLTEXT )      = @C2BUILTIN_XMLTEXT()
+      *ptrJumpTable( #ljBUILTIN_XMLATTR )      = @C2BUILTIN_XMLATTR()
+      *ptrJumpTable( #ljBUILTIN_XMLTYPE )      = @C2BUILTIN_XMLTYPE()
+      *ptrJumpTable( #ljBUILTIN_XMLCREATE )    = @C2BUILTIN_XMLCREATE()
+      *ptrJumpTable( #ljBUILTIN_XMLADDNODE )   = @C2BUILTIN_XMLADDNODE()
+      *ptrJumpTable( #ljBUILTIN_XMLSETTEXT )   = @C2BUILTIN_XMLSETTEXT()
+      *ptrJumpTable( #ljBUILTIN_XMLSETATTR )   = @C2BUILTIN_XMLSETATTR()
+      *ptrJumpTable( #ljBUILTIN_XMLEXPORT )    = @C2BUILTIN_XMLEXPORT()
 
       ; V1.039.45: System/Utility builtins
       *ptrJumpTable( #ljBUILTIN_DELAY )        = @C2BUILTIN_DELAY()

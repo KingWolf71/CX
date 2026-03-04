@@ -1151,7 +1151,10 @@ EndProcedure
 
 Procedure C2BUILTIN_JSONCREATE()
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = CreateJSON(#PB_Any)
+   Protected h.i = CreateJSON(#PB_Any)
+   ; V1.039.57: CreateJSON root is NULL type; must SetJSONObject before AddJSONMember works
+   If h : SetJSONObject(JSONValue(h)) : EndIf
+   gEvalStack(sp)\i = h
    sp + 1
    pc + 1
 EndProcedure
@@ -1173,8 +1176,224 @@ Procedure C2BUILTIN_JSONEXPORT()
    Protected h.i = gEvalStack(sp - 1)\i
    If IsJSON(h)
       gEvalStack(sp - 1)\ss = ComposeJSON(h)
+      gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)
    Else
       gEvalStack(sp - 1)\ss = ""
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; V1.039.57: jsonaddnum(handle, key, value.f) - add numeric member to JSON object
+Procedure C2BUILTIN_JSONADDNUM()
+   vm_DebugFunctionName()
+   Protected h.i   = gEvalStack(sp - 3)\i
+   Protected key.s = gEvalStack(sp - 2)\ss
+   Protected val.d = gEvalStack(sp - 1)\f
+   If IsJSON(h)
+      SetJSONDouble(AddJSONMember(JSONValue(h), key), val)
+   EndIf
+   sp - 3
+   pc + 1
+EndProcedure
+
+; V1.039.57: jsonaddbool(handle, key, value.i) - add boolean member to JSON object
+Procedure C2BUILTIN_JSONADDBOOL()
+   vm_DebugFunctionName()
+   Protected h.i   = gEvalStack(sp - 3)\i
+   Protected key.s = gEvalStack(sp - 2)\ss
+   Protected val.i = gEvalStack(sp - 1)\i
+   If IsJSON(h)
+      SetJSONBoolean(AddJSONMember(JSONValue(h), key), val)
+   EndIf
+   sp - 3
+   pc + 1
+EndProcedure
+
+;- V1.039.57: XML Builtins
+; xmlparse(str) - parse XML string, returns handle (0=error)
+Procedure C2BUILTIN_XMLPARSE()
+   vm_DebugFunctionName()
+   Protected s.s = gEvalStack(sp - 1)\ss
+   Protected h.i = ParseXML(#PB_Any, s)
+   If h And XMLStatus(h) = #PB_XML_Success
+      gEvalStack(sp - 1)\i = h
+   Else
+      If h : FreeXML(h) : EndIf
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmlfree(handle) - free XML handle
+Procedure C2BUILTIN_XMLFREE()
+   vm_DebugFunctionName()
+   Protected h.i = gEvalStack(sp - 1)\i
+   If IsXML(h)
+      FreeXML(h)
+   EndIf
+   sp - 1
+   pc + 1
+EndProcedure
+
+; xmlroot(handle) - get document root node (parent of all top-level elements)
+; Use xmlchild(xmlroot(h)) to get the first actual element when reading
+; Use xmladdnode(xmlroot(h), "tag") to create root element when building
+Procedure C2BUILTIN_XMLROOT()
+   vm_DebugFunctionName()
+   Protected h.i = gEvalStack(sp - 1)\i
+   If IsXML(h)
+      gEvalStack(sp - 1)\i = MainXMLNode(h)
+   Else
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmlchild(node) - get first child node
+Procedure C2BUILTIN_XMLCHILD()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 1)\i
+   If node
+      gEvalStack(sp - 1)\i = ChildXMLNode(node)
+   Else
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmlnext(node) - get next sibling node
+Procedure C2BUILTIN_XMLNEXT()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 1)\i
+   If node
+      gEvalStack(sp - 1)\i = NextXMLNode(node)
+   Else
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmlname(node) - get element tag name
+Procedure C2BUILTIN_XMLNAME()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 1)\i
+   If node
+      gEvalStack(sp - 1)\ss = GetXMLNodeName(node)
+      gEvalStack(sp - 1)\i  = Len(gEvalStack(sp - 1)\ss)
+   Else
+      gEvalStack(sp - 1)\ss = ""
+      gEvalStack(sp - 1)\i  = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmltext(node) - get element text content (concatenates all child text nodes)
+Procedure C2BUILTIN_XMLTEXT()
+   vm_DebugFunctionName()
+   Protected node.i   = gEvalStack(sp - 1)\i
+   Protected result.s = ""
+   If node
+      result = GetXMLNodeText(node)
+   EndIf
+   gEvalStack(sp - 1)\ss = result
+   gEvalStack(sp - 1)\i  = Len(result)
+   pc + 1
+EndProcedure
+
+; xmlattr(node, attrname) - get attribute value (empty if not found)
+Procedure C2BUILTIN_XMLATTR()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 2)\i
+   Protected name.s = gEvalStack(sp - 1)\ss
+   If node
+      gEvalStack(sp - 2)\ss = GetXMLAttribute(node, name)
+      gEvalStack(sp - 2)\i  = Len(gEvalStack(sp - 2)\ss)
+   Else
+      gEvalStack(sp - 2)\ss = ""
+      gEvalStack(sp - 2)\i  = 0
+   EndIf
+   sp - 1
+   pc + 1
+EndProcedure
+
+; xmltype(node) - node type: 1=element, 2=text, 4=comment, 8=cdata, 16=instruction
+Procedure C2BUILTIN_XMLTYPE()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 1)\i
+   If node
+      gEvalStack(sp - 1)\i = XMLNodeType(node)
+   Else
+      gEvalStack(sp - 1)\i = 0
+   EndIf
+   pc + 1
+EndProcedure
+
+; xmlcreate() - create new empty XML document, returns handle
+Procedure C2BUILTIN_XMLCREATE()
+   vm_DebugFunctionName()
+   Protected h.i = 0
+   Protected placeholder.i = 0
+   ; Bootstrap: ParseXML gives a valid MainXMLNode(); delete placeholder to start empty
+   h = ParseXML(#PB_Any, "<cx_root/>")
+   If IsXML(h)
+      placeholder = ChildXMLNode(MainXMLNode(h))
+      If placeholder : DeleteXMLNode(placeholder) : EndIf
+   EndIf
+   gEvalStack(sp)\i = h
+   sp + 1
+   pc + 1
+EndProcedure
+
+; xmladdnode(parent, name) - create named child element under parent, returns new node
+Procedure C2BUILTIN_XMLADDNODE()
+   vm_DebugFunctionName()
+   Protected parent.i = gEvalStack(sp - 2)\i
+   Protected name.s   = gEvalStack(sp - 1)\ss
+   Protected node.i   = 0
+   If parent
+      node = CreateXMLNode(parent, name)
+   EndIf
+   gEvalStack(sp - 2)\i = node
+   sp - 1
+   pc + 1
+EndProcedure
+
+; xmlsettext(node, text) - set element text content
+Procedure C2BUILTIN_XMLSETTEXT()
+   vm_DebugFunctionName()
+   Protected node.i = gEvalStack(sp - 2)\i
+   Protected text.s = gEvalStack(sp - 1)\ss
+   If node
+      SetXMLNodeText(node, text)
+   EndIf
+   sp - 2
+   pc + 1
+EndProcedure
+
+; xmlsetattr(node, name, value) - set attribute on element
+Procedure C2BUILTIN_XMLSETATTR()
+   vm_DebugFunctionName()
+   Protected node.i  = gEvalStack(sp - 3)\i
+   Protected name.s  = gEvalStack(sp - 2)\ss
+   Protected value.s = gEvalStack(sp - 1)\ss
+   If node
+      SetXMLAttribute(node, name, value)
+   EndIf
+   sp - 3
+   pc + 1
+EndProcedure
+
+; xmlexport(handle) - serialize XML to string (includes <?xml?> declaration)
+Procedure C2BUILTIN_XMLEXPORT()
+   vm_DebugFunctionName()
+   Protected h.i = gEvalStack(sp - 1)\i
+   If IsXML(h)
+      gEvalStack(sp - 1)\ss = ComposeXML(h)
+      gEvalStack(sp - 1)\i  = Len(gEvalStack(sp - 1)\ss)
+   Else
+      gEvalStack(sp - 1)\ss = ""
+      gEvalStack(sp - 1)\i  = 0
    EndIf
    pc + 1
 EndProcedure

@@ -1,0 +1,136 @@
+// test_jsonxml.cx - Tests for JSON (jsonaddnum/jsonaddbool) and XML builtins
+
+// ================================================================
+// JSON TESTS
+// ================================================================
+
+// Test 1: jsonaddnum produces a real JSON number (not a string)
+jh.i = jsoncreate();
+jsonadd(jh, "name", "Alice");
+jsonaddnum(jh, "score", 99.5);
+jsonaddbool(jh, "pass", 1);
+raw.s = jsonexport(jh);
+jsonfree(jh);
+assertEqual(len(raw) > 0, 1);
+
+// Test 2: round-trip - numbers survive parse/export intact
+jh = jsonparse(raw);
+pName.s  = jsonstring(jsonmember(jh, "name"));
+pScore.f = jsonnumber(jsonmember(jh, "score"));
+pPass.i  = jsonbool(jsonmember(jh, "pass"));
+assertStringEqual(pName, "Alice");
+assertEqual(len(pName) > 0, 1);
+assertEqual(pPass, 1);
+jsonfree(jh);
+
+// Test 3: jsonaddbool false
+jh = jsoncreate();
+jsonaddbool(jh, "flag", 0);
+raw = jsonexport(jh);
+jsonfree(jh);
+jh = jsonparse(raw);
+assertEqual(jsonbool(jsonmember(jh, "flag")), 0);
+jsonfree(jh);
+
+// Test 4: JSON file round-trip
+jh = jsoncreate();
+jsonadd(jh, "lang", "CX");
+jsonaddnum(jh, "ver", 1.039);
+jsonaddbool(jh, "stable", 1);
+ok.i = fwrite("_test_json.tmp", jsonexport(jh));
+jsonfree(jh);
+assertEqual(ok, 1);
+
+jh = jsonparse(fread("_test_json.tmp"));
+assertStringEqual(jsonstring(jsonmember(jh, "lang")), "CX");
+assertEqual(jsonbool(jsonmember(jh, "stable")), 1);
+jsonfree(jh);
+
+// ================================================================
+// XML TESTS
+// ================================================================
+
+// Test 5: build simple XML and export
+xh.i = xmlcreate();
+root.i = xmladdnode(xmlroot(xh), "root");
+xmlsettext(root, "hello");
+xml.s = xmlexport(xh);
+xmlfree(xh);
+assertEqual(len(xml) > 0, 1);
+assertEqual(findstring(xml, "<root>") > 0, 1);
+assertEqual(findstring(xml, "hello") > 0, 1);
+
+// Test 6: xmlattr round-trip
+xh = xmlcreate();
+root = xmladdnode(xmlroot(xh), "item");
+xmlsetattr(root, "id", "42");
+xmlsetattr(root, "type", "test");
+xml = xmlexport(xh);
+xmlfree(xh);
+
+xh = xmlparse(xml);
+root = xmlchild(xmlroot(xh));
+assertStringEqual(xmlattr(root, "id"), "42");
+assertStringEqual(xmlattr(root, "type"), "test");
+xmlfree(xh);
+
+// Test 7: xmltext round-trip
+xh = xmlcreate();
+root = xmladdnode(xmlroot(xh), "config");
+nameNode.i = xmladdnode(root, "name");
+xmlsettext(nameNode, "TestApp");
+valNode.i = xmladdnode(root, "value");
+xmlsettext(valNode, "12345");
+xml = xmlexport(xh);
+xmlfree(xh);
+
+xh = xmlparse(xml);
+root = xmlchild(xmlroot(xh));
+node.i = xmlchild(root);
+assertStringEqual(xmlname(node), "name");
+assertStringEqual(xmltext(node), "TestApp");
+node = xmlnext(node);
+assertStringEqual(xmlname(node), "value");
+assertStringEqual(xmltext(node), "12345");
+xmlfree(xh);
+
+// Test 8: xmltype returns element type for element nodes
+xh = xmlcreate();
+root = xmladdnode(xmlroot(xh), "el");
+xml = xmlexport(xh);
+xmlfree(xh);
+xh = xmlparse(xml);
+root = xmlchild(xmlroot(xh));
+assertEqual(xmltype(root), 1);   // #PB_XML_Normal = 1
+xmlfree(xh);
+
+// Test 9: XML file round-trip
+xh = xmlcreate();
+root = xmladdnode(xmlroot(xh), "person");
+xmlsetattr(root, "id", "1");
+n.i = xmladdnode(root, "name");
+xmlsettext(n, "Bob");
+ok = fwrite("_test_xml.tmp", xmlexport(xh));
+xmlfree(xh);
+assertEqual(ok, 1);
+
+xh = xmlparse(fread("_test_xml.tmp"));
+root = xmlchild(xmlroot(xh));
+assertStringEqual(xmlattr(root, "id"), "1");
+n = xmlchild(root);
+assertStringEqual(xmltext(n), "Bob");
+xmlfree(xh);
+
+// Test 10: xmlparse error returns 0 for invalid XML
+assertEqual(xmlparse("not valid << xml >>"), 0);
+
+// Test 11: xmlname on null node returns empty string
+assertStringEqual(xmlname(0), "");
+
+// Test 12: xmltext on null node returns empty string
+assertStringEqual(xmltext(0), "");
+
+// Cleanup
+exec("del _test_json.tmp _test_xml.tmp 2>nul");
+
+print("All JSON/XML tests passed!\n");

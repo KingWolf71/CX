@@ -438,8 +438,26 @@ Enumeration
    #ljBUILTIN_JSONNUMBER   ; jsonnumber(h) - get number value
    #ljBUILTIN_JSONBOOL     ; jsonbool(h) - get boolean value
    #ljBUILTIN_JSONCREATE   ; jsoncreate() - create new JSON object
-   #ljBUILTIN_JSONADD      ; jsonadd(h, key, value) - add member to object
+   #ljBUILTIN_JSONADD      ; jsonadd(h, key, value) - add string member to object
    #ljBUILTIN_JSONEXPORT   ; jsonexport(h) - export to JSON string
+   #ljBUILTIN_JSONADDNUM   ; V1.039.57: jsonaddnum(h, key, value.f) - add numeric member
+   #ljBUILTIN_JSONADDBOOL  ; V1.039.57: jsonaddbool(h, key, value.i) - add boolean member
+
+   ;- V1.039.57: XML Builtins
+   #ljBUILTIN_XMLPARSE     ; xmlparse(str) - parse XML string, returns handle (0=error)
+   #ljBUILTIN_XMLFREE      ; xmlfree(handle) - free XML handle
+   #ljBUILTIN_XMLROOT      ; xmlroot(handle) - get document root node
+   #ljBUILTIN_XMLCHILD     ; xmlchild(node) - get first child node
+   #ljBUILTIN_XMLNEXT      ; xmlnext(node) - get next sibling node
+   #ljBUILTIN_XMLNAME      ; xmlname(node) - get element tag name (string)
+   #ljBUILTIN_XMLTEXT      ; xmltext(node) - get element text content (string)
+   #ljBUILTIN_XMLATTR      ; xmlattr(node, attrname) - get attribute value (string)
+   #ljBUILTIN_XMLTYPE      ; xmltype(node) - node type (1=#PB_XML_Normal=element, 2=#PB_XML_Text, etc.)
+   #ljBUILTIN_XMLCREATE    ; xmlcreate() - create new empty XML document, returns handle
+   #ljBUILTIN_XMLADDNODE   ; xmladdnode(parent, name) - create child element, returns node
+   #ljBUILTIN_XMLSETTEXT   ; xmlsettext(node, text) - set element text content
+   #ljBUILTIN_XMLSETATTR   ; xmlsetattr(node, name, value) - set attribute
+   #ljBUILTIN_XMLEXPORT    ; xmlexport(handle) - serialize XML to string
 
    ;- System/Utility Functions (V1.039.45)
    #ljBUILTIN_DELAY        ; delay(ms) - pause execution for milliseconds
@@ -2229,6 +2247,23 @@ Macro _INIT_OPCODE_NAMES
    gszATR(#ljBUILTIN_JSONCREATE)\s = "BI_JCREATE"
    gszATR(#ljBUILTIN_JSONADD)\s = "BI_JADD"
    gszATR(#ljBUILTIN_JSONEXPORT)\s = "BI_JEXPORT"
+   gszATR(#ljBUILTIN_JSONADDNUM)\s = "BI_JADDNUM"
+   gszATR(#ljBUILTIN_JSONADDBOOL)\s = "BI_JADDBOOL"
+   ; V1.039.57: XML builtins
+   gszATR(#ljBUILTIN_XMLPARSE)\s = "BI_XMLPARSE"
+   gszATR(#ljBUILTIN_XMLFREE)\s = "BI_XMLFREE"
+   gszATR(#ljBUILTIN_XMLROOT)\s = "BI_XMLROOT"
+   gszATR(#ljBUILTIN_XMLCHILD)\s = "BI_XMLCHILD"
+   gszATR(#ljBUILTIN_XMLNEXT)\s = "BI_XMLNEXT"
+   gszATR(#ljBUILTIN_XMLNAME)\s = "BI_XMLNAME"
+   gszATR(#ljBUILTIN_XMLTEXT)\s = "BI_XMLTEXT"
+   gszATR(#ljBUILTIN_XMLATTR)\s = "BI_XMLATTR"
+   gszATR(#ljBUILTIN_XMLTYPE)\s = "BI_XMLTYPE"
+   gszATR(#ljBUILTIN_XMLCREATE)\s = "BI_XMLCREATE"
+   gszATR(#ljBUILTIN_XMLADDNODE)\s = "BI_XMLADD"
+   gszATR(#ljBUILTIN_XMLSETTEXT)\s = "BI_XMLSETTXT"
+   gszATR(#ljBUILTIN_XMLSETATTR)\s = "BI_XMLSETATTR"
+   gszATR(#ljBUILTIN_XMLEXPORT)\s = "BI_XMLEXPORT"
    ; V1.039.45: System/Utility builtins
    gszATR(#ljBUILTIN_DELAY)\s = "BI_DELAY"
    gszATR(#ljBUILTIN_ELAPSED)\s = "BI_ELAPSED"

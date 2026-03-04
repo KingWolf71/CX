@@ -625,6 +625,23 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       InstallBuiltin( "jsoncreate",        #ljBUILTIN_JSONCREATE,   0, 0, #C2FLAG_INT )
       InstallBuiltin( "jsonadd",           #ljBUILTIN_JSONADD,      3, 3, 0 )
       InstallBuiltin( "jsonexport",        #ljBUILTIN_JSONEXPORT,   1, 1, #C2FLAG_STR )
+      InstallBuiltin( "jsonaddnum",        #ljBUILTIN_JSONADDNUM,   3, 3, 0 )        ; V1.039.57
+      InstallBuiltin( "jsonaddbool",       #ljBUILTIN_JSONADDBOOL,  3, 3, 0 )        ; V1.039.57
+      ; V1.039.57: XML Builtins
+      InstallBuiltin( "xmlparse",          #ljBUILTIN_XMLPARSE,     1, 1, #C2FLAG_INT )
+      InstallBuiltin( "xmlfree",           #ljBUILTIN_XMLFREE,      1, 1, 0 )
+      InstallBuiltin( "xmlroot",           #ljBUILTIN_XMLROOT,      1, 1, #C2FLAG_INT )
+      InstallBuiltin( "xmlchild",          #ljBUILTIN_XMLCHILD,     1, 1, #C2FLAG_INT )
+      InstallBuiltin( "xmlnext",           #ljBUILTIN_XMLNEXT,      1, 1, #C2FLAG_INT )
+      InstallBuiltin( "xmlname",           #ljBUILTIN_XMLNAME,      1, 1, #C2FLAG_STR )
+      InstallBuiltin( "xmltext",           #ljBUILTIN_XMLTEXT,      1, 1, #C2FLAG_STR )
+      InstallBuiltin( "xmlattr",           #ljBUILTIN_XMLATTR,      2, 2, #C2FLAG_STR )
+      InstallBuiltin( "xmltype",           #ljBUILTIN_XMLTYPE,      1, 1, #C2FLAG_INT )
+      InstallBuiltin( "xmlcreate",         #ljBUILTIN_XMLCREATE,    0, 0, #C2FLAG_INT )
+      InstallBuiltin( "xmladdnode",        #ljBUILTIN_XMLADDNODE,   2, 2, #C2FLAG_INT )
+      InstallBuiltin( "xmlsettext",        #ljBUILTIN_XMLSETTEXT,   2, 2, 0 )
+      InstallBuiltin( "xmlsetattr",        #ljBUILTIN_XMLSETATTR,   3, 3, 0 )
+      InstallBuiltin( "xmlexport",         #ljBUILTIN_XMLEXPORT,    1, 1, #C2FLAG_STR )
 
       ; V1.039.45: System/Utility Functions
       InstallBuiltin( "delay",             #ljBUILTIN_DELAY,        1, 1, 0 )

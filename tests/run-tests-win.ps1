@@ -1,16 +1,18 @@
 # Windows test runner for CX
 $ErrorActionPreference = "SilentlyContinue"
-Set-Location "D:\OneDrive\WIP\Sources\Intense.2020\DPLUS"
+Set-Location "D:\OneDrive\WIP\Sources\Intense.2020\CX"
 
-$testFiles = Get-ChildItem ".\Examples\*.cx" | Where-Object { $_.Name -notmatch "bug|error" } | Sort-Object Name
+$exampleFiles = Get-ChildItem ".\Examples\*.cx" | Where-Object { $_.Name -notmatch "bug|error" } | Sort-Object Name
+$testFiles    = Get-ChildItem ".\tests\test_*.cx" | Sort-Object Name
+$allFiles     = @($exampleFiles) + @($testFiles)
 $passed = 0
 $failed = 0
 $failedList = @()
 
-Write-Host "Running $($testFiles.Count) tests..." -ForegroundColor Yellow
+Write-Host "Running $($allFiles.Count) tests..." -ForegroundColor Yellow
 Write-Host ""
 
-foreach ($f in $testFiles) {
+foreach ($f in $allFiles) {
     Write-Host -NoNewline "Testing: $($f.Name)... "
     $output = & .\cx.exe -c $f.FullName 2>&1 | Out-String
     if ($output -and $output.Trim().Length -gt 0) {
