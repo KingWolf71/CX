@@ -2626,7 +2626,7 @@ CompilerIf #PB_Compiler_IsMainFile
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.30 (Windows - x64)
-; CursorPosition = 17
+; CursorPosition = 33
 ; FirstLine = 9
 ; Folding = 0-----------
 ; Markers = 569,718
@@ -2639,7 +2639,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2629
+; EnableCompileCount = 2631
 ; EnableBuildCount = 37
 ; EnableExeConstant
 ; IncludeVersionInfo

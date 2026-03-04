@@ -39,6 +39,25 @@ help_out.txt
 test_output.txt
 extglob.FullName
 
+# CX test artifact outputs (produced by running examples/tests)
+*.tmp
+cx_test_*
+_test_*.tmp
+test_output.tmp
+test_data.json
+test_append.tmp
+person.json
+person.xml
+items.json
+config.json
+tests/xml_out.txt
+
+# PureBasic probe/investigation files
+tests/test_*_pb.pb
+
+# PureBasic IDE lock file
+_ul
+
 # Test binaries and temporary test files
 test_lj2_minimal
 test_lj2_minimal.pb
