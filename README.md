@@ -1,6 +1,6 @@
 # CX Compiler & Virtual Machine
 
-**Version:** 1.039.26
+**Version:** 1.039.58
 **Language:** PureBasic (v6.10+)
 **Target:** Windows x64 / Linux x64
 
@@ -20,6 +20,10 @@ The language features:
 - Pragmas for compile-time configuration
 - Built-in assertion functions for testing
 - printf() for C-style formatted output
+- File I/O (fread, fwrite with append mode)
+- Process execution (exec)
+- JSON serialization (parse, create, export, member access)
+- XML serialization (parse, create, export, node/attribute access)
 
 ## Architecture
 
@@ -158,15 +162,39 @@ gStack[depth]
 
 ## Recent Improvements
 
+### v1.039.58 - String Builtin Correctness Fix
+- **`\i` Length Sync**: All string builtins (`left`, `right`, `mid`, `trim`, `lcase`, `ucase`, `chr`, `hex`, `bin`, `replacestring`, `insertstring`, `removestring`, `space`, `lset`, `rset`, `capitalize`, `md5`/`sha*`/`base64`, `jsonstring`) now update cached `\i` length after writing `\ss`
+- Previously, inline expressions like `len(left(s, n))` or `assertEqual(left(s,n), ...)` could return stale string lengths
+- 81 tests pass (Windows)
+
+### v1.039.57 - JSON & XML Builtins
+- **JSON Write Builtins**: `jsonaddnum(h, key, value)`, `jsonaddbool(h, key, bool)` for numeric/boolean JSON members
+- **14 XML Builtins**: `xmlcreate`/`xmlfree`/`xmlparse`/`xmlexport`, `xmlroot`/`xmladdnode`/`xmlchild`/`xmlnext`/`xmlparent`, `xmlsettext`/`xmlsetattr`/`xmltext`/`xmlattr`/`xmlname`/`xmltype`
+- **jsoncreate fix**: `SetJSONObject` called after `CreateJSON` so `jsonadd`/`jsonaddnum`/`jsonaddbool` work correctly (root was NULL type)
+- **xmlcreate fix**: Bootstrap with `ParseXML`+`DeleteXMLNode` to get a valid document node
+- New test `tests/test_jsonxml.cx` with 24 assertions (all pass)
+- New example `Examples/126 json xml io.cx`
+
+### v1.039.56 - File I/O & Process Execution
+- **`fread(filename)`**: Read entire file as string
+- **`fwrite(filename, content [, mode])`**: Write/append file ("w"/"a" mode), returns 1 on success
+- **`exec(command [, background])`**: Run external command, returns exit code
+- **`assert(condition)`**: Assert non-zero condition with pass/fail output
+- Fixed `vm_PushString` cross-populate bug affecting string returns across stack frames
+
+### v1.039.45 - System/Utility Builtins
+- **Date/Time**: `date()`, `time()`, `year()`, `month()`, `day()`, `hour()`, `minute()`, `second()`
+- **Misc**: `delay(ms)`, `elapsed()`, `randomseed(n)`, `getenv(name)`
+
 ### v1.037.x - ASM Naming & Bug Fixes
 - **Normalized ASM Names**: All long opcode display names shortened (AF_I_G_O instead of ARRAYFETCH_INT_GLOBAL_OPT)
 - **Struct Declaration Fix**: `p1.Point;` syntax now properly allocates struct memory
-- **Cross-Platform**: All 75 tests pass on Windows and Linux
+- **Cross-Platform**: All tests pass on Windows and Linux
 
 ### v1.036.x - Struct Arrays & printf()
 - **Array of Structs**: `array points.Point[10];` with `points[i]\x` field access
 - **printf() Built-in**: C-style formatted output with %d, %f, %s, %.Nf specifiers
-- **String Length Caching**: O(1) length access via cached field
+- **String Length Caching**: O(1) length access via cached `\i` field
 
 ### v1.035.x - Optimizer Enhancements
 - **Rule-Based Optimizer**: Lookup tables for peephole patterns
@@ -257,14 +285,15 @@ See `CLAUDE.md` for detailed development instructions, including:
 ## Testing
 
 ### Test Suite
-The `Examples/` folder contains comprehensive tests:
-- `120 comprehensive test1.cx` - Full language feature test
-- `005 Floats and Macros.cx` - Float operations and macro expansion
-- `043 array comprehensive.cx` - Array operations (all types)
-- `122 full test suite.cx` - Complete feature coverage
+- `Examples/*.cx` - 70+ example programs covering all language features
+- `tests/test_*.cx` - Targeted unit tests (file I/O, JSON/XML, sprintf, etc.)
+- **81 tests pass** on Windows as of v1.039.58
 
 ### Running Tests
-Use `pbtester.pb` to batch-run test files and verify output.
+```powershell
+# Windows: run all tests
+powershell -ExecutionPolicy Bypass -File tests/run-tests-win.ps1
+```
 
 ### Example Program
 
@@ -303,6 +332,12 @@ while i < 5 {
 - ✅ Source extension changed from .d to .cx
 - ✅ Compiled bytecode extension .ocx
 - ✅ Serialization support for compiled programs
+- ✅ File I/O builtins: fread, fwrite (append mode), exec (v1.039.56)
+- ✅ assert() builtin (v1.039.56)
+- ✅ JSON builtins: jsoncreate/free/parse/export, jsonadd/addnum/addbool, jsonmember/string/number/bool (v1.039.57)
+- ✅ XML builtins: xmlcreate/free/parse/export, xmlroot/addnode/child/next/parent, xmlsettext/setattr/text/attr/name/type (v1.039.57)
+- ✅ String builtin `\i` length sync fix — `len(left(s,n))` now correct (v1.039.58)
+- ✅ 81 tests pass
 
 ### v1.037.x
 - ✅ Normalized ASM opcode names for readable output
@@ -341,6 +376,6 @@ Based on Rosetta Code compiler examples.
 ---
 
 **Author:** Kingwolf71
-**Date:** January 2026
+**Date:** March 2026
 **Platform:** PureBasic 6.10+ (Windows x64 / Linux x64)
 **Repository:** https://github.com/KingWolf71/CX

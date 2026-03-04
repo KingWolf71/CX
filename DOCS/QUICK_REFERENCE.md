@@ -19,7 +19,8 @@
 | System builtins | `c2-builtins-system-v01.pbi` |
 | Collections | `c2-collections-v05.pbi` |
 | Serialization | `c2-serialize-v02.pbi` |
-| Test runner | `pbtester-v04.pb` |
+| Test runner (Windows) | `tests/run-tests-win.ps1` |
+| Unit tests | `tests/test_*.cx` |
 | Examples | `Examples/*.cx` |
 
 ## Key Global Variables
@@ -250,15 +251,15 @@ str.s = "Hello" + " " + "World"   ; ✅ Correct
 
 Before committing changes:
 
-- [ ] Run `Examples/00 comprehensive test.d`
-- [ ] Run `Examples/22 array comprehensive.d`
-- [ ] Run `Examples/bug fix2.d`
+- [ ] Run full test suite: `powershell -ExecutionPolicy Bypass -File tests/run-tests-win.ps1`
+- [ ] All 81 tests pass (Examples/*.cx + tests/test_*.cx)
 - [ ] Check no assertions fail
 - [ ] Test with `#pragma optimizecode on`
 - [ ] Test with `#pragma optimizecode off`
 - [ ] Verify ListASM output makes sense
-- [ ] Update version in `_CX.ver` (MAJ.MIN.FIX)
-- [ ] Backup old modules to `BACKUP/` if needed
+- [ ] Create 7z backup in `backups/` (before version change)
+- [ ] Update version in `_cx.ver` (MAJ.MIN.FIX)
+- [ ] Commit and push to GitHub
 
 ## Performance Profiling
 

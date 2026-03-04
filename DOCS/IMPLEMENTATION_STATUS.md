@@ -1,6 +1,6 @@
 # CX Implementation Status
-Version: 1.039.45
-Date: January 2026
+Version: 1.039.58
+Date: March 2026
 
 **See also:**
 - [CX_Compiler_Report.html](CX_Compiler_Report.html) - Comprehensive technical report with ratings
@@ -89,7 +89,16 @@ Date: January 2026
 - [x] strlen(), left(), right(), mid()
 - [x] str(), val(), chr(), asc()
 - [x] printf() - C-style formatted output (%d, %f, %s, %.Nf, %%)
-- [x] assertEqual(), assertFloatEqual(), assertStringEqual()
+- [x] assertEqual(), assertFloatEqual(), assertStringEqual(), assert()
+- [x] fread(filename) - read file as string
+- [x] fwrite(filename, content [, mode]) - write/append file, returns 1/0
+- [x] exec(command [, background]) - run external command, returns exit code
+- [x] jsoncreate/jsonfree/jsonparse/jsonexport
+- [x] jsonadd/jsonaddnum/jsonaddbool - add string/number/bool members
+- [x] jsonmember/jsonstring/jsonnumber/jsonbool - member access
+- [x] xmlcreate/xmlfree/xmlparse/xmlexport
+- [x] xmlroot/xmladdnode/xmlchild/xmlnext/xmlparent - tree navigation
+- [x] xmlsettext/xmlsetattr/xmltext/xmlattr/xmlname/xmltype - node data
 
 ### Pragmas
 - [x] #pragma optimizecode on/off
@@ -142,6 +151,29 @@ Located in `Examples/`:
 - Julia set renderer (21)
 
 ## Recent Changes (v1.031.x - v1.039.x)
+
+### v1.039.58
+- **String Builtin `\i` Sync Fix**: All string builtins that write to `\ss` now update cached `\i` length
+  - Affected: `left`, `right`, `mid`, `trim`, `ltrim`, `rtrim`, `lcase`, `ucase`, `chr`, `hex`, `bin`, `replacestring`, `insertstring`, `removestring`, `space`, `lset`, `rset`, `capitalize`, `md5`/`sha1`/`sha256`/`sha512`, `base64enc`/`base64dec`, `jsonstring`
+  - Root cause: FETCHS/PUSHS cache `\i = Len(ss)` (V1.035.13), but string builtins did not update `\i` after writing `\ss`, causing stale lengths in inline expressions like `len(left(s, n))`
+- Fixed `Examples/125`: use `assertStringEqual` for string equality checks (not `assertEqual`)
+- 81 tests pass
+
+### v1.039.57
+- **JSON Numeric/Boolean Write**: `jsonaddnum(h, key, value.f)`, `jsonaddbool(h, key, bool.i)`
+- **14 XML Builtins**: `xmlcreate`/`xmlfree`/`xmlparse`/`xmlexport`, `xmlroot`/`xmladdnode`/`xmlchild`/`xmlnext`/`xmlparent`, `xmlsettext`/`xmlsetattr`/`xmltext`/`xmlattr`/`xmlname`/`xmltype`
+- **jsoncreate fix**: `SetJSONObject(JSONValue(h))` after `CreateJSON` — root was NULL type, breaking all add operations
+- **xmlcreate fix**: Bootstrap with `ParseXML(#PB_Any, "<cx_root/>")` + `DeleteXMLNode` — `CreateXML` gives `MainXMLNode()=0` for empty document
+- New `tests/test_jsonxml.cx` (24 assertions, all pass)
+- New `Examples/126 json xml io.cx`
+- Updated `tests/run-tests-win.ps1` to include `tests/test_*.cx`
+- 77 tests pass
+
+### v1.039.56
+- **File I/O Builtins**: `fread`, `fwrite` (overwrite and append mode), `exec` (wait/background)
+- **assert() Builtin**: `assert(condition)` — prints PASS/FAIL, aborts on failure
+- **vm_PushString cross-populate fix**: String results from builtins no longer corrupt adjacent stack slots
+- 76 tests pass
 
 ### v1.039.45
 - **System/Utility Built-in Functions**: Added new module `c2-builtins-system-v01.pbi`
