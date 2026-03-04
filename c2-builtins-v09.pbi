@@ -730,6 +730,7 @@ EndProcedure
 Procedure C2BUILTIN_LEFT()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\ss = Left(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
    sp - 1
    pc + 1
 EndProcedure
@@ -737,6 +738,7 @@ EndProcedure
 Procedure C2BUILTIN_RIGHT()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\ss = Right(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
    sp - 1
    pc + 1
 EndProcedure
@@ -746,9 +748,11 @@ Procedure C2BUILTIN_MID()
    Protected paramCount.i = vm_GetParamCount()
    If paramCount = 3
       gEvalStack(sp - 3)\ss = Mid(gEvalStack(sp - 3)\ss, gEvalStack(sp - 2)\i, gEvalStack(sp - 1)\i)
+      gEvalStack(sp - 3)\i = Len(gEvalStack(sp - 3)\ss)  ; V1.039.58: sync cached length
       sp - 2
    Else
       gEvalStack(sp - 2)\ss = Mid(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+      gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
       sp - 1
    EndIf
    pc + 1
@@ -757,36 +761,42 @@ EndProcedure
 Procedure C2BUILTIN_TRIM()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = Trim(gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_LTRIM()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = LTrim(gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_RTRIM()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = RTrim(gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_LCASE()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = LCase(gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_UCASE()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = UCase(gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_CHR()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = Chr(gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length (overwrites int input)
    pc + 1
 EndProcedure
 
@@ -814,6 +824,7 @@ EndProcedure
 Procedure C2BUILTIN_REPLACESTRING()
    vm_DebugFunctionName()
    gEvalStack(sp - 3)\ss = ReplaceString(gEvalStack(sp - 3)\ss, gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 3)\i = Len(gEvalStack(sp - 3)\ss)  ; V1.039.58: sync cached length
    sp - 2
    pc + 1
 EndProcedure
@@ -828,12 +839,14 @@ EndProcedure
 Procedure C2BUILTIN_REVERSESTRING()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = ReverseString(gEvalStack(sp - 1)\ss)
+   ; V1.039.58: length unchanged, \i already correct
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_INSERTSTRING()
    vm_DebugFunctionName()
    gEvalStack(sp - 3)\ss = InsertString(gEvalStack(sp - 3)\ss, gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 3)\i = Len(gEvalStack(sp - 3)\ss)  ; V1.039.58: sync cached length
    sp - 2
    pc + 1
 EndProcedure
@@ -841,6 +854,7 @@ EndProcedure
 Procedure C2BUILTIN_REMOVESTRING()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\ss = RemoveString(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
    sp - 1
    pc + 1
 EndProcedure
@@ -848,12 +862,14 @@ EndProcedure
 Procedure C2BUILTIN_SPACE()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = Space(gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_LSET()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\ss = LSet(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
    sp - 1
    pc + 1
 EndProcedure
@@ -861,6 +877,7 @@ EndProcedure
 Procedure C2BUILTIN_RSET()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\ss = RSet(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
    sp - 1
    pc + 1
 EndProcedure
@@ -880,12 +897,14 @@ EndProcedure
 Procedure C2BUILTIN_HEX()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = Hex(gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
 Procedure C2BUILTIN_BIN()
    vm_DebugFunctionName()
    gEvalStack(sp - 1)\ss = Bin(gEvalStack(sp - 1)\i)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -938,6 +957,7 @@ Procedure C2BUILTIN_CAPITALIZE()
       Next
       gEvalStack(sp - 1)\ss = new
    EndIf
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -959,6 +979,7 @@ Procedure C2BUILTIN_MD5()
    Protected s.s = gEvalStack(sp - 1)\ss
    UseMD5Fingerprint()
    gEvalStack(sp - 1)\ss = Fingerprint(@s, StringByteLength(s), #PB_Cipher_MD5)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -967,6 +988,7 @@ Procedure C2BUILTIN_SHA1()
    Protected s.s = gEvalStack(sp - 1)\ss
    UseSHA1Fingerprint()
    gEvalStack(sp - 1)\ss = Fingerprint(@s, StringByteLength(s), #PB_Cipher_SHA1)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -975,6 +997,7 @@ Procedure C2BUILTIN_SHA256()
    Protected s.s = gEvalStack(sp - 1)\ss
    UseSHA2Fingerprint()
    gEvalStack(sp - 1)\ss = Fingerprint(@s, StringByteLength(s), #PB_Cipher_SHA2, 256)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -983,6 +1006,7 @@ Procedure C2BUILTIN_SHA512()
    Protected s.s = gEvalStack(sp - 1)\ss
    UseSHA2Fingerprint()
    gEvalStack(sp - 1)\ss = Fingerprint(@s, StringByteLength(s), #PB_Cipher_SHA2, 512)
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -1011,6 +1035,7 @@ Procedure C2BUILTIN_BASE64ENC()
    Else
       gEvalStack(sp - 1)\ss = ""
    EndIf
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -1035,6 +1060,7 @@ Procedure C2BUILTIN_BASE64DEC()
    Else
       gEvalStack(sp - 1)\ss = ""
    EndIf
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 
@@ -1124,6 +1150,7 @@ Procedure C2BUILTIN_JSONSTRING()
    Else
       gEvalStack(sp - 1)\ss = ""
    EndIf
+   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
    pc + 1
 EndProcedure
 

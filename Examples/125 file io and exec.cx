@@ -15,7 +15,7 @@ assert(len(content) > 0);
 print("fread content: ", content, "");
 
 // Check round-trip (trim trailing newlines for comparison)
-assertEqual(left(content, 10), "Hello, CX!");
+assertStringEqual(left(content, 10), "Hello, CX!");
 
 // ---- fwrite JSON and fread it back ----
 
@@ -26,7 +26,7 @@ ok = fwrite(jsonFile, jsonContent);
 assert(ok);
 
 readBack.s = fread(jsonFile);
-assertEqual(readBack, jsonContent);
+assertStringEqual(readBack, jsonContent);
 print("JSON round-trip OK: ", readBack, "");
 
 // ---- fwrite append mode ----
