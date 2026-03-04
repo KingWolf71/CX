@@ -186,6 +186,30 @@ Procedure C2BUILTIN_ASSERT_EQUAL()
    pc + 1  ; V1.020.053: Assertions don't return values (statement-level calls only)
 EndProcedure
 
+; V1.039.56: assert(condition) - Assert condition is non-zero (truthy)
+Procedure C2BUILTIN_ASSERT()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   Protected condition.i
+   Protected message.s
+
+   If paramCount >= 1
+      condition = gEvalStack(sp - 1)\i
+      vm_PopParams(paramCount)
+      If condition
+         message = "[PASS] assert: true"
+      Else
+         message = "[FAIL] assert: condition is false"
+      EndIf
+   Else
+      message = "[FAIL] assert: requires 1 parameter"
+      vm_PopParams(paramCount)
+   EndIf
+
+   vm_AssertPrint( message )
+   pc + 1
+EndProcedure
+
 ; assertFloatEqual(expected, actual, tolerance) - Assert floats are equal within tolerance
 ; If tolerance is omitted, uses #pragma floattolerance value (default: 0.00001)
 Procedure C2BUILTIN_ASSERT_FLOAT()

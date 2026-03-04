@@ -1,0 +1,59 @@
+// test_fileio.cx - Unit tests for fwrite, fread, exec builtins
+
+tmpFile.s = "cx_test_fileio.tmp";
+jsonFile.s = "cx_test_fileio.json";
+appFile.s  = "cx_test_append.tmp";
+
+// --- Test 1: fwrite returns 1 on success ---
+result.i = fwrite(tmpFile, "hello world");
+assertEqual(result, 1);
+
+// --- Test 2: fread returns written content ---
+content.s = fread(tmpFile);
+assertEqual(content, "hello world");
+
+// --- Test 3: fwrite overwrites existing content ---
+result = fwrite(tmpFile, "new content");
+assertEqual(fread(tmpFile), "new content");
+
+// --- Test 4: fread on missing file returns empty string ---
+assertEqual(len(fread("__no_such_file__.tmp")), 0);
+
+// --- Test 5: fwrite with newlines ---
+result = fwrite(tmpFile, "line1\nline2\nline3");
+content = fread(tmpFile);
+assert(findstring(content, "line1") > 0);
+assert(findstring(content, "line2") > 0);
+assert(findstring(content, "line3") > 0);
+
+// --- Test 6: JSON round-trip ---
+jsonData.s = "{\"key\":\"value\",\"num\":42}";
+result = fwrite(jsonFile, jsonData);
+assertEqual(fread(jsonFile), jsonData);
+
+// --- Test 7: fwrite append mode ---
+result = fwrite(appFile, "A");
+result = fwrite(appFile, "B", "a");
+result = fwrite(appFile, "C", "a");
+assertEqual(fread(appFile), "ABC");
+
+// --- Test 8: exec() returns 0 for successful command ---
+exitCode.i = exec("echo test");
+assertEqual(exitCode, 0);
+
+// --- Test 9: Large content round-trip ---
+bigContent.s = "";
+i.i = 0;
+while (i < 100) {
+   bigContent = bigContent + "line " + str(i) + " of data\n";
+   i = i + 1;
+}
+result = fwrite(tmpFile, bigContent);
+readBig.s = fread(tmpFile);
+assertEqual(len(readBig), len(bigContent));
+assertEqual(readBig, bigContent);
+
+// Cleanup
+exec("del cx_test_fileio.tmp cx_test_fileio.json cx_test_append.tmp 2>nul");
+
+print("All fread/fwrite/exec tests passed!\n");

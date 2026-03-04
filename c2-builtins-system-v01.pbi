@@ -256,3 +256,150 @@ Procedure C2BUILTIN_GETENV()
    vm_PushString(result)
    pc + 1
 EndProcedure
+
+;- File I/O and Process Functions (V1.039.56)
+
+; fread(filename) - Read entire file content as a string
+Procedure C2BUILTIN_FREAD()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   Protected result.s = ""
+   Protected filename.s
+   Protected fileID.i
+   Protected fileSize.i
+   Protected *buf
+
+   If paramCount >= 1
+      filename = gEvalStack(sp - 1)\ss
+      vm_PopParams(paramCount)
+      fileSize = FileSize(filename)
+      If fileSize > 0
+         fileID = ReadFile(#PB_Any, filename)
+         If fileID
+            *buf = AllocateMemory(fileSize + 2)
+            If *buf
+               ReadData(fileID, *buf, fileSize)
+               result = PeekS(*buf, fileSize, #PB_UTF8)
+               FreeMemory(*buf)
+            EndIf
+            CloseFile(fileID)
+         EndIf
+      ElseIf fileSize = 0
+         ; Empty file is valid - result stays ""
+         ; (fileSize < 0 means file not found)
+      EndIf
+   EndIf
+
+   vm_PushString(result)
+   pc + 1
+EndProcedure
+
+; fwrite(filename, content [, mode]) - Write string content to file
+;   mode: "w" (default) = overwrite/create, "a" = append
+;   returns 1 on success, 0 on failure
+Procedure C2BUILTIN_FWRITE()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   Protected result.i = 0
+   Protected filename.s
+   Protected content.s
+   Protected mode.s = "w"
+   Protected fileID.i
+   Protected *buf
+   Protected bufSize.i
+
+   If paramCount >= 2
+      filename = gEvalStack(sp - paramCount)\ss
+      content  = gEvalStack(sp - paramCount + 1)\ss
+      If paramCount >= 3
+         mode = LCase(gEvalStack(sp - 1)\ss)
+      EndIf
+      vm_PopParams(paramCount)
+
+      If mode = "a"
+         fileID = OpenFile(#PB_Any, filename)
+         If fileID
+            FileSeek(fileID, Lof(fileID))  ; Seek to end for append
+         Else
+            fileID = CreateFile(#PB_Any, filename)  ; Create if not exists
+         EndIf
+      Else
+         fileID = CreateFile(#PB_Any, filename)
+      EndIf
+
+      If fileID
+         *buf = UTF8(content)
+         If *buf
+            bufSize = MemorySize(*buf) - 1  ; Exclude null terminator
+            If bufSize > 0
+               WriteData(fileID, *buf, bufSize)
+            EndIf
+            FreeMemory(*buf)
+         EndIf
+         CloseFile(fileID)
+         result = 1
+      EndIf
+   EndIf
+
+   vm_PushInt(result)
+   pc + 1
+EndProcedure
+
+; exec(command [, background]) - Execute an external command
+;   background: 0 (default) = wait for completion, return exit code
+;               1           = run detached, return 0
+Procedure C2BUILTIN_EXEC()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   Protected result.i = 0
+   Protected command.s
+   Protected background.i = 0
+   Protected programID.i
+   Protected program.s
+   Protected params.s
+
+   If paramCount >= 1
+      command    = gEvalStack(sp - paramCount)\ss
+      If paramCount >= 2
+         background = gEvalStack(sp - 1)\i
+      EndIf
+      vm_PopParams(paramCount)
+
+      ; Split command into program + parameters at first space
+      Protected spacePos.i = FindString(command, " ")
+      If spacePos > 0
+         program = Left(command, spacePos - 1)
+         params  = Mid(command, spacePos + 1)
+      Else
+         program = command
+         params  = ""
+      EndIf
+
+      If background
+         CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+            ; On Windows: launch hidden, do not wait
+            programID = RunProgram(program, params, "", #PB_Program_Open | #PB_Program_Hide)
+            If programID
+               CloseProgram(programID)  ; Detach - process continues independently
+               result = 1
+            EndIf
+         CompilerElse
+            ; On Linux/Mac: use system with shell backgrounding
+            result = Bool(system_(command + " &") = 0)
+         CompilerEndIf
+      Else
+         CompilerIf #PB_Compiler_OS = #PB_OS_Windows
+            programID = RunProgram(program, params, "", #PB_Program_Open | #PB_Program_Wait | #PB_Program_Hide)
+            If programID
+               result = ProgramExitCode(programID)
+               CloseProgram(programID)
+            EndIf
+         CompilerElse
+            result = system_(command)
+         CompilerEndIf
+      EndIf
+   EndIf
+
+   vm_PushInt(result)
+   pc + 1
+EndProcedure

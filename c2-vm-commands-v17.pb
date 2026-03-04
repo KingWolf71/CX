@@ -135,8 +135,10 @@ Macro                   vm_PushFloat(value)
 EndMacro
 
 ; V1.039.45: Macro for built-in functions: push string result
+; V1.039.56: Cross-populate \i with string length for assertEqual compatibility
 Macro                   vm_PushString(value)
    gEvalStack(sp)\ss = value
+   gEvalStack(sp)\i = Len(value)
    sp + 1
 EndMacro
 

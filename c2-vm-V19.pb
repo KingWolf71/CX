@@ -826,6 +826,7 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_ABS )     = @C2BUILTIN_ABS()
       *ptrJumpTable( #ljBUILTIN_MIN )     = @C2BUILTIN_MIN()
       *ptrJumpTable( #ljBUILTIN_MAX )     = @C2BUILTIN_MAX()
+      *ptrJumpTable( #ljBUILTIN_ASSERT )        = @C2BUILTIN_ASSERT()        ; V1.039.56
       *ptrJumpTable( #ljBUILTIN_ASSERT_EQUAL )  = @C2BUILTIN_ASSERT_EQUAL()
       *ptrJumpTable( #ljBUILTIN_ASSERT_FLOAT )  = @C2BUILTIN_ASSERT_FLOAT()
       *ptrJumpTable( #ljBUILTIN_ASSERT_STRING ) = @C2BUILTIN_ASSERT_STRING()
@@ -928,6 +929,10 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_SECOND )       = @C2BUILTIN_SECOND()
       *ptrJumpTable( #ljBUILTIN_RANDOMSEED )   = @C2BUILTIN_RANDOMSEED()
       *ptrJumpTable( #ljBUILTIN_GETENV )       = @C2BUILTIN_GETENV()
+      ; V1.039.56: File I/O and Process Functions
+      *ptrJumpTable( #ljBUILTIN_FREAD )        = @C2BUILTIN_FREAD()
+      *ptrJumpTable( #ljBUILTIN_FWRITE )       = @C2BUILTIN_FWRITE()
+      *ptrJumpTable( #ljBUILTIN_EXEC )         = @C2BUILTIN_EXEC()
 
       ; Array operations
       *ptrJumpTable( #ljARRAYINDEX )      = @C2ARRAYINDEX()

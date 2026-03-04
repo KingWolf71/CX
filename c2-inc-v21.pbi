@@ -354,6 +354,7 @@ Enumeration
    #ljBUILTIN_ASSERT_EQUAL      ; assertEqual(expected, actual) - assert integers are equal
    #ljBUILTIN_ASSERT_FLOAT      ; assertFloatEqual(expected, actual, tolerance) - assert floats are equal within tolerance
    #ljBUILTIN_ASSERT_STRING     ; assertStringEqual(expected, actual) - assert strings are equal
+   #ljBUILTIN_ASSERT            ; V1.039.56: assert(condition) - assert condition is non-zero
    #ljBUILTIN_SQRT         ; sqrt(x) - square root (returns float)
    #ljBUILTIN_POW          ; pow(base, exp) - power function (returns float)
    #ljBUILTIN_LEN          ; len(s) - string length (returns int)
@@ -453,6 +454,11 @@ Enumeration
    #ljBUILTIN_SECOND       ; second() or second(time) - get second component (0-59)
    #ljBUILTIN_RANDOMSEED   ; randomseed(n) - seed the random number generator
    #ljBUILTIN_GETENV       ; getenv(name) - get environment variable
+
+   ;- File I/O and Process Functions (V1.039.56)
+   #ljBUILTIN_FREAD        ; fread(filename) - read file content as string
+   #ljBUILTIN_FWRITE       ; fwrite(filename, content [, mode]) - write string to file ("w"/"a")
+   #ljBUILTIN_EXEC         ; exec(command [, background]) - execute command (0=wait, 1=background)
 
    ;- Array Opcodes
    #ljARRAYINDEX          ; Compute array element index (base + index * elementSize)
@@ -1880,6 +1886,8 @@ Macro          ASMLine(obj,show)
       line + "assert [sp-2] ==. [sp-1] (tol=[sp])"
    ElseIf obj\code = #ljBUILTIN_ASSERT_STRING
       line + "assert [sp-1] == [sp] (str)"
+   ElseIf obj\code = #ljBUILTIN_ASSERT
+      line + "assert [sp] != 0"
    EndIf
    ; V1.039.20: Only show FLAGS in debug mode
    CompilerIf Not show
@@ -2140,6 +2148,7 @@ Macro _INIT_OPCODE_NAMES
    gszATR(#ljBUILTIN_ASSERT_EQUAL)\s = "BI_ASSERT_EQ"
    gszATR(#ljBUILTIN_ASSERT_FLOAT)\s = "BI_ASSERT_FLT"
    gszATR(#ljBUILTIN_ASSERT_STRING)\s = "BI_ASSERT_STR"
+   gszATR(#ljBUILTIN_ASSERT)\s = "BI_ASSERT"
    gszATR(#ljBUILTIN_SQRT)\s = "BI_SQRT"
    gszATR(#ljBUILTIN_POW)\s = "BI_POW"
    gszATR(#ljBUILTIN_LEN)\s = "BI_LEN"
@@ -2233,6 +2242,9 @@ Macro _INIT_OPCODE_NAMES
    gszATR(#ljBUILTIN_SECOND)\s = "BI_SECOND"
    gszATR(#ljBUILTIN_RANDOMSEED)\s = "BI_RSEED"
    gszATR(#ljBUILTIN_GETENV)\s = "BI_GETENV"
+   gszATR(#ljBUILTIN_FREAD)\s = "BI_FREAD"
+   gszATR(#ljBUILTIN_FWRITE)\s = "BI_FWRITE"
+   gszATR(#ljBUILTIN_EXEC)\s = "BI_EXEC"
    gszATR(#ljARRAYINDEX)\s = "ARRAYINDEX"
    gszATR(#ljARRAYFETCH)\s = "ARRAYFETCH"
    gszATR(#ljARRAYFETCH_INT)\s = "ARRAYFETCH_INT"

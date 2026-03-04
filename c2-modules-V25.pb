@@ -497,6 +497,7 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       InstallBuiltin( "abs",               #ljBUILTIN_ABS,          1, 1, #C2FLAG_INT )
       InstallBuiltin( "min",               #ljBUILTIN_MIN,          2, 2, #C2FLAG_INT )
       InstallBuiltin( "max",               #ljBUILTIN_MAX,          2, 2, #C2FLAG_INT )
+      InstallBuiltin( "assert",            #ljBUILTIN_ASSERT,       1, 1, 0 )  ; V1.039.56
       InstallBuiltin( "assertEqual",       #ljBUILTIN_ASSERT_EQUAL, 2, 2, 0 )
       InstallBuiltin( "assertFloatEqual",  #ljBUILTIN_ASSERT_FLOAT, 2, 3, 0 )
       InstallBuiltin( "assertStringEqual", #ljBUILTIN_ASSERT_STRING,2, 2, 0 )
@@ -638,6 +639,10 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       InstallBuiltin( "second",            #ljBUILTIN_SECOND,       0, 1, #C2FLAG_INT )
       InstallBuiltin( "randomseed",        #ljBUILTIN_RANDOMSEED,   0, 1, 0 )
       InstallBuiltin( "getenv",            #ljBUILTIN_GETENV,       1, 1, #C2FLAG_STR )
+      ; V1.039.56: File I/O and Process Functions
+      InstallBuiltin( "fread",             #ljBUILTIN_FREAD,        1, 1, #C2FLAG_STR )
+      InstallBuiltin( "fwrite",            #ljBUILTIN_FWRITE,       2, 3, #C2FLAG_INT )
+      InstallBuiltin( "exec",              #ljBUILTIN_EXEC,         1, 2, #C2FLAG_INT )
    EndProcedure
    CompilerEndIf
 
@@ -2604,7 +2609,7 @@ CompilerIf #PB_Compiler_IsMainFile
 
 CompilerEndIf
 ; IDE Options = PureBasic 6.30 (Windows - x64)
-; CursorPosition = 21
+; CursorPosition = 17
 ; FirstLine = 9
 ; Folding = 0-----------
 ; Markers = 569,718
@@ -2617,7 +2622,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2628
+; EnableCompileCount = 2629
 ; EnableBuildCount = 37
 ; EnableExeConstant
 ; IncludeVersionInfo
