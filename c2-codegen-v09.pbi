@@ -1819,10 +1819,6 @@
                   mdStoreIsLocal = 1
                   mdStoreArrayIndex = gVarMeta(mdStoreSlot)\paramOffset
                EndIf
-
-               ; Get value expression slot
-               mdStoreValueSlot = GetExprSlotOrTemp(*x\right)
-
                ; Retrieve index expressions from node structure
                *mdStoreIdx0 = *x\left\right
                *mdStoreIdx1 = 0
@@ -1902,6 +1898,9 @@
                      mdStoreOpcode = #ljARRAYSTORE_INT
                   EndIf
 
+                  ; V1.039.59: Const-index: evaluate value here (not early)
+                  mdStoreValueSlot = GetExprSlotOrTemp(*x\right)
+
                   EmitInt(mdStoreOpcode, mdStoreArrayIndex)
                   llObjects()\j = mdStoreIsLocal
                   llObjects()\ndx = mdStoreConstSlot
@@ -1913,7 +1912,10 @@
 
                Else
                   ; Variable indices - generate runtime computation
-                  ; Push value first, then compute and push linear index
+                  ; V1.039.59: FIX - Push value to eval stack FIRST, then compute flat index.
+                  ; GetExprSlotOrTemp would STORE value to local temp (LOPT), but type inferrer
+                  ; has no STACK_index+LOPT_value variant -> reads 0. Push value on stack instead.
+                  CodeGenerator(*x\right)
 
                   ; Generate code for first index * stride
                   mdStoreHasVal = #False
@@ -1982,7 +1984,7 @@
                   EmitInt(mdStoreOpcodeStack, mdStoreArrayIndex)
                   llObjects()\j = mdStoreIsLocal
                   llObjects()\ndx = -1  ; -1 indicates stack-based index
-                  llObjects()\n = mdStoreValueSlot
+                  llObjects()\n = -1    ; V1.039.59: FIX - value on stack (not LOPT temp)
 
                   CompilerIf #DEBUG
                      Debug "MultiDim STORE stack: slot=" + Str(mdStoreSlot) + " dims=" + Str(mdStoreNDims)

@@ -1,0 +1,44 @@
+// test_2darray.cx - Test 2D array assignment with variable indices
+// V1.039.59: Regression test for multi-dim array store bug
+// Bug: arr[var][var] = complex_expr silently stored 0 inside functions
+
+#pragma console on
+
+array a.i[4][4];
+
+// Test 1: Constant indices (was already working)
+a[0][0] = 17;
+a[1][2] = 29;
+assertEqual(a[0][0], 17);
+assertEqual(a[1][2], 29);
+
+// Test 2: Variable indices with complex expressions inside a function
+function fill() {
+    for (fr = 0; fr < 4; fr++) {
+        for (fc = 0; fc < 4; fc++) {
+            a[fr][fc] = (fr + 1) * 10 + fc + 7;
+        }
+    }
+}
+
+fill();
+
+// Verify: a[r][c] = (r+1)*10 + c + 7
+assertEqual(a[0][0], 17);
+assertEqual(a[0][3], 20);
+assertEqual(a[1][2], 29);
+assertEqual(a[2][1], 38);
+assertEqual(a[3][3], 50);
+
+// Test 3: Variable indices at global scope
+for (gr = 0; gr < 4; gr++) {
+    for (gc = 0; gc < 4; gc++) {
+        a[gr][gc] = gr * 4 + gc;
+    }
+}
+assertEqual(a[0][0], 0);
+assertEqual(a[1][1], 5);
+assertEqual(a[2][3], 11);
+assertEqual(a[3][3], 15);
+
+print("All 2D array tests passed!");
