@@ -925,7 +925,7 @@ Procedure            PostProcessor()
    ; Now called after Optimizer() in c2-modules-V21.pb
    Procedure            BuildVariableTemplates()
       Protected i.i, maxFuncId.i, funcId.i, funcName.s, funcPrefix.s, nParams.i
-      Protected localCount.i, templateIdx.i, preloadCount.i
+      Protected localCount.i, templateIdx.i, pci.i, preloadCount.i
 
       ;- ========================================
       ;- BUILD VARIABLE PRELOADING TEMPLATES
@@ -1002,6 +1002,17 @@ Procedure            PostProcessor()
                ; V1.035.1: Use gnLastVariable (includes constants/literals) to avoid slot collision
                gFuncTemplates(funcId)\funcSlot = gnLastVariable + funcIdx
                gFuncTemplates(funcId)\nParams = nParams
+               gFuncTemplates(funcId)\needsCleanup = #False   ; V1.039.60: Assume clean until proven otherwise
+               ; V1.039.60: Check if any params are strings (need cleanup)
+               For pci = 0 To gnLastVariable - 1
+                  If Left(LCase(gVarMeta(pci)\name), Len(funcPrefix)) = LCase(funcPrefix)
+                     If gVarMeta(pci)\paramOffset >= 0 And gVarMeta(pci)\paramOffset < nParams
+                        If gVarMeta(pci)\flags & #C2FLAG_STR
+                           gFuncTemplates(funcId)\needsCleanup = #True
+                        EndIf
+                     EndIf
+                  EndIf
+               Next
                funcIdx + 1
 
                If localCount > 0
@@ -1018,8 +1029,12 @@ Procedure            PostProcessor()
                                  gFuncTemplates(funcId)\template(templateIdx)\f = gVarMeta(i)\valueFloat
                               ElseIf gVarMeta(i)\flags & #C2FLAG_STR
                                  gFuncTemplates(funcId)\template(templateIdx)\ss = gVarMeta(i)\valueString
+                                 gFuncTemplates(funcId)\needsCleanup = #True   ; V1.039.60
                               EndIf
                               gFuncTemplates(funcId)\template(templateIdx)\arraySize = gVarMeta(i)\arraySize
+                              If gVarMeta(i)\arraySize > 0
+                                 gFuncTemplates(funcId)\needsCleanup = #True   ; V1.039.60: local array
+                              EndIf
                            EndIf
                         EndIf
                      EndIf

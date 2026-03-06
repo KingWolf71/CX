@@ -78,6 +78,7 @@ Procedure Optimizer()
 
    ; Pass 2 variables (unified peephole)
    Protected peepholeCount.i, movFusionCount.i
+   Protected shiftAmount.i, shiftTemp.i   ; V1.039.60: Strength reduction
    Protected fetchSlot.i, fetchJ.i, storeSlot.i, storeJ.i, movN.i
    Protected srcOffset.i, dstOffset.i
    Protected *fetchInstr, *lfetchInstr
@@ -378,7 +379,45 @@ Procedure Optimizer()
                            NextElement(llObjects()) : NextElement(llObjects())
                         EndIf
                      Else
-                        NextElement(llObjects()) : NextElement(llObjects())
+                        ; V1.039.60: Non-const + const + OP pattern: check identity/strength reduction
+                        NextElement(llObjects())  ; Now at PUSH const again
+                        mulConst = const2         ; const2 was already read above
+                        If IsIdentityOp(opCode, mulConst)
+                           llObjects()\code = #ljNOOP
+                           NextElement(llObjects())
+                           llObjects()\code = #ljNOOP
+                           peepholeCount + 1
+                        ElseIf opCode = #ljMULTIPLY And mulConst = 0
+                           If PreviousElement(llObjects())
+                              llObjects()\code = #ljNOOP
+                              NextElement(llObjects())
+                              NextElement(llObjects())
+                              llObjects()\code = #ljNOOP
+                              peepholeCount + 1
+                           Else
+                              NextElement(llObjects())
+                           EndIf
+                        ; V1.039.60: Strength reduction: x * power-of-2 -> x << shift
+                        ElseIf opCode = #ljMULTIPLY And mulConst > 1 And (mulConst & (mulConst - 1)) = 0
+                           shiftAmount = 0
+                           shiftTemp = mulConst
+                           While shiftTemp > 1 : shiftTemp >> 1 : shiftAmount + 1 : Wend
+                           ; Allocate new constant slot (don't corrupt shared constant)
+                           newConstIdx = gnLastVariable
+                           gVarMeta(newConstIdx)\name = "$shl" + Str(newConstIdx)
+                           gVarMeta(newConstIdx)\valueInt = shiftAmount
+                           gVarMeta(newConstIdx)\valueFloat = 0.0
+                           gVarMeta(newConstIdx)\valueString = ""
+                           gVarMeta(newConstIdx)\flags = #C2FLAG_CONST | #C2FLAG_INT
+                           gVarMeta(newConstIdx)\paramOffset = -1
+                           gnLastVariable + 1
+                           llObjects()\i = newConstIdx
+                           NextElement(llObjects())
+                           llObjects()\code = #ljSHL
+                           peepholeCount + 1
+                        Else
+                           NextElement(llObjects())
+                        EndIf
                      EndIf
                   Else
                      NextElement(llObjects())
@@ -405,6 +444,24 @@ Procedure Optimizer()
                         Else
                            NextElement(llObjects())
                         EndIf
+                     ; V1.039.60: Strength reduction (fallback path)
+                     ElseIf opCode = #ljMULTIPLY And mulConst > 1 And (mulConst & (mulConst - 1)) = 0
+                        shiftAmount = 0
+                        shiftTemp = mulConst
+                        While shiftTemp > 1 : shiftTemp >> 1 : shiftAmount + 1 : Wend
+                        ; Allocate new constant slot (don't corrupt shared constant)
+                        newConstIdx = gnLastVariable
+                        gVarMeta(newConstIdx)\name = "$shl" + Str(newConstIdx)
+                        gVarMeta(newConstIdx)\valueInt = shiftAmount
+                        gVarMeta(newConstIdx)\valueFloat = 0.0
+                        gVarMeta(newConstIdx)\valueString = ""
+                        gVarMeta(newConstIdx)\flags = #C2FLAG_CONST | #C2FLAG_INT
+                        gVarMeta(newConstIdx)\paramOffset = -1
+                        gnLastVariable + 1
+                        llObjects()\i = newConstIdx
+                        NextElement(llObjects())
+                        llObjects()\code = #ljSHL
+                        peepholeCount + 1
                      Else
                         NextElement(llObjects())
                      EndIf

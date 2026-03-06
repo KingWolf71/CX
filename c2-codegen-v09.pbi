@@ -592,35 +592,40 @@
                      Next
                   EndIf
 
-                  dfCurrentType = dfBaseStructType
-                  dfRemaining = dfFieldChain
+                  ; V1.039.61: O(1) struct field cache lookup
+                  Protected sfcLookupKey.s = dfBaseStructType + "." + dfFieldChain
+                  If FindMapElement(mapStructFieldCache(), sfcLookupKey)
+                     dotFieldType = mapStructFieldCache()\fieldType
+                  Else
+                     dfCurrentType = dfBaseStructType
+                     dfRemaining = dfFieldChain
 
-                  While dfRemaining <> "" And dfCurrentType <> ""
-                     dfNextDot = FindString(dfRemaining, ".")
-                     dfCurrentField = ""
-                     If dfNextDot > 0
-                        dfCurrentField = Left(dfRemaining, dfNextDot - 1)
-                        dfRemaining = Mid(dfRemaining, dfNextDot + 1)
-                     Else
-                        dfCurrentField = dfRemaining
-                        dfRemaining = ""
-                     EndIf
+                     While dfRemaining <> "" And dfCurrentType <> ""
+                        dfNextDot = FindString(dfRemaining, ".")
+                        dfCurrentField = ""
+                        If dfNextDot > 0
+                           dfCurrentField = Left(dfRemaining, dfNextDot - 1)
+                           dfRemaining = Mid(dfRemaining, dfNextDot + 1)
+                        Else
+                           dfCurrentField = dfRemaining
+                           dfRemaining = ""
+                        EndIf
 
-                     If FindMapElement(mapStructDefs(), dfCurrentType)
-                        ForEach mapStructDefs()\fields()
-                           If LCase(mapStructDefs()\fields()\name) = LCase(dfCurrentField)
-                              If dfRemaining = ""
-                                 ; Final field - get its type
-                                 dotFieldType = mapStructDefs()\fields()\fieldType
+                        If FindMapElement(mapStructDefs(), dfCurrentType)
+                           ForEach mapStructDefs()\fields()
+                              If LCase(mapStructDefs()\fields()\name) = LCase(dfCurrentField)
+                                 If dfRemaining = ""
+                                    dotFieldType = mapStructDefs()\fields()\fieldType
+                                 EndIf
+                                 dfCurrentType = mapStructDefs()\fields()\structType
+                                 Break
                               EndIf
-                              dfCurrentType = mapStructDefs()\fields()\structType
-                              Break
-                           EndIf
-                        Next
-                     Else
-                        dfCurrentType = ""
-                     EndIf
-                  Wend
+                           Next
+                        Else
+                           dfCurrentType = ""
+                        EndIf
+                     Wend
+                  EndIf
                EndIf
 
                ; V1.026.6: Maps and lists always store pool slot index (integer), not the value
@@ -638,52 +643,61 @@
                   sfFieldType = dotFieldType
                   ; V1.029.64: Look up field type from struct definition using byte offset
                   ; Must handle nested structs by walking the type chain
+                  ; V1.039.61: Use struct field cache for byte-offset-to-type resolution
                   If sfFieldType = 0 And gVarMeta(sfBaseSlot)\structType <> ""
-                     sfLookupType = gVarMeta(sfBaseSlot)\structType
-                     sfLookupOffset = sfByteOffset / 8  ; Convert byte offset to field index
-                     sfLookupFound = #False
-
-                     ; Walk nested struct chain until we find a primitive field
-                     While Not sfLookupFound And sfLookupType <> ""
-                        If FindMapElement(mapStructDefs(), sfLookupType)
-                           sfAccumOffset = 0
-                           ForEach mapStructDefs()\fields()
-                              sfFieldSize = 1  ; Default size for primitives
-                              ; V1.029.72: Check for array fields - use arraySize for field size
-                              If mapStructDefs()\fields()\isArray And mapStructDefs()\fields()\arraySize > 1
-                                 sfFieldSize = mapStructDefs()\fields()\arraySize
-                              ElseIf mapStructDefs()\fields()\structType <> ""
-                                 ; Nested struct - get its total size
-                                 sfNestedType = mapStructDefs()\fields()\structType
-                                 If FindMapElement(mapStructDefs(), sfNestedType)
-                                    sfFieldSize = mapStructDefs()\totalSize
-                                 EndIf
-                                 FindMapElement(mapStructDefs(), sfLookupType)  ; Restore position
-                              EndIf
-
-                              ; Check if target offset falls within this field
-                              If sfLookupOffset >= sfAccumOffset And sfLookupOffset < sfAccumOffset + sfFieldSize
-                                 If mapStructDefs()\fields()\structType <> ""
-                                    ; Nested struct - recurse into it
-                                    sfLookupType = mapStructDefs()\fields()\structType
-                                    sfLookupOffset = sfLookupOffset - sfAccumOffset
-                                    Break  ; Continue outer while loop with nested type
-                                 Else
-                                    ; Primitive field found
-                                    sfFieldType = mapStructDefs()\fields()\fieldType
-                                    sfLookupFound = #True
-                                    Break
-                                 EndIf
-                              EndIf
-                              sfAccumOffset + sfFieldSize
-                           Next
-                           If ListIndex(mapStructDefs()\fields()) = -1
-                              Break  ; Field not found, exit
+                     Protected sfcFound.b = #False
+                     Protected sfcBaseType.s = gVarMeta(sfBaseSlot)\structType
+                     ForEach mapStructFieldCache()
+                        If Left(MapKey(mapStructFieldCache()), Len(sfcBaseType) + 1) = sfcBaseType + "."
+                           If mapStructFieldCache()\byteOffset = sfByteOffset And mapStructFieldCache()\fieldType <> 0
+                              sfFieldType = mapStructFieldCache()\fieldType
+                              sfcFound = #True
+                              Break
                            EndIf
-                        Else
-                           Break  ; Struct type not found
                         EndIf
-                     Wend
+                     Next
+
+                     If Not sfcFound
+                        sfLookupType = sfcBaseType
+                        sfLookupOffset = sfByteOffset / 8
+                        sfLookupFound = #False
+
+                        While Not sfLookupFound And sfLookupType <> ""
+                           If FindMapElement(mapStructDefs(), sfLookupType)
+                              sfAccumOffset = 0
+                              ForEach mapStructDefs()\fields()
+                                 sfFieldSize = 1
+                                 If mapStructDefs()\fields()\isArray And mapStructDefs()\fields()\arraySize > 1
+                                    sfFieldSize = mapStructDefs()\fields()\arraySize
+                                 ElseIf mapStructDefs()\fields()\structType <> ""
+                                    sfNestedType = mapStructDefs()\fields()\structType
+                                    If FindMapElement(mapStructDefs(), sfNestedType)
+                                       sfFieldSize = mapStructDefs()\totalSize
+                                    EndIf
+                                    FindMapElement(mapStructDefs(), sfLookupType)
+                                 EndIf
+
+                                 If sfLookupOffset >= sfAccumOffset And sfLookupOffset < sfAccumOffset + sfFieldSize
+                                    If mapStructDefs()\fields()\structType <> ""
+                                       sfLookupType = mapStructDefs()\fields()\structType
+                                       sfLookupOffset = sfLookupOffset - sfAccumOffset
+                                       Break
+                                    Else
+                                       sfFieldType = mapStructDefs()\fields()\fieldType
+                                       sfLookupFound = #True
+                                       Break
+                                    EndIf
+                                 EndIf
+                                 sfAccumOffset + sfFieldSize
+                              Next
+                              If ListIndex(mapStructDefs()\fields()) = -1
+                                 Break
+                              EndIf
+                           Else
+                              Break
+                           EndIf
+                        Wend
+                     EndIf
                   EndIf
                   If sfFieldType = 0
                      sfFieldType = #C2FLAG_INT  ; Default to int if still unknown

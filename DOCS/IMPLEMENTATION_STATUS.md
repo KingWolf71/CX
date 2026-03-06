@@ -1,5 +1,5 @@
 # CX Implementation Status
-Version: 1.039.58
+Version: 1.039.62
 Date: March 2026
 
 **See also:**
@@ -30,6 +30,8 @@ Date: March 2026
 | Built-ins | `c2-builtins-v09.pbi` | Built-in functions |
 | System builtins | `c2-builtins-system-v01.pbi` | System/utility functions (NEW) |
 | Serialization | `c2-serialize-v02.pbi` | .ocx file serialization |
+| Postprocessor | `c2-postprocessor-V13.pbi` | V13 | Correctness passes only |
+| Optimizer | `c2-optimizer-V04.pbi` | V04 | Rule-based peephole/fusion (5 passes) |
 | Test runner | `tests/run_all_tests.ps1` | Windows PowerShell test runner |
 | Quick test | `tests/quick-test.ps1` | Fast test runner (excludes long tests) |
 
@@ -203,6 +205,40 @@ Located in `Examples/`:
   - Added abbreviation legend comments in c2-inc-v19.pbi
 - **Cross-Platform Testing**: All 75 tests pass on both Windows and Linux
   - Fixed Linux test detection to filter out ASM listing output
+
+### v1.039.62
+- **VM Cache & Pointer Optimization**: Split `stCodeIns` into HOT/COLD structures for CPU cache locality
+  - HOT: opcode, i, j, n, ndx, funcid (tightly packed, accessed every cycle)
+  - COLD: `stCodeData` parallel array for anchor field (rarely accessed)
+  - `code` field changed from `.l` to `.w` for denser packing
+- **Cached Pointer Resolution**: `ResolveCodePointers()` pre-resolves `*arCodeCache` pointers
+  - Global PUSH/STORE use direct `PeekI`/`PokeI` instead of double-indirected `*gVar(slot)\var(0)\i`
+  - CALL opcodes cache `*stFuncTemplate` pointer — skip map lookup at call time
+- **needsCleanup Fast Path**: Functions with only int/float locals use direct field copy instead of `CopyStructure`
+- 87 tests pass
+
+### v1.039.61
+- **Struct Field Cache**: `mapStructFieldCache` provides O(1) lookups for nested struct field chains
+  - Built at parse time for up to 3 levels of nesting (e.g., `rect.bottomRight.x`)
+  - Caches `fieldType`, `byteOffset`, and `nestedStructType` per field path
+  - Eliminates repeated struct definition walks in codegen type resolution
+- 87 tests pass
+
+### v1.039.60
+- **Strength Reduction**: Optimizer converts `x * power-of-2` → `x << shift` at compile time
+  - Both PUSH+PUSH+MUL and FETCH+PUSH+MUL patterns handled
+  - Allocates new constant slot for shift amount (avoids corrupting shared constant)
+- **Identity/Zero Elimination**: Extended peephole for non-const + const patterns (`x * 0 → 0`, `x * 1 → x`, `x + 0 → x`)
+- **needsCleanup Flag**: `stFuncTemplate\needsCleanup` tracks whether function has string/array/list/map locals
+- 87 tests pass
+
+### v1.039.59
+- **2D Array Variable-Index Store Fix**: `arr[var][var] = expr` inside functions silently stored 0
+  - Root cause: `GetExprSlotOrTemp` returned LOPT temp, but type inferrer has no `STACK_index+LOPT_value` variant for ARRAYSTORE
+  - Fix: Variable-index path pushes value to eval stack via `CodeGenerator(*x\right)` + `n=-1`
+  - Const-index path unchanged (GetExprSlotOrTemp works correctly with OPT/LOPT)
+- New test `tests/test_2darray.cx` with 11 assertions
+- 83 tests pass
 
 ### v1.036.x
 - **Array of Structs**: `array points.Point[10];` with field access via `points[i]\x`

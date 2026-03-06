@@ -995,13 +995,16 @@ Structure stType
    anchor.w    ; V1.020.070: Jump anchor ID for NOOP-safe offset recalculation
 EndStructure
 
-Structure stCodeIns
-   code.l      ; Opcode
+Structure stCodeIns    ; V1.039.62: HOT - optimized for VM cache locality
+   code.w      ; Opcode (changed from .l to .w for density)
+   n.w         ; Local var count / MOV flag (word)
    i.l         ; First parameter (full int)
    j.l         ; Second parameter (full int)
-   n.w         ; Local var count (word)
    ndx.w       ; Local array count or index slot (word)
-   funcid.l    ; Function ID for CALL (long - V1.033.50: changed from .w to support >32K functions)
+   funcid.l    ; Function ID / struct array flag (long)
+EndStructure
+
+Structure stCodeData   ; V1.039.62: COLD - parallel array for rare fields
    anchor.w    ; V1.020.070: Jump anchor ID for NOOP-safe offset recalculation
 EndStructure
 
@@ -1187,6 +1190,7 @@ Structure stFuncTemplate
    localCount.i                  ; Number of non-param locals (template size)
    funcSlot.i                    ; V1.035.0: *gVar slot for this function's locals
    nParams.i                     ; V1.035.0: Number of parameters (for var() array sizing)
+   needsCleanup.b                  ; V1.039.60: True if function has string/array/list/map locals
    Array template.stVarTemplate(0)  ; Pre-initialized values for locals
 EndStructure
 
@@ -1196,8 +1200,18 @@ Global Dim           gszATR.stATR(#C2TOKENCOUNT)
 Global Dim           gVarMeta.stVarMeta(#C2MAXCONSTANTS)  ; Compile-time info only
 Global Dim           gFuncLocalArraySlots.i(#C2MAXFUNCTIONS, 15)  ; [functionID, localArrayIndex] -> varSlot
 Global Dim           arCode.stCodeIns(1)
+Global Dim           arCodeData.stCodeData(1)   ; V1.039.62: Cold data parallel to arCode
+Global Dim           *arCodeCache(1)            ; V1.039.62: Cached pointers parallel to arCode
 Global NewMap        mapPragmas.s()
 Global NewMap        mapStructDefs.stStructDef()  ; V1.021.0: Structure type definitions
+
+; V1.039.61: Struct field type cache - flat O(1) lookup for nested field chains
+Structure stStructFieldCache
+   fieldType.w
+   byteOffset.i
+   nestedStructType.s
+EndStructure
+Global NewMap        mapStructFieldCache.stStructFieldCache()
 
 ; V1.022.21: Constant extraction maps - pre-allocated slots for all constants
 Global NewMap        mapConstInt.i()      ; "value" -> slot (e.g., "100" -> 5)
@@ -1919,16 +1933,20 @@ EndMacro
 Macro                   vm_ListToArray( ll, ar )
    i = ListSize( ll() )
    ReDim ar( i )
+   ReDim arCodeData( i )    ; V1.039.62: Cold parallel array
+   ReDim *arCodeCache( i )  ; V1.039.62: Cached pointer array
    i = 0
 
    ForEach ll()
+      ; HOT fields -> arCode
       ar( i )\code = ll()\code
       ar( i )\i = ll()\i
       ar( i )\j = ll()\j
       ar( i )\n = ll()\n
       ar( i )\ndx = ll()\ndx
-      ar( i )\funcid = ll()\funcid  ; V1.18.0: Copy funcid for CALL instruction (for gFuncLocalArraySlots lookup)
-      ar( i )\anchor = ll()\anchor  ; V1.020.070: Copy anchor for jump recalculation
+      ar( i )\funcid = ll()\funcid
+      ; COLD fields -> arCodeData
+      arCodeData( i )\anchor = ll()\anchor
       i + 1
    Next
 EndMacro

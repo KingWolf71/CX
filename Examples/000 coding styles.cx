@@ -1,0 +1,127 @@
+// 000 coding styles.d
+// Demonstrates the different coding styles available in D+AI
+// V1.110.10
+
+#pragma console on
+#pragma ccompat on
+#pragma version on
+#pragma decimals 4
+#pragma consolesize "680x740"
+#pragma consoleposition "30,50"
+#pragma ListASM on
+#pragma FastPrint on
+#pragma ftoi "truncate"
+#pragma modulename on
+#pragma PasteToClipboard on
+#pragma floattolerance 0.0001
+#pragma GlobalStack 1024
+#pragma FunctionStack 32
+#pragma EvalStack 256
+#pragma LocalStack 64
+#pragma CreateLog off
+#pragma DefaultFPS 32
+#pragma ThreadKillWait 1800
+#pragma asmdecimal on
+#pragma autoclose 90
+// ============================================================================
+// D+AI uses C-style syntax with braces {} for blocks.
+// With #pragma ccompat on, you can also use typed declarations.
+// ============================================================================
+
+print("=== D+AI Coding Styles Demo ===\n\n");
+
+// ----------------------------------------------------------------------------
+// STYLE 1: Auto-typed vs C-compat typed declarations
+// With #pragma ccompat on, you can use explicit type declarations
+// ----------------------------------------------------------------------------
+
+print("--- Style 1: Variable declarations ---\n");
+
+// Auto-typed (type inferred from assignment)
+autoInt = 42;
+autoFloat = 3.14159;
+autoStr = "auto string";
+printf("  Auto-typed: int=%d, float=%f, str=%s\n", autoInt, autoFloat, autoStr);
+
+// C-compat explicit types (requires #pragma ccompat on)
+int explicitInt = 100;
+float explicitFloat = 2.71828;
+string explicitStr = "typed string";
+printf("  C-compat:   int=%d, float=%f, str=%s\n", explicitInt, explicitFloat, explicitStr);
+
+// ----------------------------------------------------------------------------
+// STYLE 2: Compound assignment operators (+=, -=, *=, /=, --var, var--)
+// ----------------------------------------------------------------------------
+
+print("\n--- Style 2: Compound assignment ---\n");
+value = 10;
+printf("  Start: %d\n", value);
+value += 5;
+printf("  After 'value += 5': %d\n", value);
+value -= 3;
+printf("  After 'value -= 3': %d\n", value);
+value *= 2;
+printf("  After 'value *= 2': %d\n", value);
+value /= 3;
+printf("  After 'value /= 3': %d\n", value);
+
+// Decrement operators (used in expressions, not standalone)
+print("\n--- Style 2b: Decrement operators ---\n");
+int num = 10;
+printf("  Start: %d\n", num);
+num -= 2;
+printf("  After 'num -= 2': %d\n", num);
+printf("  Pre-decrement '--num' returns: %d\n", --num);
+printf("  After pre-decrement: %d\n", num);
+printf("  Post-decrement 'num--' returns: %d\n", num--);
+printf("  After post-decrement: %d\n", num);
+
+// ----------------------------------------------------------------------------
+// STYLE 3: Increment operators (C-style)
+// - ++var (pre-increment: increment first, then use value)
+// - var++ (post-increment: use value first, then increment)
+// ----------------------------------------------------------------------------
+
+print("\n--- Style 3: Pre-increment (++var) ---\n");
+count = 0;
+while (count < 3) {
+    printf("  ++count returns: %d\n", ++count);
+}
+
+print("\n--- Style 3b: Post-increment (var++) ---\n");
+count = 0;
+while (count++ < 3) {
+    printf("  count after count++: %d\n", count);
+}
+
+// ----------------------------------------------------------------------------
+// STYLE 4: For loops (C-style)
+// ----------------------------------------------------------------------------
+
+print("\n--- Style 4: For loops ---\n");
+for (i = 1; i <= 3; i++) {
+    printf("  for i = 1 to 3: %d\n", i);
+}
+
+// for with step (increment by 3)
+for (j = 0; j <= 10; j += 3) {
+    printf("  for j = 0 to 10 step 3: %d\n", j);
+}
+
+// ----------------------------------------------------------------------------
+// STYLE 5: If/else
+// ----------------------------------------------------------------------------
+
+print("\n--- Style 5: If/else ---\n");
+x = 5;
+if (x > 3) {
+    print("  x > 3: true\n");
+} else {
+    print("  x > 3: false\n");
+}
+
+// Ternary operator
+result = (x > 3) ? "greater" : "not greater";
+printf("  Ternary: x is %s than 3\n", result);
+
+print("\n=== Demo Complete ===\n");

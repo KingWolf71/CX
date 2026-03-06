@@ -1,0 +1,115 @@
+// Example 126: JSON and XML file I/O
+// Demonstrates reading and writing JSON and XML files using fread/fwrite
+// combined with the builtin JSON and XML parsers.
+
+// ================================================================
+// PART 1: JSON
+// ================================================================
+
+// --- Build a JSON object and write to file ---
+jh.i = jsoncreate();
+jsonadd(jh, "name", "Alice");
+jsonaddnum(jh, "age", 30.0);
+jsonaddbool(jh, "active", 1);
+jsonadd(jh, "city", "Paris");
+
+ok.i = fwrite("person.json", jsonexport(jh));
+jsonfree(jh);
+print("JSON written: ", ok, "\n");
+
+// --- Read JSON back from file and parse ---
+raw.s = fread("person.json");
+jh = jsonparse(raw);
+
+jName.s   = jsonstring(jsonmember(jh, "name"));
+jAge.f    = jsonnumber(jsonmember(jh, "age"));
+jActive.i = jsonbool(jsonmember(jh, "active"));
+jCity.s   = jsonstring(jsonmember(jh, "city"));
+
+print("Name:   ", jName, "\n");
+print("Age:    ", jAge, "\n");
+print("Active: ", jActive, "\n");
+print("City:   ", jCity, "\n");
+
+jsonfree(jh);
+
+// --- JSON array example ---
+// Build: {"items":["apple","banana","cherry"],"count":3}
+jh = jsoncreate();
+jsonaddnum(jh, "count", 3.0);
+jsonadd(jh, "first", "apple");
+jsonadd(jh, "second", "banana");
+jsonadd(jh, "third", "cherry");
+ok = fwrite("items.json", jsonexport(jh));
+jsonfree(jh);
+
+// ================================================================
+// PART 2: XML
+// ================================================================
+
+// --- Build XML and write to file ---
+xh.i = xmlcreate();
+docRoot.i = xmlroot(xh);
+root.i    = xmladdnode(docRoot, "person");
+xmlsetattr(root, "version", "1.0");
+
+nameNode.i = xmladdnode(root, "name");
+xmlsettext(nameNode, "Alice");
+
+ageNode.i = xmladdnode(root, "age");
+xmlsettext(ageNode, "30");
+
+cityNode.i = xmladdnode(root, "city");
+xmlsettext(cityNode, "Paris");
+
+ok = fwrite("person.xml", xmlexport(xh));
+xmlfree(xh);
+print("XML written: ", ok, "\n");
+
+// --- Read XML back and parse ---
+raw = fread("person.xml");
+xh = xmlparse(raw);
+
+root = xmlchild(xmlroot(xh));          // <person> element
+ver.s  = xmlattr(root, "version");     // attribute
+
+node.i = xmlchild(root);               // <name>
+xName.s = xmltext(node);
+
+node = xmlnext(node);                  // <age>
+xAge.s = xmltext(node);
+
+node = xmlnext(node);                  // <city>
+xCity.s = xmltext(node);
+
+xmlfree(xh);
+
+print("XML name:    ", xName, "\n");
+print("XML age:     ", xAge, "\n");
+print("XML city:    ", xCity, "\n");
+print("XML version: ", ver, "\n");
+
+// ================================================================
+// PART 3: Config file round-trip (JSON)
+// ================================================================
+
+// Write a config
+cfg.i = jsoncreate();
+jsonadd(cfg, "theme", "dark");
+jsonaddnum(cfg, "fontSize", 14.0);
+jsonaddbool(cfg, "autoSave", 1);
+jsonadd(cfg, "language", "en");
+ok = fwrite("config.json", jsonexport(cfg));
+jsonfree(cfg);
+
+// Read it back
+cfg = jsonparse(fread("config.json"));
+print("Theme:     ", jsonstring(jsonmember(cfg, "theme")), "\n");
+print("Font size: ", jsonnumber(jsonmember(cfg, "fontSize")), "\n");
+print("Auto-save: ", jsonbool(jsonmember(cfg, "autoSave")), "\n");
+jsonfree(cfg);
+
+// Cleanup
+exec("del person.json items.json person.xml config.json 2>nul");
+
+print("Done!\n");

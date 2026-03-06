@@ -243,31 +243,38 @@
                   Next
                EndIf
 
-               ; Resolve field chain to get final field type
-               If dotStructTypeName <> "" And FindMapElement(mapStructDefs(), dotStructTypeName)
-                  dotCurrentType = dotStructTypeName
-                  dotFieldParts = CountString(dotFieldChain, ".") + 1
-                  dotFieldIdx = 0
-                  dotFinalType = #C2FLAG_INT  ; Default
-
-                  For dotFieldIdx = 1 To dotFieldParts
-                     dotCurrentField = StringField(dotFieldChain, dotFieldIdx, ".")
-                     If FindMapElement(mapStructDefs(), dotCurrentType)
-                        ForEach mapStructDefs()\fields()
-                           If LCase(mapStructDefs()\fields()\name) = LCase(dotCurrentField)
-                              dotFinalType = mapStructDefs()\fields()\fieldType
-                              ; Debug "V1.030.41: GetExprResultType field '" + dotCurrentField + "' type=" + Str(dotFinalType) + " (FLOAT=" + Str(#C2FLAG_FLOAT) + ")"
-                              ; Check if this field is a nested struct
-                              If mapStructDefs()\fields()\structType <> ""
-                                 dotCurrentType = mapStructDefs()\fields()\structType
-                              EndIf
-                              Break
-                           EndIf
-                        Next
+               ; V1.039.61: O(1) struct field cache lookup for type resolution
+               If dotStructTypeName <> ""
+                  Protected sfcTypeKey.s = dotStructTypeName + "." + dotFieldChain
+                  If FindMapElement(mapStructFieldCache(), sfcTypeKey)
+                     If mapStructFieldCache()\fieldType <> 0
+                        ProcedureReturn mapStructFieldCache()\fieldType
                      EndIf
-                  Next
-                  ; Debug "V1.030.41: GetExprResultType RETURNING type=" + Str(dotFinalType) + " for '" + *x\value + "'"
-                  ProcedureReturn dotFinalType
+                  EndIf
+
+                  ; Fallback: walk struct hierarchy
+                  If FindMapElement(mapStructDefs(), dotStructTypeName)
+                     dotCurrentType = dotStructTypeName
+                     dotFieldParts = CountString(dotFieldChain, ".") + 1
+                     dotFieldIdx = 0
+                     dotFinalType = #C2FLAG_INT
+
+                     For dotFieldIdx = 1 To dotFieldParts
+                        dotCurrentField = StringField(dotFieldChain, dotFieldIdx, ".")
+                        If FindMapElement(mapStructDefs(), dotCurrentType)
+                           ForEach mapStructDefs()\fields()
+                              If LCase(mapStructDefs()\fields()\name) = LCase(dotCurrentField)
+                                 dotFinalType = mapStructDefs()\fields()\fieldType
+                                 If mapStructDefs()\fields()\structType <> ""
+                                    dotCurrentType = mapStructDefs()\fields()\structType
+                                 EndIf
+                                 Break
+                              EndIf
+                           Next
+                        EndIf
+                     Next
+                     ProcedureReturn dotFinalType
+                  EndIf
                EndIf
             EndIf
 
@@ -279,25 +286,28 @@
                searchName = gCurrentFunctionName + "_" + *x\value
             EndIf
 
-            ; V1.034.66: Use case-insensitive comparison (same as FetchVarOffset)
+            ; V1.039.60: O(1) map lookup via GetCodeElement (replaces O(N) scan)
+            Protected *typeElem.stCodeElement = GetCodeElement(*x\value, gCurrentFunctionName)
+            If *typeElem
+               ; V1.035.18: Skip constants for non-mangled matches
+               Protected typeSlot.i = *typeElem\varSlot
+               If typeSlot >= 0 And typeSlot < gnLastVariable
+                  If Not (gVarMeta(typeSlot)\flags & #C2FLAG_CONST) Or searchName <> *x\value
+                     ProcedureReturn gVarMeta(typeSlot)\flags & (#C2FLAG_TYPE | #C2FLAG_POINTER)
+                  EndIf
+               EndIf
+            EndIf
+
+            ; O(N) fallback for edge cases (variables not yet registered in map)
             For n = 0 To gnLastVariable - 1
                If LCase(gVarMeta(n)\name) = LCase(searchName)
-                  ; Found the variable - return its type flags
-                  ; V1.034.65: Include POINTER flag for pointer arithmetic detection
                   ProcedureReturn gVarMeta(n)\flags & (#C2FLAG_TYPE | #C2FLAG_POINTER)
                EndIf
             Next
-
-            ; If mangled name not found and we tried mangling, try global name
             If searchName <> *x\value
                For n = 0 To gnLastVariable - 1
-                  ; V1.035.18: Skip constants - string "X" should not match variable "x"
-                  If gVarMeta(n)\flags & #C2FLAG_CONST
-                     Continue
-                  EndIf
+                  If gVarMeta(n)\flags & #C2FLAG_CONST : Continue : EndIf
                   If LCase(gVarMeta(n)\name) = LCase(*x\value)
-                     ; Found the global variable - return its type flags
-                     ; V1.034.65: Include POINTER flag for pointer arithmetic detection
                      ProcedureReturn gVarMeta(n)\flags & (#C2FLAG_TYPE | #C2FLAG_POINTER)
                   EndIf
                Next

@@ -1998,6 +1998,53 @@
             ; Store total size
             mapStructDefs()\totalSize = fieldOffset
 
+            ; V1.039.61: Build struct field cache for O(1) lookups
+            Protected sfcPrefix.s, sfcType.s, sfcOffset.i
+            Protected sfcFieldName.s, sfcKey.s, sfcNestedSize.i
+
+            If FindMapElement(mapStructDefs(), structName)
+               ForEach mapStructDefs()\fields()
+                  sfcKey = structName + "." + mapStructDefs()\fields()\name
+                  AddMapElement(mapStructFieldCache(), sfcKey)
+                  mapStructFieldCache()\fieldType = mapStructDefs()\fields()\fieldType
+                  mapStructFieldCache()\byteOffset = mapStructDefs()\fields()\offset * 8
+                  mapStructFieldCache()\nestedStructType = mapStructDefs()\fields()\structType
+
+                  If mapStructDefs()\fields()\structType <> ""
+                     Protected sfcNestedType.s = mapStructDefs()\fields()\structType
+                     Protected sfcBaseOffset.i = mapStructDefs()\fields()\offset * 8
+                     Protected sfcNestedPrefix.s = structName + "." + mapStructDefs()\fields()\name
+
+                     If FindMapElement(mapStructDefs(), sfcNestedType)
+                        ForEach mapStructDefs()\fields()
+                           sfcKey = sfcNestedPrefix + "." + mapStructDefs()\fields()\name
+                           AddMapElement(mapStructFieldCache(), sfcKey)
+                           mapStructFieldCache()\fieldType = mapStructDefs()\fields()\fieldType
+                           mapStructFieldCache()\byteOffset = sfcBaseOffset + mapStructDefs()\fields()\offset * 8
+                           mapStructFieldCache()\nestedStructType = mapStructDefs()\fields()\structType
+
+                           If mapStructDefs()\fields()\structType <> ""
+                              Protected sfcL3Type.s = mapStructDefs()\fields()\structType
+                              Protected sfcL3Offset.i = sfcBaseOffset + mapStructDefs()\fields()\offset * 8
+                              Protected sfcL3Prefix.s = sfcKey
+                              If FindMapElement(mapStructDefs(), sfcL3Type)
+                                 ForEach mapStructDefs()\fields()
+                                    Protected sfcL3Key.s = sfcL3Prefix + "." + mapStructDefs()\fields()\name
+                                    AddMapElement(mapStructFieldCache(), sfcL3Key)
+                                    mapStructFieldCache()\fieldType = mapStructDefs()\fields()\fieldType
+                                    mapStructFieldCache()\byteOffset = sfcL3Offset + mapStructDefs()\fields()\offset * 8
+                                    mapStructFieldCache()\nestedStructType = mapStructDefs()\fields()\structType
+                                 Next
+                              EndIf
+                              FindMapElement(mapStructDefs(), sfcNestedType)
+                           EndIf
+                        Next
+                     EndIf
+                     FindMapElement(mapStructDefs(), structName)
+                  EndIf
+               Next
+            EndIf
+
             ; Expect closing brace
             If TOKEN()\TokenType <> #ljRightBrace
                SetError("Expected '}' to close structure definition", #C2ERR_EXPECTED_STATEMENT)

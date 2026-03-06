@@ -806,6 +806,8 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       mapMacros()\body = verString
 
       ReDim arCode(1)
+      ReDim arCodeData(1)     ; V1.039.62
+      ReDim *arCodeCache(1)   ; V1.039.62
       ; Clear the code array by putting HALT at position 0
       arCode(0)\code = #ljHALT
       arCode(0)\i = 0
@@ -2639,7 +2641,7 @@ CompilerEndIf
 ; LinkerOptions = linker.txt
 ; CompileSourceDirectory
 ; Warnings = Display
-; EnableCompileCount = 2631
+; EnableCompileCount = 2632
 ; EnableBuildCount = 37
 ; EnableExeConstant
 ; IncludeVersionInfo

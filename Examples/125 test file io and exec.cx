@@ -1,0 +1,59 @@
+// 125 file io and exec.cx - File I/O and process execution examples
+// Demonstrates: fwrite(), fread(), exec()
+
+// ---- fwrite / fread round-trip ----
+
+testFile.s = "test_output.tmp";
+
+// Write a plain text file
+ok.i = fwrite(testFile, "Hello, CX!\nLine two\nLine three\n");
+assert(ok);
+
+// Read it back
+content.s = fread(testFile);
+assert(len(content) > 0);
+print("fread content: ", content, "");
+
+// Check round-trip (trim trailing newlines for comparison)
+assertStringEqual(left(content, 10), "Hello, CX!");
+
+// ---- fwrite JSON and fread it back ----
+
+jsonFile.s = "test_data.json";
+jsonContent.s = "{\"name\":\"CX\",\"version\":1,\"items\":[1,2,3]}";
+
+ok = fwrite(jsonFile, jsonContent);
+assert(ok);
+
+readBack.s = fread(jsonFile);
+assertStringEqual(readBack, jsonContent);
+print("JSON round-trip OK: ", readBack, "");
+
+// ---- fwrite append mode ----
+
+appendFile.s = "test_append.tmp";
+fwrite(appendFile, "first\n");
+fwrite(appendFile, "second\n", "a");
+fwrite(appendFile, "third\n",  "a");
+
+appContent.s = fread(appendFile);
+assert(findstring(appContent, "first")  > 0);
+assert(findstring(appContent, "second") > 0);
+assert(findstring(appContent, "third")  > 0);
+print("Append mode OK");
+
+// ---- fread non-existent file returns empty string ----
+missing.s = fread("this_file_does_not_exist_xyz.tmp");
+assertEqual(len(missing), 0);
+print("Missing file returns empty string: OK");
+
+// ---- exec() - run echo command and check return code ----
+// Note: exit code 0 = success on all platforms
+exitCode.i = exec("echo CX exec test");
+assertEqual(exitCode, 0);
+print("exec() exit code: ", exitCode, "");
+
+// ---- Cleanup temp files ----
+exec("del test_output.tmp test_data.json test_append.tmp 2>nul");
+
+print("\nAll file I/O and exec tests passed!\n");

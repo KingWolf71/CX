@@ -1,6 +1,6 @@
 # CX Compiler & Virtual Machine
 
-**Version:** 1.039.58
+**Version:** 1.039.62
 **Language:** PureBasic (v6.10+)
 **Target:** Windows x64 / Linux x64
 
@@ -162,6 +162,26 @@ gStack[depth]
 
 ## Recent Improvements
 
+### v1.039.62 - VM Cache & Pointer Optimization
+- **Instruction Cache Splitting**: Split `stCodeIns` into HOT (opcode, params) and COLD (`stCodeData` for anchors) — better CPU cache locality
+- **Cached Pointer Resolution**: `ResolveCodePointers()` pre-resolves `*arCodeCache` pointers for global PUSH/STORE and CALL opcodes — eliminates double indirection at runtime
+- **needsCleanup Fast Path**: CALL opcodes skip `CopyStructure` for int/float-only functions (use direct field copy instead)
+- **Opcode field density**: `code` field changed from `.l` to `.w` for tighter instruction packing
+
+### v1.039.61 - Struct Field Cache
+- **O(1) Struct Field Lookup**: `mapStructFieldCache` caches field type and byte offset for nested struct chains (up to 3 levels deep)
+- Eliminates repeated struct definition walks during codegen type resolution
+
+### v1.039.60 - Strength Reduction & Cleanup Optimization
+- **Multiply → Shift**: Optimizer converts `x * power-of-2` to `x << shift` at compile time
+- **Identity/Zero Elimination**: `x * 0 → 0`, `x * 1 → x`, `x + 0 → x` patterns removed at compile time
+- **needsCleanup Flag**: `stFuncTemplate\needsCleanup` tracks whether function has string/array/list/map locals
+
+### v1.039.59 - 2D Array Variable-Index Store Fix
+- Fixed `arr[var][var] = expr` inside functions silently storing 0
+- Variable-index path now pushes value to eval stack first, avoiding LOPT type inferrer gap
+- 83 tests pass
+
 ### v1.039.58 - String Builtin Correctness Fix
 - **`\i` Length Sync**: All string builtins (`left`, `right`, `mid`, `trim`, `lcase`, `ucase`, `chr`, `hex`, `bin`, `replacestring`, `insertstring`, `removestring`, `space`, `lset`, `rset`, `capitalize`, `md5`/`sha*`/`base64`, `jsonstring`) now update cached `\i` length after writing `\ss`
 - Previously, inline expressions like `len(left(s, n))` or `assertEqual(left(s,n), ...)` could return stale string lengths
@@ -286,8 +306,8 @@ See `CLAUDE.md` for detailed development instructions, including:
 
 ### Test Suite
 - `Examples/*.cx` - 70+ example programs covering all language features
-- `tests/test_*.cx` - Targeted unit tests (file I/O, JSON/XML, sprintf, etc.)
-- **81 tests pass** on Windows as of v1.039.58
+- `tests/test_*.cx` - Targeted unit tests (file I/O, JSON/XML, sprintf, 2D arrays, etc.)
+- **87 tests pass** on Windows as of v1.039.62
 
 ### Running Tests
 ```powershell
@@ -337,7 +357,11 @@ while i < 5 {
 - ✅ JSON builtins: jsoncreate/free/parse/export, jsonadd/addnum/addbool, jsonmember/string/number/bool (v1.039.57)
 - ✅ XML builtins: xmlcreate/free/parse/export, xmlroot/addnode/child/next/parent, xmlsettext/setattr/text/attr/name/type (v1.039.57)
 - ✅ String builtin `\i` length sync fix — `len(left(s,n))` now correct (v1.039.58)
-- ✅ 81 tests pass
+- ✅ 2D array variable-index store fix inside functions (v1.039.59)
+- ✅ Strength reduction: `x * power-of-2` → `x << shift` (v1.039.60)
+- ✅ Struct field cache for O(1) nested field lookups (v1.039.61)
+- ✅ VM cache optimization: split HOT/COLD instruction data, cached pointer resolution (v1.039.62)
+- ✅ 87 tests pass
 
 ### v1.037.x
 - ✅ Normalized ASM opcode names for readable output

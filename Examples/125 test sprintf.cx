@@ -1,0 +1,47 @@
+// 125 test sprintf.cx
+// Tests sprintf string formatting function
+// V1.114.53
+
+#pragma appname "Sprintf Test"
+#pragma console on
+#pragma consolesize "680x740"
+#pragma consoleposition "30,50"
+#pragma ListASM off
+#pragma FastPrint on
+#pragma ftoi "truncate"
+#pragma modulename on
+#pragma PasteToClipboard on
+#pragma GlobalStack 1024
+#pragma FunctionStack 32
+#pragma EvalStack 256
+#pragma LocalStack 64
+#pragma CreateLog off
+#pragma DefaultFPS 32
+#pragma ThreadKillWait 1800
+#pragma asmdecimal on
+#pragma autoclose 30
+
+// Basic variables
+result.s = "";
+x.i = 42;
+pi.f = 3.14159;
+name.s = "World";
+
+// Basic sprintf tests
+result = sprintf("Hello %s!", name);
+printf("Test 1: %s\n", result);
+
+result = sprintf("Number: %d", x);
+printf("Test 2: %s\n", result);
+
+result = sprintf("Pi: %.2f", pi);
+printf("Test 3: %s\n", result);
+
+result = sprintf("Combined: %s has %d items at %.3f each", name, x, pi);
+printf("Test 4: %s\n", result);
+
+// Test percent escape
+result = sprintf("100%% complete");
+printf("Test 5: %s\n", result);
+
+printf("\nAll sprintf tests passed!\n");

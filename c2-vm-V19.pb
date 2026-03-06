@@ -95,6 +95,7 @@ Module C2VM
       localCount.l             ; Number of local slots (params + locals)
       isAllocated.b            ; V1.035.0: True if frame was AllocateStructure'd (needs FreeStructure)
       isPooled.b               ; V1.034.64: True if frame from pool (return to pool, don't free)
+      needsCleanup.b            ; V1.039.60: True if function has string/array locals
       ; V1.035.0: POINTER ARRAY ARCHITECTURE
       ; On recursion: allocate new frame, swap pointer in *gVar(funcSlot)
       ; On return: restore original pointer, FreeStructure if allocated
@@ -309,6 +310,10 @@ Module C2VM
       pc + 1
    EndMacro
 
+   ; V1.039.62: Scratch pointers for cached pointer optimization
+   Global *gCachedV.stVT             ; Scratch pointer for cached var access
+   Global *gCachedF.stFuncTemplate   ; Scratch pointer for cached func template
+
    ; V1.035.0: Inline hot opcode macros for VM loop optimization
    ; Updated for Pointer Array Architecture
    ; These eliminate procedure call overhead for the most frequently executed opcodes
@@ -318,7 +323,7 @@ Module C2VM
          sp + 1 : pc + 1
       EndMacro
       Macro vm_InlinePUSH()
-         gEvalStack(sp)\i = *gVar(arCode(pc)\i)\var(0)\i
+         gEvalStack(sp)\i = PeekI(*arCodeCache(pc))
          sp + 1 : pc + 1
       EndMacro
       Macro vm_InlineLSTORE()
@@ -343,7 +348,7 @@ Module C2VM
       EndMacro
       Macro vm_InlineSTORE()
          sp - 1
-         *gVar(arCode(pc)\i)\var(0)\i = gEvalStack(sp)\i
+         PokeI(*arCodeCache(pc), gEvalStack(sp)\i)
          pc + 1
       EndMacro
       Macro vm_InlineLSTORES()
@@ -1347,6 +1352,31 @@ Module C2VM
       EndIf
    EndProcedure
 
+   ; V1.039.62: Pre-resolve cached pointers for global PUSH/STORE and CALL opcodes
+   Procedure            ResolveCodePointers()
+      Protected rcp_pc.l, rcp_resolved.l = 0, rcp_slot.l
+      For rcp_pc = 0 To ArraySize(arCode()) - 1
+         Select arCode(rcp_pc)\code
+            ; Global variable opcodes - cache pointer to var(0)
+            Case #ljPush, #ljStore, #ljPOP, #ljPUSHS, #ljSTORES, #ljPOPS, #ljPUSHF, #ljSTOREF, #ljPOPF
+               rcp_slot = arCode(rcp_pc)\i
+               If rcp_slot >= 0 And rcp_slot <= ArraySize(*gVar()) And *gVar(rcp_slot)
+                  *arCodeCache(rcp_pc) = @*gVar(rcp_slot)\var(0)
+                  rcp_resolved + 1
+               EndIf
+            ; CALL opcodes - cache pointer to function template
+            Case #ljCALL, #ljCALL0, #ljCALL1, #ljCALL2, #ljCALL_REC
+               If arCode(rcp_pc)\funcid >= 0 And arCode(rcp_pc)\funcid <= ArraySize(gFuncTemplates())
+                  *arCodeCache(rcp_pc) = @gFuncTemplates(arCode(rcp_pc)\funcid)
+                  rcp_resolved + 1
+               EndIf
+         EndSelect
+      Next
+      CompilerIf #DEBUG
+         Debug "ResolveCodePointers: resolved " + Str(rcp_resolved) + " cached pointers"
+      CompilerEndIf
+   EndProcedure
+
    Procedure            vmTransferMetaToRuntime()
       ; V1.035.0: Transfer compile-time data to runtime using Pointer Array Architecture
       ; Each slot gets its own allocated stVar structure
@@ -1544,6 +1574,7 @@ Module C2VM
       ; V1.033.46: Uses gGlobalTemplate only (VM is now independent of gVarMeta)
       ; In the future, this will load from JSON/XML
       vmTransferMetaToRuntime()
+      ResolveCodePointers()  ; V1.039.62: Pre-resolve cached pointers
 
       ; V1.035.0: Initialize eval stack pointer and function slot
       sp = 0                              ; Eval stack starts at 0

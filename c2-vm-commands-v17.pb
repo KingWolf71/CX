@@ -102,7 +102,7 @@ Macro _LOCALPTR(offset) : *gVar(gCurrentFuncSlot)\var(offset)\ptr : EndMacro
 ; V1.035.0: Get function slot from funcId (via gFuncTemplates)
 Macro _FUNCSLOT : gFuncTemplates(_FUNCID)\funcSlot : EndMacro
 Macro _FUNC_NPARAMS : gFuncTemplates(_FUNCID)\nParams : EndMacro
-Macro _FUNC_LOCALCOUNT : gFuncTemplates(_FUNCID)\localCount : EndMacro
+Macro _FUNC_LOCALCOUNT : *gCachedF\localCount : EndMacro
 
 ; ARRAYINFO inline opcode access (pc+1+i for i-th array)
 Macro _ARRAYINFO_OFFSET(i) : arCode(pc + 1 + (i))\i : EndMacro
@@ -1344,8 +1344,13 @@ Procedure               C2CALL()
       EndIf
    CompilerEndIf
 
-   ; V1.035.0: Get function slot from template
-   funcSlot = _FUNCSLOT
+   ; V1.039.62: Get function slot from cached template
+   *gCachedF = *arCodeCache(pc)
+   If *gCachedF
+      funcSlot = *gCachedF\funcSlot
+   Else
+      funcSlot = _FUNCSLOT
+   EndIf
    totalVars = _NPARAMS + _NLOCALS
 
    ; Save stack frame info
@@ -1388,6 +1393,13 @@ Procedure               C2CALL()
       gFuncActive(funcSlot) = #True
    EndIf
 
+   ; V1.039.62: Store needsCleanup flag via cached template
+   If *gCachedF
+      gStack(gStackDepth)\needsCleanup = *gCachedF\needsCleanup
+   Else
+      gStack(gStackDepth)\needsCleanup = #True
+   EndIf
+
    ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
    ; V1.034.66: Also copy pointer fields for pointer parameter support
    For i = 0 To _NPARAMS - 1
@@ -1399,10 +1411,17 @@ Procedure               C2CALL()
    Next
 
    ; Preload non-parameter locals from function template - only if there are locals
-   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
-      Next
+   If _NLOCALS > 0 And *gCachedF
+      If gStack(gStackDepth)\needsCleanup
+         For i = 0 To *gCachedF\localCount - 1
+            CopyStructure(*gCachedF\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
+         Next
+      Else
+         For i = 0 To *gCachedF\localCount - 1
+            *gVar(funcSlot)\var(_NPARAMS + i)\i = *gCachedF\template(i)\i
+            *gVar(funcSlot)\var(_NPARAMS + i)\f = *gCachedF\template(i)\f
+         Next
+      EndIf
    EndIf
 
    ; V1.035.0: Pop params from eval stack, set current function slot
@@ -1437,14 +1456,12 @@ Procedure               C2CALL0()
 
    gStackDepth + 1
 
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   funcSlot = _FUNCSLOT
+   *gCachedF = *arCodeCache(pc)
+   If *gCachedF
+      funcSlot = *gCachedF\funcSlot
+   Else
+      funcSlot = _FUNCSLOT
+   EndIf
    totalVars = _NLOCALS  ; 0 params
 
    ; Save stack frame
@@ -1486,11 +1503,25 @@ Procedure               C2CALL0()
       gFuncActive(funcSlot) = #True
    EndIf
 
+   ; V1.039.62: Store needsCleanup flag via cached template
+   If *gCachedF
+      gStack(gStackDepth)\needsCleanup = *gCachedF\needsCleanup
+   Else
+      gStack(gStackDepth)\needsCleanup = #True
+   EndIf
+
    ; Template preload (no params) - only if there are locals
-   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(i), stVTSimple)
-      Next
+   If _NLOCALS > 0 And *gCachedF
+      If gStack(gStackDepth)\needsCleanup
+         For i = 0 To *gCachedF\localCount - 1
+            CopyStructure(*gCachedF\template(i), *gVar(funcSlot)\var(i), stVTSimple)
+         Next
+      Else
+         For i = 0 To *gCachedF\localCount - 1
+            *gVar(funcSlot)\var(i)\i = *gCachedF\template(i)\i
+            *gVar(funcSlot)\var(i)\f = *gCachedF\template(i)\f
+         Next
+      EndIf
    EndIf
 
    gCurrentFuncSlot = funcSlot
@@ -1532,14 +1563,12 @@ Procedure               C2CALL1()
 
    gStackDepth + 1
 
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   funcSlot = _FUNCSLOT
+   *gCachedF = *arCodeCache(pc)
+   If *gCachedF
+      funcSlot = *gCachedF\funcSlot
+   Else
+      funcSlot = _FUNCSLOT
+   EndIf
    totalVars = 1 + _NLOCALS  ; Always >= 1, no size check needed
 
    gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
@@ -1576,6 +1605,13 @@ Procedure               C2CALL1()
       gFuncActive(funcSlot) = #True
    EndIf
 
+   ; V1.039.62: Store needsCleanup flag via cached template
+   If *gCachedF
+      gStack(gStackDepth)\needsCleanup = *gCachedF\needsCleanup
+   Else
+      gStack(gStackDepth)\needsCleanup = #True
+   EndIf
+
    ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
    ; V1.034.66: Also copy pointer fields for pointer parameter support
    *gVar(funcSlot)\var(0)\i = gEvalStack(sp - 1)\i
@@ -1585,10 +1621,17 @@ Procedure               C2CALL1()
    *gVar(funcSlot)\var(0)\ptrtype = gEvalStack(sp - 1)\ptrtype
 
    ; Template preload - only if there are locals beyond params
-   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(1 + i), stVTSimple)
-      Next
+   If _NLOCALS > 0 And *gCachedF
+      If gStack(gStackDepth)\needsCleanup
+         For i = 0 To *gCachedF\localCount - 1
+         CopyStructure(*gCachedF\template(i), *gVar(funcSlot)\var(1 + i), stVTSimple)
+         Next
+      Else
+         For i = 0 To *gCachedF\localCount - 1
+            *gVar(funcSlot)\var(1 + i)\i = *gCachedF\template(i)\i
+            *gVar(funcSlot)\var(1 + i)\f = *gCachedF\template(i)\f
+         Next
+      EndIf
    EndIf
 
    sp = sp - 1
@@ -1616,14 +1659,12 @@ Procedure               C2CALL2()
 
    gStackDepth + 1
 
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   funcSlot = _FUNCSLOT
+   *gCachedF = *arCodeCache(pc)
+   If *gCachedF
+      funcSlot = *gCachedF\funcSlot
+   Else
+      funcSlot = _FUNCSLOT
+   EndIf
    totalVars = 2 + _NLOCALS  ; Always >= 2, no size check needed
 
    gStack(gStackDepth)\pc = pc + 1 + _NLOCALARRAYS
@@ -1660,6 +1701,13 @@ Procedure               C2CALL2()
       gFuncActive(funcSlot) = #True
    EndIf
 
+   ; V1.039.62: Store needsCleanup flag via cached template
+   If *gCachedF
+      gStack(gStackDepth)\needsCleanup = *gCachedF\needsCleanup
+   Else
+      gStack(gStackDepth)\needsCleanup = #True
+   EndIf
+
    ; V1.034.63: Direct field copy for speed (CopyStructure stVT is too heavy)
    ; V1.034.66: Also copy pointer fields for pointer parameter support
    *gVar(funcSlot)\var(0)\i = gEvalStack(sp - 1)\i
@@ -1674,10 +1722,17 @@ Procedure               C2CALL2()
    *gVar(funcSlot)\var(1)\ptrtype = gEvalStack(sp - 2)\ptrtype
 
    ; Template preload - only if there are locals beyond params
-   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(2 + i), stVTSimple)
-      Next
+   If _NLOCALS > 0 And *gCachedF
+      If gStack(gStackDepth)\needsCleanup
+         For i = 0 To *gCachedF\localCount - 1
+            CopyStructure(*gCachedF\template(i), *gVar(funcSlot)\var(2 + i), stVTSimple)
+         Next
+      Else
+         For i = 0 To *gCachedF\localCount - 1
+            *gVar(funcSlot)\var(2 + i)\i = *gCachedF\template(i)\i
+            *gVar(funcSlot)\var(2 + i)\f = *gCachedF\template(i)\f
+         Next
+      EndIf
    EndIf
 
    sp = sp - 2
@@ -1707,14 +1762,12 @@ Procedure               C2CALL_REC()
 
    gStackDepth + 1
 
-   CompilerIf #DEBUG
-      If gStackDepth >= gFunctionStack
-         Debug "*** FATAL ERROR: Stack overflow at pc=" + Str(pc) + " funcId=" + Str(_FUNCID)
-         End
-      EndIf
-   CompilerEndIf
-
-   funcSlot = _FUNCSLOT
+   *gCachedF = *arCodeCache(pc)
+   If *gCachedF
+      funcSlot = *gCachedF\funcSlot
+   Else
+      funcSlot = _FUNCSLOT
+   EndIf
    totalVars = _NPARAMS + _NLOCALS
 
    ; Save stack frame
@@ -1742,6 +1795,13 @@ Procedure               C2CALL_REC()
    gStack(gStackDepth)\savedFrame = *gVar(funcSlot)
    *gVar(funcSlot) = *newFrame
 
+   ; V1.039.62: Store needsCleanup flag via cached template
+   If *gCachedF
+      gStack(gStackDepth)\needsCleanup = *gCachedF\needsCleanup
+   Else
+      gStack(gStackDepth)\needsCleanup = #True
+   EndIf
+
    ; Copy params from eval stack
    ; V1.034.66: Also copy pointer fields for pointer parameter support
    For i = 0 To _NPARAMS - 1
@@ -1753,10 +1813,17 @@ Procedure               C2CALL_REC()
    Next
 
    ; Preload locals from template
-   If _NLOCALS > 0 And _FUNCID >= 0 And _FUNCID <= ArraySize(gFuncTemplates())
-      For i = 0 To gFuncTemplates(_FUNCID)\localCount - 1
-         CopyStructure(gFuncTemplates(_FUNCID)\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
-      Next
+   If _NLOCALS > 0 And *gCachedF
+      If gStack(gStackDepth)\needsCleanup
+         For i = 0 To *gCachedF\localCount - 1
+            CopyStructure(*gCachedF\template(i), *gVar(funcSlot)\var(_NPARAMS + i), stVTSimple)
+         Next
+      Else
+         For i = 0 To *gCachedF\localCount - 1
+            *gVar(funcSlot)\var(_NPARAMS + i)\i = *gCachedF\template(i)\i
+            *gVar(funcSlot)\var(_NPARAMS + i)\f = *gCachedF\template(i)\f
+         Next
+      EndIf
    EndIf
 
    sp = sp - _NPARAMS
@@ -1805,8 +1872,10 @@ Procedure               C2Return()
       Debug "RETURN: from funcSlot=" + Str(funcSlot) + " returning to pc=" + Str(gStack(gStackDepth)\pc) + " depth=" + Str(gStackDepth)
    CompilerEndIf
 
-   ; Clear local slots (strings/arrays for GC)
-   _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+   ; V1.039.60: Skip cleanup for int/float-only functions
+   If gStack(gStackDepth)\needsCleanup
+      _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+   EndIf
 
    ; Restore caller's pc and sp
    pc = gStack(gStackDepth)\pc
@@ -1860,7 +1929,10 @@ Procedure               C2ReturnF()
       ;PrintN("RETURNF: from funcSlot=" + Str(funcSlot) + " returning to pc=" + Str(gStack(gStackDepth)\pc) + " depth=" + Str(gStackDepth))
    CompilerEndIf
 
-   _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+   ; V1.039.60: Skip cleanup for int/float-only functions
+   If gStack(gStackDepth)\needsCleanup
+      _CLEANUP_FUNC_LOCALS(funcSlot, gStack(gStackDepth)\localCount)
+   EndIf
 
    pc = gStack(gStackDepth)\pc
    sp = gStack(gStackDepth)\sp

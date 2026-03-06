@@ -146,15 +146,15 @@ Procedure WriteVarTemplateBinary(file.i, *tpl.stVarTemplate)
    EndIf
 EndProcedure
 
-Procedure WriteCodeInsBinary(file.i, *ins.stCodeIns)
-   ; Write a single stCodeIns in binary format (18 bytes fixed)
+Procedure WriteCodeInsBinary(file.i, *ins.stCodeIns, *data.stCodeData)
+   ; V1.039.62: Write hot+cold in binary format (18 bytes fixed, same format)
    WriteLong(file, *ins\code)
    WriteLong(file, *ins\i)
    WriteLong(file, *ins\j)
    WriteWord(file, *ins\n)
    WriteWord(file, *ins\ndx)
    WriteLong(file, *ins\funcid)
-   WriteWord(file, *ins\anchor)
+   WriteWord(file, *data\anchor)
 EndProcedure
 
 Procedure WriteFuncTemplateBinary(file.i, *ftpl.stFuncTemplate)
@@ -166,6 +166,7 @@ Procedure WriteFuncTemplateBinary(file.i, *ftpl.stFuncTemplate)
    WriteLong(file, *ftpl\localCount)
    WriteLong(file, *ftpl\funcSlot)
    WriteLong(file, *ftpl\nParams)
+   WriteByte(file, *ftpl\needsCleanup)   ; V1.039.60
 
    ; Write template array size and contents
    templateCount = ArraySize(*ftpl\template())
@@ -206,7 +207,7 @@ Procedure.i SaveCompiledObject(filename.s, sourceFile.s, includeSource.b = #True
    codeCount = ArraySize(arCode())
    WriteLong(file, codeCount)
    For i = 0 To codeCount
-      WriteCodeInsBinary(file, arCode(i))
+      WriteCodeInsBinary(file, arCode(i), arCodeData(i))
    Next
 
    ; Write global templates
@@ -274,15 +275,15 @@ Procedure ReadVarTemplateBinary(file.i, *tpl.stVarTemplate)
    *tpl\ptr = 0
 EndProcedure
 
-Procedure ReadCodeInsBinary(file.i, *ins.stCodeIns)
-   ; Read a single stCodeIns from binary (18 bytes fixed)
+Procedure ReadCodeInsBinary(file.i, *ins.stCodeIns, *data.stCodeData)
+   ; V1.039.62: Read hot+cold from binary (18 bytes fixed, same format)
    *ins\code = ReadLong(file)
    *ins\i = ReadLong(file)
    *ins\j = ReadLong(file)
    *ins\n = ReadWord(file)
    *ins\ndx = ReadWord(file)
    *ins\funcid = ReadLong(file)
-   *ins\anchor = ReadWord(file)
+   *data\anchor = ReadWord(file)
 EndProcedure
 
 Procedure ReadFuncTemplateBinary(file.i, *ftpl.stFuncTemplate)
@@ -294,6 +295,7 @@ Procedure ReadFuncTemplateBinary(file.i, *ftpl.stFuncTemplate)
    *ftpl\localCount = ReadLong(file)
    *ftpl\funcSlot = ReadLong(file)
    *ftpl\nParams = ReadLong(file)
+   *ftpl\needsCleanup = ReadByte(file)   ; V1.039.60
 
    ; Read template array
    templateCount = ReadLong(file)
@@ -359,8 +361,10 @@ Procedure.i LoadCompiledObject(filename.s)
    ; Read bytecode array
    codeCount = ReadLong(file)
    ReDim arCode(codeCount)
+   ReDim arCodeData(codeCount)    ; V1.039.62
+   ReDim *arCodeCache(codeCount)  ; V1.039.62
    For i = 0 To codeCount
-      ReadCodeInsBinary(file, arCode(i))
+      ReadCodeInsBinary(file, arCode(i), arCodeData(i))
    Next
 
    ; Read global templates
