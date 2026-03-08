@@ -414,6 +414,17 @@ Enumeration
    #ljBUILTIN_VALI         ; vali(s) - string to int (alias)
    #ljBUILTIN_CAPITALIZE   ; capitalize(s, mode) - capitalize string (0=upper,1=lower,2=title)
 
+   ;- V1.039.63: Common utility builtins (SpiderBasic compatible)
+   #ljBUILTIN_CLAMP        ; clamp(x, lo, hi) - constrain value to range
+   #ljBUILTIN_LERP         ; lerp(a, b, t) - linear interpolation
+   #ljBUILTIN_REMAP        ; remap(x, inLo, inHi, outLo, outHi) - map value between ranges
+   #ljBUILTIN_DISTANCE     ; distance(x1, y1, x2, y2) - 2D euclidean distance
+   #ljBUILTIN_BETWEEN      ; between(x, lo, hi) - returns 1 if lo <= x <= hi
+   #ljBUILTIN_CONTAINS     ; contains(s, sub) - returns position or 0
+   #ljBUILTIN_STARTSWITH   ; startsWith(s, prefix) - returns 1 if s starts with prefix
+   #ljBUILTIN_STRINGFIELD  ; stringfield(s, index, delim) - extract field from delimited string
+   #ljBUILTIN_SUM          ; sum(arr) - sum all elements of array
+
    ;- V1.038.0: SpiderBasic Sort Builtins
    #ljBUILTIN_SORTARRAY    ; sortarray(arr, dir) - sort array (0=asc, 1=desc)
 
@@ -2241,6 +2252,16 @@ Macro _INIT_OPCODE_NAMES
    gszATR(#ljBUILTIN_VALF)\s = "BI_VALF"
    gszATR(#ljBUILTIN_VALI)\s = "BI_VALI"
    gszATR(#ljBUILTIN_CAPITALIZE)\s = "BI_CAPITAL"
+   ; V1.039.63: Common utility builtins
+   gszATR(#ljBUILTIN_CLAMP)\s = "BI_CLAMP"
+   gszATR(#ljBUILTIN_LERP)\s = "BI_LERP"
+   gszATR(#ljBUILTIN_REMAP)\s = "BI_REMAP"
+   gszATR(#ljBUILTIN_DISTANCE)\s = "BI_DISTANCE"
+   gszATR(#ljBUILTIN_BETWEEN)\s = "BI_BETWEEN"
+   gszATR(#ljBUILTIN_CONTAINS)\s = "BI_CONTAINS"
+   gszATR(#ljBUILTIN_STARTSWITH)\s = "BI_STARTSWITH"
+   gszATR(#ljBUILTIN_STRINGFIELD)\s = "BI_STRFIELD"
+   gszATR(#ljBUILTIN_SUM)\s = "BI_SUM"
    ; V1.038.0: Sort builtins
    gszATR(#ljBUILTIN_SORTARRAY)\s = "BI_SORTARR"
    ; V1.038.0: Cipher builtins

@@ -894,6 +894,17 @@ Module C2VM
       *ptrJumpTable( #ljBUILTIN_VALI )         = @C2BUILTIN_VALI()
       *ptrJumpTable( #ljBUILTIN_CAPITALIZE )   = @C2BUILTIN_CAPITALIZE()
 
+      ; V1.039.63: Common utility builtins
+      *ptrJumpTable( #ljBUILTIN_CLAMP )        = @C2BUILTIN_CLAMP()
+      *ptrJumpTable( #ljBUILTIN_LERP )         = @C2BUILTIN_LERP()
+      *ptrJumpTable( #ljBUILTIN_REMAP )        = @C2BUILTIN_REMAP()
+      *ptrJumpTable( #ljBUILTIN_DISTANCE )     = @C2BUILTIN_DISTANCE()
+      *ptrJumpTable( #ljBUILTIN_BETWEEN )      = @C2BUILTIN_BETWEEN()
+      *ptrJumpTable( #ljBUILTIN_CONTAINS )     = @C2BUILTIN_CONTAINS()
+      *ptrJumpTable( #ljBUILTIN_STARTSWITH )   = @C2BUILTIN_STARTSWITH()
+      *ptrJumpTable( #ljBUILTIN_STRINGFIELD )  = @C2BUILTIN_STRINGFIELD()
+      *ptrJumpTable( #ljBUILTIN_SUM )          = @C2BUILTIN_SUM()
+
       ; V1.038.0: Sort builtin
       *ptrJumpTable( #ljBUILTIN_SORTARRAY )    = @C2BUILTIN_SORTARRAY()
 

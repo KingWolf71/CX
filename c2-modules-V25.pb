@@ -599,6 +599,17 @@ Declare                 expand_params( op = #ljpop, nModule = -1 )
       InstallBuiltin( "vali",              #ljBUILTIN_VALI,         1, 1, #C2FLAG_INT )
       InstallBuiltin( "capitalize",        #ljBUILTIN_CAPITALIZE,   1, 2, #C2FLAG_STR )
 
+      ; V1.039.63: Common Utility Builtins
+      InstallBuiltin( "clamp",             #ljBUILTIN_CLAMP,        3, 3, #C2FLAG_FLOAT )  ; clamp(x, lo, hi)
+      InstallBuiltin( "lerp",              #ljBUILTIN_LERP,         3, 3, #C2FLAG_FLOAT )  ; lerp(a, b, t)
+      InstallBuiltin( "remap",             #ljBUILTIN_REMAP,        5, 5, #C2FLAG_FLOAT )  ; remap(x, inLo, inHi, outLo, outHi)
+      InstallBuiltin( "distance",          #ljBUILTIN_DISTANCE,     4, 4, #C2FLAG_FLOAT )  ; distance(x1, y1, x2, y2)
+      InstallBuiltin( "between",           #ljBUILTIN_BETWEEN,      3, 3, #C2FLAG_INT )    ; between(x, lo, hi)
+      InstallBuiltin( "contains",          #ljBUILTIN_CONTAINS,     2, 2, #C2FLAG_INT )    ; contains(s, sub) -> pos or 0
+      InstallBuiltin( "startswith",        #ljBUILTIN_STARTSWITH,   2, 2, #C2FLAG_INT )    ; startswith(s, prefix) -> 0/1
+      InstallBuiltin( "stringfield",       #ljBUILTIN_STRINGFIELD,  3, 3, #C2FLAG_STR )    ; stringfield(s, idx, delim)
+      InstallBuiltin( "sum",               #ljBUILTIN_SUM,          1, 1, #C2FLAG_FLOAT )  ; sum(arr) - TODO: array integration
+
       ; V1.038.0: SpiderBasic Sort
       InstallBuiltin( "sortarray",         #ljBUILTIN_SORTARRAY,    1, 2, 0 )
 

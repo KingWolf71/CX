@@ -961,6 +961,110 @@ Procedure C2BUILTIN_CAPITALIZE()
    pc + 1
 EndProcedure
 
+;- V1.039.63: Common Utility Builtins (SpiderBasic compatible)
+
+Procedure C2BUILTIN_CLAMP()
+   vm_DebugFunctionName()
+   Protected x.d = gEvalStack(sp - 3)\f
+   Protected lo.d = gEvalStack(sp - 2)\f
+   Protected hi.d = gEvalStack(sp - 1)\f
+   If x < lo : x = lo : EndIf
+   If x > hi : x = hi : EndIf
+   gEvalStack(sp - 3)\f = x
+   sp - 2
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_LERP()
+   vm_DebugFunctionName()
+   Protected a.d = gEvalStack(sp - 3)\f
+   Protected b.d = gEvalStack(sp - 2)\f
+   Protected t.d = gEvalStack(sp - 1)\f
+   gEvalStack(sp - 3)\f = a + (b - a) * t
+   sp - 2
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_REMAP()
+   vm_DebugFunctionName()
+   Protected x.d = gEvalStack(sp - 5)\f
+   Protected inLo.d = gEvalStack(sp - 4)\f
+   Protected inHi.d = gEvalStack(sp - 3)\f
+   Protected outLo.d = gEvalStack(sp - 2)\f
+   Protected outHi.d = gEvalStack(sp - 1)\f
+   Protected range.d = inHi - inLo
+   If range = 0.0
+      gEvalStack(sp - 5)\f = outLo
+   Else
+      gEvalStack(sp - 5)\f = outLo + (x - inLo) * (outHi - outLo) / range
+   EndIf
+   sp - 4
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_DISTANCE()
+   vm_DebugFunctionName()
+   Protected dx.d = gEvalStack(sp - 2)\f - gEvalStack(sp - 4)\f
+   Protected dy.d = gEvalStack(sp - 1)\f - gEvalStack(sp - 3)\f
+   gEvalStack(sp - 4)\f = Sqr(dx * dx + dy * dy)
+   sp - 3
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_BETWEEN()
+   vm_DebugFunctionName()
+   Protected x.d = gEvalStack(sp - 3)\f
+   Protected lo.d = gEvalStack(sp - 2)\f
+   Protected hi.d = gEvalStack(sp - 1)\f
+   If x >= lo And x <= hi
+      gEvalStack(sp - 3)\i = 1
+   Else
+      gEvalStack(sp - 3)\i = 0
+   EndIf
+   sp - 2
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_CONTAINS()
+   vm_DebugFunctionName()
+   Protected pos.i = FindString(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\ss)
+   gEvalStack(sp - 2)\i = pos
+   sp - 1
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_STARTSWITH()
+   vm_DebugFunctionName()
+   Protected prefix.s = gEvalStack(sp - 1)\ss
+   Protected s.s = gEvalStack(sp - 2)\ss
+   If Left(s, Len(prefix)) = prefix
+      gEvalStack(sp - 2)\i = 1
+   Else
+      gEvalStack(sp - 2)\i = 0
+   EndIf
+   sp - 1
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_STRINGFIELD()
+   vm_DebugFunctionName()
+   Protected s.s = gEvalStack(sp - 3)\ss
+   Protected idx.i = gEvalStack(sp - 2)\i
+   Protected delim.s = gEvalStack(sp - 1)\ss
+   gEvalStack(sp - 3)\ss = StringField(s, idx, delim)
+   gEvalStack(sp - 3)\i = Len(gEvalStack(sp - 3)\ss)
+   sp - 2
+   pc + 1
+EndProcedure
+
+Procedure C2BUILTIN_SUM()
+   vm_DebugFunctionName()
+   Protected paramCount.i = vm_GetParamCount()
+   vm_PopParams(paramCount)
+   ; TODO: Implement proper array sum using *gVar(slot)\var(0)\dta\ar()
+   pc + 1
+EndProcedure
+
 ;- V1.038.0: SpiderBasic Sort Builtin
 ; TODO: sortarray requires deep integration with dta\ar() array structure
 ; For now, just pop parameters and continue (no-op)
