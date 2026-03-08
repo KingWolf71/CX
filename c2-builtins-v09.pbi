@@ -582,83 +582,34 @@ EndProcedure
 
 ;- V1.038.0: SpiderBasic Math Library Builtins
 ; Optimized for speed: direct PureBasic calls, minimal overhead
+; V1.039.64: Macro-generated unary float builtins
 
-Procedure C2BUILTIN_SIN()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Sin(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
+Macro _DEF_UNARY_FLOAT(name, func)
+   Procedure C2BUILTIN_#name()
+      vm_DebugFunctionName()
+      gEvalStack(sp - 1)\f = func(gEvalStack(sp - 1)\f)
+      pc + 1
+   EndProcedure
+EndMacro
 
-Procedure C2BUILTIN_COS()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Cos(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_TAN()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Tan(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_ASIN()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = ASin(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_ACOS()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = ACos(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_ATAN()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = ATan(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
+_DEF_UNARY_FLOAT(SIN, Sin)
+_DEF_UNARY_FLOAT(COS, Cos)
+_DEF_UNARY_FLOAT(TAN, Tan)
+_DEF_UNARY_FLOAT(ASIN, ASin)
+_DEF_UNARY_FLOAT(ACOS, ACos)
+_DEF_UNARY_FLOAT(ATAN, ATan)
+_DEF_UNARY_FLOAT(SINH, SinH)
+_DEF_UNARY_FLOAT(COSH, CosH)
+_DEF_UNARY_FLOAT(TANH, TanH)
+_DEF_UNARY_FLOAT(LOG, Log)
+_DEF_UNARY_FLOAT(LOG10, Log10)
+_DEF_UNARY_FLOAT(EXP, Exp)
+_DEF_UNARY_FLOAT(FABS, Abs)
 
 Procedure C2BUILTIN_ATAN2()
    vm_DebugFunctionName()
    gEvalStack(sp - 2)\f = ATan2(gEvalStack(sp - 2)\f, gEvalStack(sp - 1)\f)
    sp - 1
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_SINH()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = SinH(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_COSH()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = CosH(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_TANH()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = TanH(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_LOG()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Log(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_LOG10()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Log10(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_EXP()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Exp(gEvalStack(sp - 1)\f)
    pc + 1
 EndProcedure
 
@@ -701,12 +652,6 @@ Procedure C2BUILTIN_MOD()
    pc + 1
 EndProcedure
 
-Procedure C2BUILTIN_FABS()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\f = Abs(gEvalStack(sp - 1)\f)
-   pc + 1
-EndProcedure
-
 Procedure C2BUILTIN_FMIN()
    vm_DebugFunctionName()
    If gEvalStack(sp - 1)\f < gEvalStack(sp - 2)\f
@@ -726,22 +671,29 @@ Procedure C2BUILTIN_FMAX()
 EndProcedure
 
 ;- V1.038.0: SpiderBasic String Library Builtins
+; V1.039.64: Macro-generated unary/binary string builtins
 
-Procedure C2BUILTIN_LEFT()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 2)\ss = Left(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
-   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
-   sp - 1
-   pc + 1
-EndProcedure
+Macro _DEF_UNARY_STRING(name, func)
+   Procedure C2BUILTIN_#name()
+      vm_DebugFunctionName()
+      gEvalStack(sp - 1)\ss = func(gEvalStack(sp - 1)\ss)
+      gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)
+      pc + 1
+   EndProcedure
+EndMacro
 
-Procedure C2BUILTIN_RIGHT()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 2)\ss = Right(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
-   gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)  ; V1.039.58: sync cached length
-   sp - 1
-   pc + 1
-EndProcedure
+Macro _DEF_BINARY_STRING_LEN(name, func)
+   Procedure C2BUILTIN_#name()
+      vm_DebugFunctionName()
+      gEvalStack(sp - 2)\ss = func(gEvalStack(sp - 2)\ss, gEvalStack(sp - 1)\i)
+      gEvalStack(sp - 2)\i = Len(gEvalStack(sp - 2)\ss)
+      sp - 1
+      pc + 1
+   EndProcedure
+EndMacro
+
+_DEF_BINARY_STRING_LEN(LEFT, Left)
+_DEF_BINARY_STRING_LEN(RIGHT, Right)
 
 Procedure C2BUILTIN_MID()
    vm_DebugFunctionName()
@@ -758,40 +710,11 @@ Procedure C2BUILTIN_MID()
    pc + 1
 EndProcedure
 
-Procedure C2BUILTIN_TRIM()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = Trim(gEvalStack(sp - 1)\ss)
-   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_LTRIM()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = LTrim(gEvalStack(sp - 1)\ss)
-   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_RTRIM()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = RTrim(gEvalStack(sp - 1)\ss)
-   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_LCASE()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = LCase(gEvalStack(sp - 1)\ss)
-   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
-   pc + 1
-EndProcedure
-
-Procedure C2BUILTIN_UCASE()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = UCase(gEvalStack(sp - 1)\ss)
-   gEvalStack(sp - 1)\i = Len(gEvalStack(sp - 1)\ss)  ; V1.039.58: sync cached length
-   pc + 1
-EndProcedure
+_DEF_UNARY_STRING(TRIM, Trim)
+_DEF_UNARY_STRING(LTRIM, LTrim)
+_DEF_UNARY_STRING(RTRIM, RTrim)
+_DEF_UNARY_STRING(LCASE, LCase)
+_DEF_UNARY_STRING(UCASE, UCase)
 
 Procedure C2BUILTIN_CHR()
    vm_DebugFunctionName()
@@ -836,12 +759,7 @@ Procedure C2BUILTIN_COUNTSTRING()
    pc + 1
 EndProcedure
 
-Procedure C2BUILTIN_REVERSESTRING()
-   vm_DebugFunctionName()
-   gEvalStack(sp - 1)\ss = ReverseString(gEvalStack(sp - 1)\ss)
-   ; V1.039.58: length unchanged, \i already correct
-   pc + 1
-EndProcedure
+_DEF_UNARY_STRING(REVERSESTRING, ReverseString)
 
 Procedure C2BUILTIN_INSERTSTRING()
    vm_DebugFunctionName()
