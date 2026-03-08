@@ -101,6 +101,15 @@ Date: March 2026
 - [x] xmlcreate/xmlfree/xmlparse/xmlexport
 - [x] xmlroot/xmladdnode/xmlchild/xmlnext/xmlparent - tree navigation
 - [x] xmlsettext/xmlsetattr/xmltext/xmlattr/xmlname/xmltype - node data
+- [x] clamp(x, lo, hi) - clamp value to range
+- [x] lerp(a, b, t) - linear interpolation
+- [x] remap(x, inLo, inHi, outLo, outHi) - remap value between ranges
+- [x] distance(x1, y1, x2, y2) - 2D Euclidean distance
+- [x] between(x, lo, hi) - test if value is in range (inclusive)
+- [x] contains(str, substr) - find substring position (1-based, 0=not found)
+- [x] startswith(str, prefix) - test if string starts with prefix
+- [x] stringfield(str, index, sep) - extract delimited field (1-based)
+- [x] sum(array) - stub (returns 0, requires vtype infrastructure)
 
 ### Pragmas
 - [x] #pragma optimizecode on/off

@@ -722,6 +722,22 @@ mapClear(myMap);</code></pre>
                 </table>
             </div>
 
+            <h3>Utility Functions</h3>
+            <div class="card">
+                <table>
+                    <tr><th>Function</th><th>Description</th><th>Returns</th></tr>
+                    <tr><td class="func-sig">clamp(x, lo, hi)</td><td>Clamp value to range [lo, hi]</td><td><span class="tag tag-float">float</span></td></tr>
+                    <tr><td class="func-sig">lerp(a, b, t)</td><td>Linear interpolation: a + (b-a)*t</td><td><span class="tag tag-float">float</span></td></tr>
+                    <tr><td class="func-sig">remap(x, inLo, inHi, outLo, outHi)</td><td>Remap value from one range to another</td><td><span class="tag tag-float">float</span></td></tr>
+                    <tr><td class="func-sig">distance(x1, y1, x2, y2)</td><td>2D Euclidean distance</td><td><span class="tag tag-float">float</span></td></tr>
+                    <tr><td class="func-sig">between(x, lo, hi)</td><td>Test if value is in range (inclusive)</td><td><span class="tag tag-int">int</span></td></tr>
+                    <tr><td class="func-sig">contains(str, substr)</td><td>Find substring position (1-based, 0 = not found)</td><td><span class="tag tag-int">int</span></td></tr>
+                    <tr><td class="func-sig">startswith(str, prefix)</td><td>Test if string starts with prefix</td><td><span class="tag tag-int">int</span></td></tr>
+                    <tr><td class="func-sig">stringfield(str, index, sep)</td><td>Extract delimited field (1-based index)</td><td><span class="tag tag-string">string</span></td></tr>
+                    <tr><td class="func-sig">sum(array)</td><td>Sum all elements (stub — returns 0)</td><td><span class="tag tag-float">float</span></td></tr>
+                </table>
+            </div>
+
             <h3>Trigonometric Functions</h3>
             <div class="card">
                 <table>
