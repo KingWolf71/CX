@@ -1313,10 +1313,11 @@ EndProcedure
 Procedure               C2PFETCH()
    ; V1.034.24: Unified pointer FETCH using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
 
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype
 
    sp + 1
    pc + 1
@@ -1325,11 +1326,12 @@ EndProcedure
 Procedure               C2PSTORE()
    ; V1.034.24: Unified pointer STORE using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
 
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\ptr
-   _SLOT(_AR()\j, _AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
+   _SL()\i = gEvalStack(sp)\i
+   _SL()\ptr = gEvalStack(sp)\ptr
+   _SL()\ptrtype = gEvalStack(sp)\ptrtype
 
    pc + 1
 EndProcedure
@@ -1337,11 +1339,12 @@ EndProcedure
 Procedure               C2PPOP()
    ; V1.034.24: Unified pointer POP using _SLOT (j=1 for local, j=0 for global)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
 
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\ptr
-   _SLOT(_AR()\j, _AR()\i)\ptrtype = gEvalStack(sp)\ptrtype
+   _SL()\i = gEvalStack(sp)\i
+   _SL()\ptr = gEvalStack(sp)\ptr
+   _SL()\ptrtype = gEvalStack(sp)\ptrtype
 
    pc + 1
 EndProcedure
@@ -2108,8 +2111,8 @@ EndProcedure
 ; This ensures struct pointers are properly passed to callees
 ; V1.034.24: Unified FETCH_STRUCT - uses j=1 for local, j=0 for global
 Procedure C2FETCH_STRUCT()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
    sp + 1
    pc + 1
 EndProcedure
@@ -2765,13 +2768,14 @@ Procedure               C2PTRINC_POST_INT()
    ; - For PTR_ARRAY_*: only increment i (element index), ptr is array slot
    ; - For PTR_INT/PTR_LOCAL_INT: increment ptr by 8 (memory address)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype  ; Preserve original ptrtype
+   _SL()\i + 1
    ; Only increment ptr for non-array pointers (PTR_INT, PTR_LOCAL_INT)
-   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_INT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_INT
-      _SLOT(_AR()\j, _AR()\i)\ptr + 8
+   If _SL()\ptrtype = #PTR_INT Or _SL()\ptrtype = #PTR_LOCAL_INT
+      _SL()\ptr + 8
    EndIf
    sp + 1
    pc + 1
@@ -2781,13 +2785,14 @@ Procedure               C2PTRINC_POST_FLOAT()
    ; V1.034.33: Post-increment float pointer - unified using _SLOT(j, offset)
    ; V1.034.39: Fix ptrtype preservation and conditional ptr increment
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype  ; Preserve original ptrtype
+   _SL()\i + 1
    ; Only increment ptr for non-array pointers
-   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_FLOAT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_FLOAT
-      _SLOT(_AR()\j, _AR()\i)\ptr + 8
+   If _SL()\ptrtype = #PTR_FLOAT Or _SL()\ptrtype = #PTR_LOCAL_FLOAT
+      _SL()\ptr + 8
    EndIf
    sp + 1
    pc + 1
@@ -2796,9 +2801,10 @@ EndProcedure
 Procedure               C2PTRINC_POST_STRING()
    ; V1.034.33: Post-increment string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SL()\i + 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2806,10 +2812,11 @@ EndProcedure
 Procedure               C2PTRINC_POST_ARRAY()
    ; V1.034.33: Post-increment array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype
+   _SL()\i + 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2820,13 +2827,14 @@ Procedure               C2PTRDEC_POST_INT()
    ; V1.034.33: Post-decrement int pointer - unified using _SLOT(j, offset)
    ; V1.034.39: Fix ptrtype preservation and conditional ptr decrement
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype  ; Preserve original ptrtype
+   _SL()\i - 1
    ; Only decrement ptr for non-array pointers
-   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_INT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_INT
-      _SLOT(_AR()\j, _AR()\i)\ptr - 8
+   If _SL()\ptrtype = #PTR_INT Or _SL()\ptrtype = #PTR_LOCAL_INT
+      _SL()\ptr - 8
    EndIf
    sp + 1
    pc + 1
@@ -2836,13 +2844,14 @@ Procedure               C2PTRDEC_POST_FLOAT()
    ; V1.034.33: Post-decrement float pointer - unified using _SLOT(j, offset)
    ; V1.034.39: Fix ptrtype preservation and conditional ptr decrement
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype  ; Preserve original ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype  ; Preserve original ptrtype
+   _SL()\i - 1
    ; Only decrement ptr for non-array pointers
-   If _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_FLOAT Or _SLOT(_AR()\j, _AR()\i)\ptrtype = #PTR_LOCAL_FLOAT
-      _SLOT(_AR()\j, _AR()\i)\ptr - 8
+   If _SL()\ptrtype = #PTR_FLOAT Or _SL()\ptrtype = #PTR_LOCAL_FLOAT
+      _SL()\ptr - 8
    EndIf
    sp + 1
    pc + 1
@@ -2851,9 +2860,10 @@ EndProcedure
 Procedure               C2PTRDEC_POST_STRING()
    ; V1.034.33: Post-decrement string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
    gEvalStack(sp)\ptrtype = #PTR_STRING
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SL()\i - 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2861,10 +2871,11 @@ EndProcedure
 Procedure               C2PTRDEC_POST_ARRAY()
    ; V1.034.33: Post-decrement array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   gEvalStack(sp)\ptr = _SLOT(_AR()\j, _AR()\i)\ptr
-   gEvalStack(sp)\ptrtype = _SLOT(_AR()\j, _AR()\i)\ptrtype
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   gEvalStack(sp)\ptr = _SL()\ptr
+   gEvalStack(sp)\ptrtype = _SL()\ptrtype
+   _SL()\i - 1
    sp + 1
    pc + 1
 EndProcedure
@@ -2874,68 +2885,76 @@ EndProcedure
 Procedure               C2PTRADD_ASSIGN_INT()
    ; V1.034.33: ptr += offset for int pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr + (gEvalStack(sp)\i * 8)
+   _SL()\i + gEvalStack(sp)\i
+   _SL()\ptr + (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_FLOAT()
    ; V1.034.33: ptr += offset for float pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr + (gEvalStack(sp)\i * 8)
+   _SL()\i + gEvalStack(sp)\i
+   _SL()\ptr + (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_STRING()
    ; V1.034.33: ptr += offset for string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
+   _SL()\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRADD_ASSIGN_ARRAY()
    ; V1.034.33: ptr += offset for array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
+   _SL()\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_INT()
    ; V1.034.33: ptr -= offset for int pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr - (gEvalStack(sp)\i * 8)
+   _SL()\i - gEvalStack(sp)\i
+   _SL()\ptr - (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_FLOAT()
    ; V1.034.33: ptr -= offset for float pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr - (gEvalStack(sp)\i * 8)
+   _SL()\i - gEvalStack(sp)\i
+   _SL()\ptr - (gEvalStack(sp)\i * 8)
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_STRING()
    ; V1.034.33: ptr -= offset for string pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
+   _SL()\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2PTRSUB_ASSIGN_ARRAY()
    ; V1.034.33: ptr -= offset for array pointer - unified using _SLOT(j, offset)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
+   _SL()\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
