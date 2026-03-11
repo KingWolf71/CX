@@ -79,6 +79,21 @@ Macro _SLOT(j, offset)
    *gVar(gCurrentFuncSlot * (j) + (offset) * (1 - (j)))\var((offset) * (j))
 EndMacro
 
+; V1.039.65: C-backend safe wrappers for _SLOT(_AR()...) - avoids expression truncation (Bug #2)
+CompilerIf #PB_Compiler_Backend = #PB_Backend_C
+   Macro _SLOT_CACHE() : _cJ = _AR()\j : _cI = _AR()\i : EndMacro
+   Macro _SLOT_CACHE_MOV() : _cJ = _AR()\j : _cI = _AR()\i : _cN = _AR()\n : EndMacro
+   Macro _SL() : _SLOT(_cJ, _cI) : EndMacro
+   Macro _SL_DST() : _SLOT(_cN >> 1, _cI) : EndMacro
+   Macro _SL_SRC() : _SLOT(_cN & 1, _cJ) : EndMacro
+CompilerElse
+   Macro _SLOT_CACHE() : EndMacro
+   Macro _SLOT_CACHE_MOV() : EndMacro
+   Macro _SL() : _SLOT(_AR()\j, _AR()\i) : EndMacro
+   Macro _SL_DST() : _SLOT(_AR()\n >> 1, _AR()\i) : EndMacro
+   Macro _SL_SRC() : _SLOT(_AR()\n & 1, _AR()\j) : EndMacro
+CompilerEndIf
+
 ; V1.035.0: Global access macro - each global at *gVar(n)\var(0)
 Macro _GLOBAL(n) : *gVar(n)\var(0) : EndMacro
 
@@ -180,9 +195,10 @@ EndMacro
 
 Procedure               C2FetchPush()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    ; V1.034.18: Unified FETCH using _SLOT(j, offset)
    ; j=0 → global: gStorage(offset), j=1 → local: gStorage(gFrameBase + offset)
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   gEvalStack(sp)\i = _SL()\i
    sp + 1
    pc + 1
 EndProcedure
@@ -208,9 +224,10 @@ EndProcedure
 
 Procedure               C2FETCHS()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    ; V1.034.14: Unified FETCHS using _SLOT(j, offset)
    ; V1.035.13: Cache string length in \i for O(1) access
-   gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+   gEvalStack(sp)\ss = _SL()\ss
    gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
@@ -218,41 +235,46 @@ EndProcedure
 
 Procedure               C2FETCHF()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    ; V1.034.14: Unified FETCHF using _SLOT(j, offset)
-   gEvalStack(sp)\f = _SLOT(_AR()\j, _AR()\i)\f
+   gEvalStack(sp)\f = _SL()\f
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2POP()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified POP using _SLOT(j, offset)
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SL()\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2POPS()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified POPS using _SLOT(j, offset)
-   _SLOT(_AR()\j, _AR()\i)\ss = gEvalStack(sp)\ss
+   _SL()\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2POPF()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified POPF using _SLOT(j, offset)
-   _SLOT(_AR()\j, _AR()\i)\f = gEvalStack(sp)\f
+   _SL()\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2PUSHS()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    ; V1.034.14: Unified PUSHS using _SLOT(j, offset) - same as FETCHS
    ; V1.035.13: Cache string length in \i for O(1) access
-   gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+   gEvalStack(sp)\ss = _SL()\ss
    gEvalStack(sp)\i = Len(gEvalStack(sp)\ss)
    sp + 1
    pc + 1
@@ -260,35 +282,39 @@ EndProcedure
 
 Procedure               C2PUSHF()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    ; V1.034.14: Unified PUSHF using _SLOT(j, offset) - same as FETCHF
-   gEvalStack(sp)\f = _SLOT(_AR()\j, _AR()\i)\f
+   gEvalStack(sp)\f = _SL()\f
    sp + 1
    pc + 1
 EndProcedure
 
 Procedure               C2Store()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified STORE using _SLOT(j, offset)
    ; TEMP DEBUG
    
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
+   _SL()\i = gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2STORES()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified STORES using _SLOT(j, offset)
-   _SLOT(_AR()\j, _AR()\i)\ss = gEvalStack(sp)\ss
+   _SL()\ss = gEvalStack(sp)\ss
    pc + 1
 EndProcedure
 
 Procedure               C2STOREF()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
    ; V1.034.14: Unified STOREF using _SLOT(j, offset)
-   _SLOT(_AR()\j, _AR()\i)\f = gEvalStack(sp)\f
+   _SL()\f = gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
@@ -299,11 +325,12 @@ EndProcedure
 ; V1.034.14: Unified using _SLOT(j, offset) - replaces both STORE_STRUCT and LSTORE_STRUCT
 Procedure               C2STORE_STRUCT()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
 
    ; Copy both integer value AND pointer field using unified _SLOT access
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\i  ; Copy \i to \ptr for pointer semantics
+   _SL()\i = gEvalStack(sp)\i
+   _SL()\ptr = gEvalStack(sp)\i  ; Copy \i to \ptr for pointer semantics
 
    pc + 1
 EndProcedure
@@ -311,18 +338,20 @@ EndProcedure
 ; V1.034.14: LSTORE_STRUCT now just calls unified STORE_STRUCT (jump table compatibility)
 Procedure               C2LSTORE_STRUCT()
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
 
    ; Copy both integer value AND pointer field using unified _SLOT access
    ; Note: For local structs, j should be 1 (set by codegen)
-   _SLOT(_AR()\j, _AR()\i)\i = gEvalStack(sp)\i
-   _SLOT(_AR()\j, _AR()\i)\ptr = gEvalStack(sp)\i
+   _SL()\i = gEvalStack(sp)\i
+   _SL()\ptr = gEvalStack(sp)\i
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOV()
    vm_DebugFunctionName()
+   _SLOT_CACHE_MOV()
    ; V1.034.17: Unified MOV using _SLOT with locality flags in n field
    ; n & 1 = source is local, n & 2 = destination is local
    ; n=0: GG, n=1: LG, n=2: GL, n=3: LL
@@ -331,25 +360,27 @@ Procedure               C2MOV()
       Debug "MOV: pc=" + Str(pc) + " src[" + Str(_AR()\j) + "] -> dest[" + Str(_AR()\i) + "] n=" + Str(_AR()\n)
    CompilerEndIf
 
-   _SLOT(_AR()\n >> 1, _AR()\i)\i = _SLOT(_AR()\n & 1, _AR()\j)\i
+   _SL_DST()\i = _SL_SRC()\i
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOVS()
    vm_DebugFunctionName()
+   _SLOT_CACHE_MOV()
    ; V1.034.17: Unified MOVS using _SLOT with locality flags in n field
 
-   _SLOT(_AR()\n >> 1, _AR()\i)\ss = _SLOT(_AR()\n & 1, _AR()\j)\ss
+   _SL_DST()\ss = _SL_SRC()\ss
 
    pc + 1
 EndProcedure
 
 Procedure               C2MOVF()
    vm_DebugFunctionName()
+   _SLOT_CACHE_MOV()
    ; V1.034.17: Unified MOVF using _SLOT with locality flags in n field
 
-   _SLOT(_AR()\n >> 1, _AR()\i)\f = _SLOT(_AR()\n & 1, _AR()\j)\f
+   _SL_DST()\f = _SL_SRC()\f
 
    pc + 1
 EndProcedure
@@ -521,22 +552,25 @@ EndProcedure
 Procedure               C2INC_VAR()
    ; V1.034.14: Unified INC using _SLOT(j, offset)
    vm_DebugFunctionName()
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SLOT_CACHE()
+   _SL()\i + 1
    pc + 1
 EndProcedure
 
 Procedure               C2DEC_VAR()
    ; V1.034.14: Unified DEC using _SLOT(j, offset)
    vm_DebugFunctionName()
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SLOT_CACHE()
+   _SL()\i - 1
    pc + 1
 EndProcedure
 
 Procedure               C2INC_VAR_PRE()
    ; V1.034.14: Unified pre-increment using _SLOT(j, offset)
    vm_DebugFunctionName()
-   _SLOT(_AR()\j, _AR()\i)\i + 1
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT_CACHE()
+   _SL()\i + 1
+   gEvalStack(sp)\i = _SL()\i
    sp + 1
    pc + 1
 EndProcedure
@@ -544,8 +578,9 @@ EndProcedure
 Procedure               C2DEC_VAR_PRE()
    ; V1.034.14: Unified pre-decrement using _SLOT(j, offset)
    vm_DebugFunctionName()
-   _SLOT(_AR()\j, _AR()\i)\i - 1
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
+   _SLOT_CACHE()
+   _SL()\i - 1
+   gEvalStack(sp)\i = _SL()\i
    sp + 1
    pc + 1
 EndProcedure
@@ -553,8 +588,9 @@ EndProcedure
 Procedure               C2INC_VAR_POST()
    ; V1.034.14: Unified post-increment using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   _SLOT(_AR()\j, _AR()\i)\i + 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   _SL()\i + 1
    sp + 1
    pc + 1
 EndProcedure
@@ -562,8 +598,9 @@ EndProcedure
 Procedure               C2DEC_VAR_POST()
    ; V1.034.14: Unified post-decrement using _SLOT(j, offset)
    vm_DebugFunctionName()
-   gEvalStack(sp)\i = _SLOT(_AR()\j, _AR()\i)\i
-   _SLOT(_AR()\j, _AR()\i)\i - 1
+   _SLOT_CACHE()
+   gEvalStack(sp)\i = _SL()\i
+   _SL()\i - 1
    sp + 1
    pc + 1
 EndProcedure
@@ -624,72 +661,81 @@ EndProcedure
 Procedure               C2ADD_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], add to global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i + gEvalStack(sp)\i
+   _SL()\i + gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2SUB_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], subtract from global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i - gEvalStack(sp)\i
+   _SL()\i - gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2MUL_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], multiply global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i * gEvalStack(sp)\i
+   _SL()\i * gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2DIV_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], divide global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i / gEvalStack(sp)\i
+   _SL()\i / gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2MOD_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], modulo global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\i % gEvalStack(sp)\i
+   _SL()\i % gEvalStack(sp)\i
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATADD_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], float add to global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\f + gEvalStack(sp)\f
+   _SL()\f + gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATSUB_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], float subtract from global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\f - gEvalStack(sp)\f
+   _SL()\f - gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATMUL_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], float multiply global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\f * gEvalStack(sp)\f
+   _SL()\f * gEvalStack(sp)\f
    pc + 1
 EndProcedure
 
 Procedure               C2FLOATDIV_ASSIGN_VAR()
    ; V1.31.0: Pop value from gStorage[], float divide global, store back (no push)
    vm_DebugFunctionName()
+   _SLOT_CACHE()
    sp - 1
-   _SLOT(_AR()\j, _AR()\i)\f / gEvalStack(sp)\f
+   _SL()\f / gEvalStack(sp)\f
    pc + 1
 EndProcedure
 

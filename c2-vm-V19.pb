@@ -314,6 +314,14 @@ Module C2VM
    Global *gCachedV.stVT             ; Scratch pointer for cached var access
    Global *gCachedF.stFuncTemplate   ; Scratch pointer for cached func template
 
+   ; V1.039.65: C-backend scratch globals for _SLOT_CACHE()
+   CompilerIf #PB_Compiler_Backend = #PB_Backend_C
+      Global *_cVT.stVT
+      Global _cJ.i
+      Global _cI.i
+      Global _cN.i
+   CompilerEndIf
+
    ; V1.035.0: Inline hot opcode macros for VM loop optimization
    ; Updated for Pointer Array Architecture
    ; These eliminate procedure call overhead for the most frequently executed opcodes

@@ -1,0 +1,150 @@
+PureBasic C-Backend (pbcompilerc) Bug Report
+=============================================
+PureBasic Version: 6.10
+OS: Windows 11 Pro (x64)
+Compiler: pbcompilerc.exe with /OPTIMIZER /THREAD /DYNAMICCPU /CONSOLE
+
+Project: CX Language Compiler/VM (generates ~156K lines of C code)
+The ASM backend (pbcompiler.exe) compiles and runs all code perfectly.
+The C-backend (pbcompilerc.exe) fails with GCC errors.
+
+
+BUG #1: Invalid '->' on struct value after structured array indexing
+====================================================================
+(Confirmed with minimal reproducer: pb_cbackend_bug1.pb)
+
+SYMPTOM:
+  GCC error: "invalid type argument of '->' (have 'struct_name')"
+
+DESCRIPTION:
+  When accessing members through a chain of:
+    *PointerArray(idx)\structuredArray(dynamicIdx)\field
+  the C-backend generates '->' (pointer dereference) instead of '.' (member access)
+  after the structured array indexing.
+
+  The structured array \var(idx) returns a struct VALUE, not a pointer.
+  The C-backend incorrectly uses '->' for subsequent member access.
+
+MINIMAL REPRODUCER (pb_cbackend_bug1.pb):
+
+  ; Compile with: pbcompilerc /CONSOLE pb_cbackend_bug1.pb /EXE test.exe
+  ; ASM backend: OK    C-backend: FAILS
+
+  Structure stElement
+     ss.s
+     i.i
+     f.d
+  EndStructure
+
+  Structure stArrayData
+     size.l
+     Array ar.stElement(0)
+  EndStructure
+
+  Structure stSlot
+     ss.s
+     i.i
+     f.d
+     *ptr
+     ptrtype.w
+     dta.stArrayData
+  EndStructure
+
+  Structure stContainer
+     Array var.stSlot(1)
+  EndStructure
+
+  Structure stEvalEntry
+     ss.s
+     i.i
+     f.d
+     *ptr
+     ptrtype.w
+  EndStructure
+
+  Global Dim *gData.stContainer(100)
+  Global Dim gEval.stEvalEntry(100)
+  Global gFuncSlot.i = 5
+  Global sp.i = 10
+
+  *gData(5) = AllocateStructure(stContainer)
+  ReDim *gData(5)\var(20)
+  ReDim *gData(5)\var(3)\dta\ar(50)
+  gEval(sp + 1)\ptr = 3
+  gEval(sp + 1)\i = 7
+  gEval(sp)\i = 42
+
+  ; BUG LINE - dynamic index from another structured array:
+  *gData(gFuncSlot)\var(gEval(sp + 1)\ptr)\dta\ar(gEval(sp + 1)\i)\i = gEval(sp)\i
+
+GENERATED C (incorrect):
+  ((stElement*)
+    ((stSlot*)
+      ((stContainer**)ap_gdata.a)[(integer)g_gfuncslot]
+      ->f_var.a               ; CORRECT: stContainer** indexed -> stContainer*, use ->
+    )[(integer)...f_ptr]
+    ->f_dta.f_ar.a            ; BUG: stSlot* indexed -> stSlot VALUE, should use '.'
+  )[(integer)...f_i].f_i     ; This one correctly uses '.'
+
+EXPECTED C:
+  Same as above but with '].f_dta' instead of ']->f_dta'
+
+KEY CONDITION:
+  - The index into \var() must be DYNAMIC (from another array/expression)
+  - With constant indices like \var(2), the C-backend works correctly
+  - The bug is in the '->' generation for struct members after structured array
+    indexing, when the index itself is a complex expression
+
+AFFECTED LINES IN PROJECT (c2-pointers-v07.pbi):
+  Line 430:  *gVar(gCurrentFuncSlot)\var(gEvalStack(sp+1)\ptr)\dta\ar(...)\i = ...
+  Line 434:  *gVar(gCurrentFuncSlot)\var(gEvalStack(sp+1)\ptr)\dta\ar(...)\f = ...
+  Line 438:  *gVar(gCurrentFuncSlot)\var(gEvalStack(sp+1)\ptr)\dta\ar(...)\ss = ...
+
+
+BUG #2: Expression truncation with deep macro nesting (no minimal reproducer)
+==============================================================================
+
+SYMPTOM:
+  GCC error: "expected ')' before '.' token"
+  The generated C expression is truncated mid-way, producing syntax errors.
+
+DESCRIPTION:
+  This bug could NOT be reproduced in a minimal file. It only manifests in the
+  full project (156K lines of generated C). It may be related to:
+  - Internal buffer/line-length limits in the C code generator
+  - Expression nesting depth limits
+  - Interaction with /OPTIMIZER flag in large compilation units
+
+  The truncation occurs when deeply nested macro expansions produce very long
+  C expressions. The expression is cut off, producing incomplete code like:
+    ...(integer.f_ss);     instead of
+    ...(integer)pc].f_j)))+1))))].f_var.a)[...].f_ss);
+
+MACRO DEFINITIONS INVOLVED:
+  Macro _AR() : arCode(pc) : EndMacro
+  Macro _SLOT(j, off) : *gData(slot * (j) + (off) * (1 - (j)))\var((off) * (j)) : EndMacro
+
+  Usage: gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+
+  After full expansion, each argument (j, off) appears 2x in _SLOT, and _AR()
+  expands to arCode(pc) with struct field access. This produces an expression
+  with 4 nested struct array accesses within the pointer array index calculation.
+
+AFFECTED LINES IN PROJECT:
+  c2-vm-fastpath.pbi:48     - C2FETCHS: gEvalStack(sp)\ss = _SLOT(_AR()\j, _AR()\i)\ss
+  c2-pointers-v07.pbi:2866  - C2PTRDEC_POST_ARRAY: gEvalStack(sp)\i = _SLOT(...)\i
+
+  Note: Only string access (\ss) triggers in C2FETCHS because the
+  SYS_CopyString/SYS_AllocateString4 wrappers add extra nesting depth.
+  Integer/float access through the same macro in other procedures works fine.
+
+
+ERROR SUMMARY
+=============
+
+  Bug #1: 3 GCC errors  - Reproducible with minimal test case (pb_cbackend_bug1.pb)
+  Bug #2: 2 GCC errors  - Only in large compilation units (no minimal reproducer)
+         + 7 cascading errors from truncation
+
+  Total: 12 GCC errors blocking C-backend compilation
+  All code compiles and runs correctly with the ASM backend.
